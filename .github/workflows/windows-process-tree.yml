@@ -1,0 +1,91 @@
+name: Windows process-tree cleanup
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-windows-process-tree:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test runner
+        run: python -m pip install pytest==9.0.3
+      - name: Verify packaged source manifest
+        run: python scripts/generate_manifest.py --root . --verify --strict
+      - name: Run native Windows descendant cleanup integration test
+        run: python -m pytest tests/test_phase225_native_windows_process_tree.py -q
+      - name: Run bounded-audit cleanup regression tests
+        run: python -m pytest tests/test_phase222_test_audit.py tests/test_phase223_audit_descendant_cleanup.py tests/test_phase224_windows_process_cleanup.py -q
+
+  posix-descendant-cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test runner
+        run: python -m pip install pytest==9.0.3
+      - name: Verify packaged source manifest
+        run: python scripts/generate_manifest.py --root . --verify --strict
+      - name: Run real POSIX descendant PID cleanup test
+        run: python -m pytest tests/test_phase227_posix_descendant_pid_cleanup.py tests/test_phase228_posix_exited_leader_cleanup.py tests/test_phase223_audit_descendant_cleanup.py -q
+
+
+  release-package-reproducibility:
+    name: Release ZIP reproducibility (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test runner
+        run: python -m pip install pytest==9.0.3
+      - name: Verify source manifest
+        run: python scripts/generate_manifest.py --root . --verify --strict
+      - name: Test deterministic archive bytes and exclusions
+        run: python -m pytest tests/test_phase229_reproducible_packaging.py tests/test_phase231_release_candidate.py tests/test_phase232_detached_record_verification.py tests/test_phase233_strict_detached_record.py tests/test_phase234_archive_manifest_hashes.py tests/test_phase235_manifest_digest_record.py tests/test_phase237_windows_portable_paths.py -q
+      - name: Build and verify exact CI release candidate
+        run: python scripts/verify_release_candidate.py --root . --output dist/QuantEngine_PHASE238_${{ matrix.os }}.zip
+      - name: Re-verify the exact candidate against its detached record
+        run: python scripts/verify_release_candidate.py --verify-record dist/QuantEngine_PHASE238_${{ matrix.os }}.zip --record dist/QuantEngine_PHASE238_${{ matrix.os }}.zip.sha256.txt
+      - name: Upload the verified candidate and detached hash record
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuantEngine-PHASE238-${{ matrix.os }}-verified-candidate
+          path: |
+            dist/QuantEngine_PHASE238_${{ matrix.os }}.zip
+            dist/QuantEngine_PHASE238_${{ matrix.os }}.zip.sha256.txt
+          if-no-files-found: error
+          retention-days: 14

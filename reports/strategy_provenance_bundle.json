@@ -1,0 +1,213 @@
+{
+  "schema": "quantengine.strategy-provenance-bundle.v1",
+  "evidence_class": "source-derived, unsigned archival evidence; not a digital signature",
+  "source_archive": {
+    "filename": "QuantEngine_PHASE161_RELEASE_CANDIDATE.zip",
+    "sha256": "de8fd1f638b30ea95b4db2ac6241055c8872cf5230a80991cc075b374c59f05b"
+  },
+  "canonicalization": "SHA-256 per file; LF digest replaces CRLF with LF; composite is SHA-256 of concatenated per-file digest hex strings in LEGACY_9_FILES order",
+  "file_order": [
+    "core/execution/entry_model.py",
+    "core/setup/trade_setup_builder.py",
+    "core/setup/decision_engine.py",
+    "core/execution/execution_engine.py",
+    "core/risk/risk_engine.py",
+    "core/backtesting/accounting.py",
+    "backtesting/backtester.py",
+    "core/paper_trading/paper_trading_engine.py",
+    "config/risk_settings.py"
+  ],
+  "milestones": {
+    "phase14_baseline": {
+      "commit": "3f198956abdd6f758da7960ba0cbb063fb424947",
+      "tree": "ae25836dbae4eebffc6b169443277f71f4bfbbbc",
+      "composite_sha256_lf": "db5bcdc01cd88b6c997e630e7ad1f6879f72f4ccc191393a6ff41675df52be72",
+      "composite_sha256_raw": "db5bcdc01cd88b6c997e630e7ad1f6879f72f4ccc191393a6ff41675df52be72",
+      "files": [
+        {
+          "file": "core/execution/entry_model.py",
+          "git_blob_oid": "e4512782fafdd4b6409152e3302b7f21682473ac",
+          "sha256_lf": "8cb0fb2f45f87f1bcd42072e5ea48b30a982193d8eabeb158fd704c2f5234a82",
+          "sha256_raw": "8cb0fb2f45f87f1bcd42072e5ea48b30a982193d8eabeb158fd704c2f5234a82"
+        },
+        {
+          "file": "core/setup/trade_setup_builder.py",
+          "git_blob_oid": "fa67fbeae941764ea866713e3199d0a637f1d2dd",
+          "sha256_lf": "f780310cad383995f59ce3181483bdd52e85461746893b96dae131febfd6cecc",
+          "sha256_raw": "f780310cad383995f59ce3181483bdd52e85461746893b96dae131febfd6cecc"
+        },
+        {
+          "file": "core/setup/decision_engine.py",
+          "git_blob_oid": "058d98a4ab1106957053fba1bdc3c61d7ffc808e",
+          "sha256_lf": "6862cdfebefe4a523cba861422b2a83c3d66c01181fcc1c2d8404825c7c994a0",
+          "sha256_raw": "6862cdfebefe4a523cba861422b2a83c3d66c01181fcc1c2d8404825c7c994a0"
+        },
+        {
+          "file": "core/execution/execution_engine.py",
+          "git_blob_oid": "4f71fc41420fa7cddf1047a20bb3b931689d65dc",
+          "sha256_lf": "19a469e1980828dde28ebe8d5728ce5d4a5c6c1e5c935628ea3ee8bfddd249c4",
+          "sha256_raw": "19a469e1980828dde28ebe8d5728ce5d4a5c6c1e5c935628ea3ee8bfddd249c4"
+        },
+        {
+          "file": "core/risk/risk_engine.py",
+          "git_blob_oid": "f47a17061d51ade4100ae3411943771b69bb9322",
+          "sha256_lf": "418112974391c8c67c154238c0b3d96d5d51e4934a2ad3e6fe5e154429d351f0",
+          "sha256_raw": "418112974391c8c67c154238c0b3d96d5d51e4934a2ad3e6fe5e154429d351f0"
+        },
+        {
+          "file": "core/backtesting/accounting.py",
+          "git_blob_oid": "3c1ee365f2937e9b4e3c5c7f73f979c3d5757479",
+          "sha256_lf": "2490e075bf4ced4a82cbbf22123420c3f8585037eef90c8d77dd83dbc37b2bc2",
+          "sha256_raw": "2490e075bf4ced4a82cbbf22123420c3f8585037eef90c8d77dd83dbc37b2bc2"
+        },
+        {
+          "file": "backtesting/backtester.py",
+          "git_blob_oid": "6038e7a6064440bf4404f91ab4be6bf2db70e952",
+          "sha256_lf": "6a5be1b825d132d45cef4fa5587412b52176851521989aad5e322caa462b51b8",
+          "sha256_raw": "6a5be1b825d132d45cef4fa5587412b52176851521989aad5e322caa462b51b8"
+        },
+        {
+          "file": "core/paper_trading/paper_trading_engine.py",
+          "git_blob_oid": "563e3934316db6252b65de8f680166eb408ce228",
+          "sha256_lf": "232468762414941019f3ac9e72d6826c4e8163a5532bbf61999e7ab3e617bf83",
+          "sha256_raw": "232468762414941019f3ac9e72d6826c4e8163a5532bbf61999e7ab3e617bf83"
+        },
+        {
+          "file": "config/risk_settings.py",
+          "git_blob_oid": "c3295a938af70c7903e7eaf5407ad2911f99415d",
+          "sha256_lf": "65564b5cbc4e3e2f2550380502ae07759c20cc9a2acfb672c88538809c59797b",
+          "sha256_raw": "65564b5cbc4e3e2f2550380502ae07759c20cc9a2acfb672c88538809c59797b"
+        }
+      ]
+    },
+    "phase14_runtime_boundary": {
+      "commit": "fbeb86097127506b7fb510842c97fcfee8b13dbc",
+      "tree": "e003226d267e16ccbb2d494f1f82bedb50f0aa22",
+      "composite_sha256_lf": "9eff61b777846c7f5e2056c486c9c381872a93e154d35160e70f63051c8fd8a2",
+      "composite_sha256_raw": "9eff61b777846c7f5e2056c486c9c381872a93e154d35160e70f63051c8fd8a2",
+      "files": [
+        {
+          "file": "core/execution/entry_model.py",
+          "git_blob_oid": "e4512782fafdd4b6409152e3302b7f21682473ac",
+          "sha256_lf": "8cb0fb2f45f87f1bcd42072e5ea48b30a982193d8eabeb158fd704c2f5234a82",
+          "sha256_raw": "8cb0fb2f45f87f1bcd42072e5ea48b30a982193d8eabeb158fd704c2f5234a82"
+        },
+        {
+          "file": "core/setup/trade_setup_builder.py",
+          "git_blob_oid": "fa67fbeae941764ea866713e3199d0a637f1d2dd",
+          "sha256_lf": "f780310cad383995f59ce3181483bdd52e85461746893b96dae131febfd6cecc",
+          "sha256_raw": "f780310cad383995f59ce3181483bdd52e85461746893b96dae131febfd6cecc"
+        },
+        {
+          "file": "core/setup/decision_engine.py",
+          "git_blob_oid": "89247701f4597f4418c14332455abf50c15be636",
+          "sha256_lf": "2ce99a4fb19db2c32c1ba6723deaeda39e54318d50c766422e673001db2b7dd4",
+          "sha256_raw": "2ce99a4fb19db2c32c1ba6723deaeda39e54318d50c766422e673001db2b7dd4"
+        },
+        {
+          "file": "core/execution/execution_engine.py",
+          "git_blob_oid": "4f71fc41420fa7cddf1047a20bb3b931689d65dc",
+          "sha256_lf": "19a469e1980828dde28ebe8d5728ce5d4a5c6c1e5c935628ea3ee8bfddd249c4",
+          "sha256_raw": "19a469e1980828dde28ebe8d5728ce5d4a5c6c1e5c935628ea3ee8bfddd249c4"
+        },
+        {
+          "file": "core/risk/risk_engine.py",
+          "git_blob_oid": "f47a17061d51ade4100ae3411943771b69bb9322",
+          "sha256_lf": "418112974391c8c67c154238c0b3d96d5d51e4934a2ad3e6fe5e154429d351f0",
+          "sha256_raw": "418112974391c8c67c154238c0b3d96d5d51e4934a2ad3e6fe5e154429d351f0"
+        },
+        {
+          "file": "core/backtesting/accounting.py",
+          "git_blob_oid": "3c1ee365f2937e9b4e3c5c7f73f979c3d5757479",
+          "sha256_lf": "2490e075bf4ced4a82cbbf22123420c3f8585037eef90c8d77dd83dbc37b2bc2",
+          "sha256_raw": "2490e075bf4ced4a82cbbf22123420c3f8585037eef90c8d77dd83dbc37b2bc2"
+        },
+        {
+          "file": "backtesting/backtester.py",
+          "git_blob_oid": "e2cb7e3178e84b85daffa54d52712083520c4b50",
+          "sha256_lf": "9398c74b6065f064b3ec5cb6987d9831cf0229c54ca386f8ad75a80df6522fda",
+          "sha256_raw": "9398c74b6065f064b3ec5cb6987d9831cf0229c54ca386f8ad75a80df6522fda"
+        },
+        {
+          "file": "core/paper_trading/paper_trading_engine.py",
+          "git_blob_oid": "563e3934316db6252b65de8f680166eb408ce228",
+          "sha256_lf": "232468762414941019f3ac9e72d6826c4e8163a5532bbf61999e7ab3e617bf83",
+          "sha256_raw": "232468762414941019f3ac9e72d6826c4e8163a5532bbf61999e7ab3e617bf83"
+        },
+        {
+          "file": "config/risk_settings.py",
+          "git_blob_oid": "c3295a938af70c7903e7eaf5407ad2911f99415d",
+          "sha256_lf": "65564b5cbc4e3e2f2550380502ae07759c20cc9a2acfb672c88538809c59797b",
+          "sha256_raw": "65564b5cbc4e3e2f2550380502ae07759c20cc9a2acfb672c88538809c59797b"
+        }
+      ]
+    },
+    "historical_head": {
+      "commit": "ffefa14a8729f6d2160db3735a06257cbb6ab48b",
+      "tree": "0ea8857268af81a841576b9671ba67882953641e",
+      "composite_sha256_lf": "9eff61b777846c7f5e2056c486c9c381872a93e154d35160e70f63051c8fd8a2",
+      "composite_sha256_raw": "9eff61b777846c7f5e2056c486c9c381872a93e154d35160e70f63051c8fd8a2",
+      "files": [
+        {
+          "file": "core/execution/entry_model.py",
+          "git_blob_oid": "e4512782fafdd4b6409152e3302b7f21682473ac",
+          "sha256_lf": "8cb0fb2f45f87f1bcd42072e5ea48b30a982193d8eabeb158fd704c2f5234a82",
+          "sha256_raw": "8cb0fb2f45f87f1bcd42072e5ea48b30a982193d8eabeb158fd704c2f5234a82"
+        },
+        {
+          "file": "core/setup/trade_setup_builder.py",
+          "git_blob_oid": "fa67fbeae941764ea866713e3199d0a637f1d2dd",
+          "sha256_lf": "f780310cad383995f59ce3181483bdd52e85461746893b96dae131febfd6cecc",
+          "sha256_raw": "f780310cad383995f59ce3181483bdd52e85461746893b96dae131febfd6cecc"
+        },
+        {
+          "file": "core/setup/decision_engine.py",
+          "git_blob_oid": "89247701f4597f4418c14332455abf50c15be636",
+          "sha256_lf": "2ce99a4fb19db2c32c1ba6723deaeda39e54318d50c766422e673001db2b7dd4",
+          "sha256_raw": "2ce99a4fb19db2c32c1ba6723deaeda39e54318d50c766422e673001db2b7dd4"
+        },
+        {
+          "file": "core/execution/execution_engine.py",
+          "git_blob_oid": "4f71fc41420fa7cddf1047a20bb3b931689d65dc",
+          "sha256_lf": "19a469e1980828dde28ebe8d5728ce5d4a5c6c1e5c935628ea3ee8bfddd249c4",
+          "sha256_raw": "19a469e1980828dde28ebe8d5728ce5d4a5c6c1e5c935628ea3ee8bfddd249c4"
+        },
+        {
+          "file": "core/risk/risk_engine.py",
+          "git_blob_oid": "f47a17061d51ade4100ae3411943771b69bb9322",
+          "sha256_lf": "418112974391c8c67c154238c0b3d96d5d51e4934a2ad3e6fe5e154429d351f0",
+          "sha256_raw": "418112974391c8c67c154238c0b3d96d5d51e4934a2ad3e6fe5e154429d351f0"
+        },
+        {
+          "file": "core/backtesting/accounting.py",
+          "git_blob_oid": "3c1ee365f2937e9b4e3c5c7f73f979c3d5757479",
+          "sha256_lf": "2490e075bf4ced4a82cbbf22123420c3f8585037eef90c8d77dd83dbc37b2bc2",
+          "sha256_raw": "2490e075bf4ced4a82cbbf22123420c3f8585037eef90c8d77dd83dbc37b2bc2"
+        },
+        {
+          "file": "backtesting/backtester.py",
+          "git_blob_oid": "e2cb7e3178e84b85daffa54d52712083520c4b50",
+          "sha256_lf": "9398c74b6065f064b3ec5cb6987d9831cf0229c54ca386f8ad75a80df6522fda",
+          "sha256_raw": "9398c74b6065f064b3ec5cb6987d9831cf0229c54ca386f8ad75a80df6522fda"
+        },
+        {
+          "file": "core/paper_trading/paper_trading_engine.py",
+          "git_blob_oid": "563e3934316db6252b65de8f680166eb408ce228",
+          "sha256_lf": "232468762414941019f3ac9e72d6826c4e8163a5532bbf61999e7ab3e617bf83",
+          "sha256_raw": "232468762414941019f3ac9e72d6826c4e8163a5532bbf61999e7ab3e617bf83"
+        },
+        {
+          "file": "config/risk_settings.py",
+          "git_blob_oid": "c3295a938af70c7903e7eaf5407ad2911f99415d",
+          "sha256_lf": "65564b5cbc4e3e2f2550380502ae07759c20cc9a2acfb672c88538809c59797b",
+          "sha256_raw": "65564b5cbc4e3e2f2550380502ae07759c20cc9a2acfb672c88538809c59797b"
+        }
+      ]
+    }
+  },
+  "historical_test_pin": {
+    "sha256": "c52e648ca24fb03b9ba818ebb766e32b035b48df201d5a2a1b254d04f7f3d5a6",
+    "status": "UNRECONSTRUCTED_FROM_AVAILABLE_BLOBS",
+    "note": "No exact pre-commit working-tree bytes are established by this bundle."
+  }
+}
