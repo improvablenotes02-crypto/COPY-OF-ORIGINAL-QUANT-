@@ -62,6 +62,15 @@ ALLOWED_SECRET_NAMES = {".env.example"}
 def _ignored_untracked_paths(root: Path, paths: list[str]) -> set[str]:
     if not paths or not (root / ".git").exists():
         return set()
+    repository = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=root,
+        capture_output=True,
+    )
+    if repository.returncode:
+        return set()
+    if Path(repository.stdout.decode("utf-8").strip()).resolve() != root.resolve():
+        return set()
     result = subprocess.run(
         ["git", "check-ignore", "-z", "--stdin"],
         input="".join(path + "\0" for path in paths).encode("utf-8"),
