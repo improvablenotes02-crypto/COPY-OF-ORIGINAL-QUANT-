@@ -9,6 +9,7 @@ Exclusions (explicit, narrow):
   * BUILD_MANIFEST.sha256 (self)
   * __pycache__, *.pyc/*.pyo, .pytest_cache, .venv/venv, .git, logs
   * .env, .env.*, env/.env.py and other credential-bearing paths
+  * untracked files ignored by Git when generating from a checkout
   * QuantEngine_*.zip (prior build artifacts, not source; research
     evidence ZIPs under research/ ARE covered)
   * _phase154_extract/ (forensic working copy, not source)
@@ -28,6 +29,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -57,6 +59,26 @@ PROHIBITED_SUFFIXES = {".pem", ".key", ".secret", ".secrets", ".p12",
 ALLOWED_SECRET_NAMES = {".env.example"}
 
 
+def _ignored_untracked_paths(root: Path, paths: list[str]) -> set[str]:
+    if not paths or not (root / ".git").exists():
+        return set()
+    result = subprocess.run(
+        ["git", "check-ignore", "-z", "--stdin"],
+        input="".join(path + "\0" for path in paths).encode("utf-8"),
+        cwd=root,
+        capture_output=True,
+    )
+    if result.returncode not in (0, 1):
+        raise RuntimeError(
+            "git check-ignore failed: "
+            + result.stderr.decode("utf-8", errors="replace").strip())
+    return {
+        path.decode("utf-8")
+        for path in result.stdout.rstrip(b"\0").split(b"\0")
+        if path
+    }
+
+
 def package_files(root: Path):
     out = []
     for path in root.rglob("*"):
@@ -82,7 +104,8 @@ def package_files(root: Path):
         if path.name.startswith("QuantEngine_") and path.suffix.lower() == ".zip":
             continue  # build artifacts of prior candidates, not source
         out.append(rel.as_posix())
-    return sorted(out)
+    ignored = _ignored_untracked_paths(root, out)
+    return sorted(set(out) - ignored)
 
 
 def is_secret_bearing_name(rel: str) -> bool:

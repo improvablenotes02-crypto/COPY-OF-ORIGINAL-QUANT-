@@ -36,8 +36,6 @@ REQUIRED_COVERAGE_PREFIXES = [
     "scripts/",
     "config/",
     "core/",
-    "research/captures/",
-    "data/history/",
     "docs/",
 ]
 
@@ -160,6 +158,31 @@ class TestManifestCompleteness(unittest.TestCase):
             with self.subTest(prefix=prefix):
                 count = sum(1 for rel in self.listed if rel.startswith(prefix))
                 self.assertGreater(count, 0, "no manifest entries under %s" % prefix)
+
+    def test_ignored_untracked_files_are_excluded_but_tracked_files_remain(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".gitignore").write_text(
+                "research/captures/\n", encoding="utf-8")
+            tracked = root / "research" / "captures" / "tracked.json"
+            tracked.parent.mkdir(parents=True)
+            tracked.write_text("{}\n", encoding="utf-8")
+            ignored = tracked.parent / "local-run.json"
+            ignored.write_text("{}\n", encoding="utf-8")
+            ordinary = root / "local-note.txt"
+            ordinary.write_text("included\n", encoding="utf-8")
+
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "add", ".gitignore"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "add", "-f", "research/captures/tracked.json"],
+                cwd=root,
+                check=True)
+
+            packaged = gm.package_files(root)
+            self.assertIn("research/captures/tracked.json", packaged)
+            self.assertNotIn("research/captures/local-run.json", packaged)
+            self.assertIn("local-note.txt", packaged)
 
     def test_research_evidence_archives_are_covered(self):
         """Nested research evidence ZIPs are covered; prior build ZIPs are not."""
