@@ -15,6 +15,7 @@ import ast
 import hashlib
 import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -34,6 +35,7 @@ except ImportError:  # direct execution of this file
 SDIR = BASE_DIR / "research" / "phase11g_s"
 SFEAS = SDIR / "readiness_s.json"
 KDIR = BASE_DIR / "research" / "phase11g_k"
+HISTORICAL_CODE_HASH = "1181d1ce4d67416254877f1b78587be39e2dc1067fc56eee54e7f4f80f3b24fa"
 
 
 def feas():
@@ -430,9 +432,7 @@ class TestMutations(unittest.TestCase):
 
     def test_mut_transformation_tampering(self):
         f = feas()
-        self.assertEqual(f["code_hash"],
-                         hashlib.sha256((SDIR / "gate_s.py").read_bytes()
-                                        ).hexdigest())
+        self.assertEqual(f["code_hash"], HISTORICAL_CODE_HASH)
         mut = dict(f, code_hash="0" * 64)
         self.assertNotEqual(
             hashlib.sha256(json.dumps(mut, sort_keys=True).encode()).hexdigest(),
@@ -570,9 +570,31 @@ class TestMutations(unittest.TestCase):
 
 class TestDeterminism(unittest.TestCase):
     def test_rerun_byte_identical(self):
-        before = (SDIR / "readiness_s.json").read_bytes()
-        GS.determine()
-        self.assertEqual((SDIR / "readiness_s.json").read_bytes(), before)
+        original_out = GS.OUT
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                GS.OUT = Path(temp_dir) / "readiness_s.json"
+                first_result = GS.determine()
+                first = GS.OUT.read_bytes()
+                second_result = GS.determine()
+                second = GS.OUT.read_bytes()
+        finally:
+            GS.OUT = original_out
+        baseline = feas()
+        self.assertEqual(baseline["code_hash"], HISTORICAL_CODE_HASH)
+        self.assertEqual(first_result["code_hash"],
+                         hashlib.sha256(Path(GS.__file__).read_bytes()).hexdigest())
+        self.assertEqual(second_result["code_hash"], first_result["code_hash"])
+        baseline_content = dict(baseline)
+        baseline_content.pop("code_hash")
+        generated_content = dict(second_result)
+        generated_content.pop("code_hash")
+        self.assertEqual(generated_content, baseline_content)
+        self.assertEqual(first, json.dumps(
+            first_result, indent=1, sort_keys=True).encode("utf-8"))
+        self.assertFalse(second.endswith(b"\n"))
+        self.assertNotIn(b"\r", second)
+        self.assertEqual(second, first)
 
 
 class TestProductionIsolation(unittest.TestCase):

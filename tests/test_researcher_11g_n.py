@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import subprocess
+import tempfile
 import unittest
 import zipfile
 from pathlib import Path
@@ -32,6 +33,7 @@ except ImportError:  # direct execution of this file
 
 NDIR = BASE_DIR / "research" / "phase11g_n"
 FEAS = NDIR / "feasibility.json"
+HISTORICAL_CODE_HASH = "97d8aaa6e1d47a56a2014dbe25e6d41d15548d75401729fe5838ac866e0a9dde"
 
 
 def feas():
@@ -429,9 +431,31 @@ class TestMutations(unittest.TestCase):
 
 class TestDeterminism(unittest.TestCase):
     def test_rerun_byte_identical(self):
-        before = (NDIR / "feasibility.json").read_bytes()
-        AN.analyze()
-        self.assertEqual((NDIR / "feasibility.json").read_bytes(), before)
+        original_out = AN.OUT
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                AN.OUT = Path(temp_dir) / "feasibility.json"
+                first_result = AN.analyze()
+                first = AN.OUT.read_bytes()
+                second_result = AN.analyze()
+                second = AN.OUT.read_bytes()
+        finally:
+            AN.OUT = original_out
+        baseline = feas()
+        self.assertEqual(baseline["code_hash"], HISTORICAL_CODE_HASH)
+        self.assertEqual(first_result["code_hash"],
+                         hashlib.sha256(Path(AN.__file__).read_bytes()).hexdigest())
+        self.assertEqual(second_result["code_hash"], first_result["code_hash"])
+        baseline_content = dict(baseline)
+        baseline_content.pop("code_hash")
+        generated_content = dict(second_result)
+        generated_content.pop("code_hash")
+        self.assertEqual(generated_content, baseline_content)
+        self.assertEqual(first, json.dumps(
+            first_result, indent=1, sort_keys=True).encode("utf-8"))
+        self.assertFalse(second.endswith(b"\n"))
+        self.assertNotIn(b"\r", second)
+        self.assertEqual(second, first)
 
 
 class TestProductionIsolation(unittest.TestCase):

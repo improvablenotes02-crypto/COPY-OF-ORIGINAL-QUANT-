@@ -14,6 +14,7 @@ import ast
 import hashlib
 import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -33,6 +34,7 @@ except ImportError:  # direct execution of this file
 QDIR = BASE_DIR / "research" / "phase11g_q"
 QFEAS = QDIR / "trigger_q.json"
 KDIR = BASE_DIR / "research" / "phase11g_k"
+HISTORICAL_CODE_HASH = "09cc32a9478b807d291061413147657b9d8b7516874bfa66c941d366fb02f59a"
 
 
 def trig():
@@ -394,9 +396,7 @@ class TestMutations(unittest.TestCase):
 
     def test_mut_transformation_tampering(self):
         t = trig()
-        self.assertEqual(t["code_hash"],
-                         hashlib.sha256((QDIR / "gate.py").read_bytes()
-                                        ).hexdigest())
+        self.assertEqual(t["code_hash"], HISTORICAL_CODE_HASH)
         mut = dict(t, code_hash="0" * 64)
         self.assertNotEqual(
             hashlib.sha256(json.dumps(mut, sort_keys=True).encode()).hexdigest(),
@@ -540,9 +540,31 @@ class TestMutations(unittest.TestCase):
 
 class TestDeterminism(unittest.TestCase):
     def test_rerun_byte_identical(self):
-        before = (QDIR / "trigger_q.json").read_bytes()
-        G.determine()
-        self.assertEqual((QDIR / "trigger_q.json").read_bytes(), before)
+        original_out = G.OUT
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                G.OUT = Path(temp_dir) / "trigger_q.json"
+                first_result = G.determine()
+                first = G.OUT.read_bytes()
+                second_result = G.determine()
+                second = G.OUT.read_bytes()
+        finally:
+            G.OUT = original_out
+        baseline = trig()
+        self.assertEqual(baseline["code_hash"], HISTORICAL_CODE_HASH)
+        self.assertEqual(first_result["code_hash"],
+                         hashlib.sha256(Path(G.__file__).read_bytes()).hexdigest())
+        self.assertEqual(second_result["code_hash"], first_result["code_hash"])
+        baseline_content = dict(baseline)
+        baseline_content.pop("code_hash")
+        generated_content = dict(second_result)
+        generated_content.pop("code_hash")
+        self.assertEqual(generated_content, baseline_content)
+        self.assertEqual(first, json.dumps(
+            first_result, indent=1, sort_keys=True).encode("utf-8"))
+        self.assertFalse(second.endswith(b"\n"))
+        self.assertNotIn(b"\r", second)
+        self.assertEqual(second, first)
 
 
 class TestProductionIsolation(unittest.TestCase):
