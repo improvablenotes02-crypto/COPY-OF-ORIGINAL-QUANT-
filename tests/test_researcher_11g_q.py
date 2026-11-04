@@ -13,6 +13,7 @@ never-promotion. No economics anywhere; no D3 contact.
 import ast
 import hashlib
 import json
+import pytest
 import subprocess
 import tempfile
 import unittest
@@ -28,8 +29,12 @@ from research.phase11g_q.report_q import QExecutionReport  # noqa: E402
 
 try:  # package import when pytest loads tests.test_*
     from tests.evidence_mode import require_git_fact
+    from tests.git_provenance import (
+        PINNED_ANCESTORS, assert_current_branch, assert_historical_ancestor)
 except ImportError:  # direct execution of this file
     from evidence_mode import require_git_fact
+    from git_provenance import (
+        PINNED_ANCESTORS, assert_current_branch, assert_historical_ancestor)
 
 QDIR = BASE_DIR / "research" / "phase11g_q"
 QFEAS = QDIR / "trigger_q.json"
@@ -75,18 +80,15 @@ def fixture_bars(csv_text, symbol="BTCUSDT"):
 
 
 class TestStartingState(unittest.TestCase):
+    @pytest.mark.historical_git_provenance
     def test_head_descends_from_p(self):
         require_git_fact(self, 'test_researcher_11g_q::TestStartingState::test_head_descends_from_p')
-        r = subprocess.run(["git", "merge-base", "--is-ancestor",
-                            "e1483a1090ce04afb8533ced9f1d1acf6c542bff", "HEAD"],
-                           capture_output=True, cwd=str(BASE_DIR))
-        self.assertEqual(r.returncode, 0)
+        assert_historical_ancestor(self, PINNED_ANCESTORS["Q"], BASE_DIR)
 
+    @pytest.mark.historical_git_provenance
     def test_branch_main(self):
         require_git_fact(self, 'test_researcher_11g_q::TestStartingState::test_branch_main')
-        r = subprocess.run(["git", "branch", "--show-current"],
-                           capture_output=True, text=True, cwd=str(BASE_DIR))
-        self.assertEqual(r.stdout.strip(), "main")
+        assert_current_branch(self, BASE_DIR)
 
     def test_tree_only_expected(self):
         require_git_fact(self, 'test_researcher_11g_q::TestStartingState::test_tree_only_expected')

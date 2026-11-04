@@ -36,6 +36,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 _ROOT = Path(__file__).resolve().parents[1]
 _MANIFEST = _ROOT / "BUILD_MANIFEST.sha256"
 
@@ -152,6 +154,51 @@ _guard = _SnapshotGuard()
 
 def pytest_configure(config):
     _guard.load()
+    from tests.git_provenance import configure_historical_gate
+    from tests.evidence_mode import configure_strict_git_evidence
+
+    strict_gate = config.getoption("--historical-git-gate")
+    configure_historical_gate(strict_gate)
+    configure_strict_git_evidence(strict_gate)
+
+
+def pytest_sessionstart(session):
+    if not session.config.getoption("--historical-git-gate"):
+        return
+
+    from tests import evidence_mode
+
+    mode, evidence = evidence_mode.detect_mode(_ROOT)
+    if mode != evidence_mode.MODE_GIT_CHECKOUT:
+        pytest.exit(
+            "BLOCKED_EVIDENCE: historical Git gate requires a valid Git "
+            "checkout; detection evidence: %s" % json.dumps(evidence, sort_keys=True),
+            returncode=1,
+        )
+
+
+def pytest_collection_finish(session):
+    if not session.config.getoption("--historical-git-gate"):
+        return
+
+    from tests.git_provenance import validate_historical_collection
+
+    try:
+        validate_historical_collection(session.items)
+    except AssertionError as exc:
+        pytest.exit(
+            "HISTORICAL_GATE_COLLECTION_FAILED: %s" % exc,
+            returncode=1,
+        )
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--historical-git-gate",
+        action="store_true",
+        default=False,
+        help="fail closed when required historical Git evidence is unavailable",
+    )
 
 
 def pytest_runtest_teardown(item, nextitem):

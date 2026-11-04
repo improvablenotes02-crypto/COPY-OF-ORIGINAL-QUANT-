@@ -52,6 +52,13 @@ STATUS_VERIFIED = "VERIFIED"
 
 SKIP_PREFIX = "BLOCKED_EVIDENCE"
 
+_STRICT_GIT_EVIDENCE = False
+
+
+def configure_strict_git_evidence(enabled: bool) -> None:
+    global _STRICT_GIT_EVIDENCE
+    _STRICT_GIT_EVIDENCE = enabled
+
 
 def _git(args: list[str], cwd: Path | None = None, timeout: int = 30):
     return subprocess.run(["git", *args], capture_output=True, text=True,
@@ -129,6 +136,8 @@ def require_git_fact(case, fact_id: str, detail: str = "") -> None:
     )
     if detail:
         reason += " Required: %s." % detail
+    if _STRICT_GIT_EVIDENCE:
+        case.fail(reason)
     case.skipTest(reason)
 
 

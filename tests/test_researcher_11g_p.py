@@ -10,6 +10,7 @@ boundary. No economics anywhere; no D3 contact.
 import ast
 import hashlib
 import json
+import pytest
 import subprocess
 import tempfile
 import unittest
@@ -26,8 +27,12 @@ from research.phase11g_p.report_p import (  # noqa: E402
 
 try:  # package import when pytest loads tests.test_*
     from tests.evidence_mode import require_git_fact
+    from tests.git_provenance import (
+        PINNED_ANCESTORS, assert_current_branch, assert_historical_ancestor)
 except ImportError:  # direct execution of this file
     from evidence_mode import require_git_fact
+    from git_provenance import (
+        PINNED_ANCESTORS, assert_current_branch, assert_historical_ancestor)
 
 PDIR = BASE_DIR / "research" / "phase11g_p"
 PFEAS = PDIR / "readiness_p.json"
@@ -72,18 +77,15 @@ def fixture_bars(csv_text, symbol="BTCUSDT"):
 
 
 class TestRepositoryHead(unittest.TestCase):
+    @pytest.mark.historical_git_provenance
     def test_starting_head_ancestor(self):
         require_git_fact(self, 'test_researcher_11g_p::TestRepositoryHead::test_starting_head_ancestor')
-        r = subprocess.run(["git", "merge-base", "--is-ancestor",
-                            "6a961459aed7051564c17a4ab88cdf0814ee5b1a", "HEAD"],
-                           capture_output=True, cwd=str(BASE_DIR))
-        self.assertEqual(r.returncode, 0)
+        assert_historical_ancestor(self, PINNED_ANCESTORS["P"], BASE_DIR)
 
+    @pytest.mark.historical_git_provenance
     def test_branch_main(self):
         require_git_fact(self, 'test_researcher_11g_p::TestRepositoryHead::test_branch_main')
-        r = subprocess.run(["git", "branch", "--show-current"],
-                           capture_output=True, text=True, cwd=str(BASE_DIR))
-        self.assertEqual(r.stdout.strip(), "main")
+        assert_current_branch(self, BASE_DIR)
 
     def test_tree_only_expected(self):
         require_git_fact(self, 'test_researcher_11g_p::TestRepositoryHead::test_tree_only_expected')
