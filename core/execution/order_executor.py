@@ -25,7 +25,7 @@ from core.exchanges.delta.delta_exchange import DeltaExchange
 
 from core.exchanges.delta.write_authority import token_for_live_safety
 
-from core.execution.live_safety_gate import LiveSafetyGate
+from core.execution.live_safety_gate import LiveBlockedError, LiveSafetyGate
 from core.execution.order_ack import classify_ack
 
 from core.risk.costs import post_cost_rr
@@ -228,6 +228,14 @@ class DeltaOrderExecutor:
             )
 
         self._require_execution_evidence(contract, intent.symbol)
+
+        # Production-minted LIVE authorization requires a durable
+        # reservation store. The explicitly test-only token is confined
+        # to offline fake-transport tests.
+        if not safety.test_only and self.submission_journal is None:
+            raise LiveBlockedError(
+                "LIVE EXECUTION REFUSED: durable submission journal is required"
+            )
 
         payload = self._validated_payload(intent, contract)
 
