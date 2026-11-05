@@ -71,13 +71,13 @@ def test_strategy_change_changes_execution_fingerprint_not_payload_hash():
     assert one.evidence.execution_fingerprint != two.evidence.execution_fingerprint
 
 
-@pytest.mark.parametrize("strategy,configuration,engine", [
+@pytest.mark.parametrize("strategy,configuration,engine_fp", [
     ("a" * 64, None, None),
     (None, "b" * 64, None),
     ("a" * 64, "b" * 64, None),
     ("not-a-sha256", "b" * 64, "c" * 64),
 ])
-def test_incomplete_or_malformed_fingerprints_fail_before_replay(strategy, configuration, engine):
+def test_incomplete_or_malformed_fingerprints_fail_before_replay(strategy, configuration, engine_fp):
     candles, provenance = _inputs()
     engine = _Harness()
     with pytest.raises(ScopeProvenanceError, match="fingerprint"):
@@ -85,10 +85,24 @@ def test_incomplete_or_malformed_fingerprints_fail_before_replay(strategy, confi
             candles, [provenance],
             strategy_fingerprint=strategy,
             configuration_fingerprint=configuration,
-            engine_fingerprint=engine,
+            engine_fingerprint=engine_fp,
         )
     assert engine.calls == 0
 
+
+
+def test_engine_change_changes_execution_fingerprint_not_payload_hash():
+    candles, provenance = _inputs()
+    one = _Harness().run_scoped_with_evidence(
+        candles, [provenance], strategy_fingerprint="a" * 64,
+        configuration_fingerprint="b" * 64, engine_fingerprint="d" * 64,
+    )
+    two = _Harness().run_scoped_with_evidence(
+        candles, [provenance], strategy_fingerprint="a" * 64,
+        configuration_fingerprint="b" * 64, engine_fingerprint="e" * 64,
+    )
+    assert one.evidence.payload_hash == two.evidence.payload_hash
+    assert one.evidence.execution_fingerprint != two.evidence.execution_fingerprint
 
 def test_dataset_only_evidence_remains_available_without_fingerprints():
     candles, provenance = _inputs()
