@@ -1,199 +1,149 @@
 """
-====================================================
+Delta environment and region authority.
 
-Delta Environment Authority (sandbox/production separation)
+Global and India are separate venues with different REST/WebSocket hosts
+and environment-bound credentials. Callers must select both environment
+(PRODUCTION/SANDBOX) and region (GLOBAL/INDIA) through this module.
 
-ONE authoritative environment-to-endpoint mapping for every
-Delta REST path. Deterministic, explicit, centrally testable,
-impossible to silently fall back.
-
-Environments:
-
-    PRODUCTION  live funds. REST https://api.delta.exchange
-                (the pre-existing default, unchanged).
-    SANDBOX     simulation funds. REST
-                https://testnet-api.delta.exchange, verified
-                LIVE 2026-09-23 as a responding demo-shaped
-                catalog (Global symbology, 285 products vs 408
-                production, zero commission rates). See
-                docs/integrations/DELTA_ENVIRONMENTS.md.
-    UNKNOWN     anything else (including unset). Private and
-                state-changing operations MUST fail closed.
-
-Fail-closed rules (all enforced here, all tested):
-
-  * UNKNOWN never resolves to an endpoint.
-  * SANDBOX + production endpoint is refused.
-  * PRODUCTION + sandbox endpoint is refused.
-  * Sandbox construction requires sandbox-sourced credentials
-    (DELTA_SANDBOX_API_KEY/SECRET); production credentials are
-    never reinterpreted as sandbox credentials (the venue binds
-    keys to environments: demo keys work only on testnet).
-  * Missing sandbox credentials refuse (SANDBOX_CREDENTIALS =
-    UNAVAILABLE) instead of falling back to production keys.
-  * Sandbox WebSocket is UNVERIFIED (no confirmed host): any
-    sandbox WS resolution is refused until a host is verified.
-
-What this module does NOT change (deliberate):
-
-  * DeltaREST / DeltaSignedREST / DeltaExchange default
-    constructors keep their exact production behavior
-    (production default preserved and pinned by Test A).
-    Environment selection happens ONLY through the explicit
-    factory below — never implicitly, never by credential
-    sniffing.
-
-====================================================
+Legacy no-region calls intentionally remain GLOBAL for compatibility.
+New deployments should set DELTA_REGION explicitly. No credential or
+endpoint is ever inferred from another region or environment.
 """
-
 from __future__ import annotations
-
 
 PRODUCTION = "PRODUCTION"
 SANDBOX = "SANDBOX"
 UNKNOWN = "UNKNOWN"
+GLOBAL = "GLOBAL"
+INDIA = "INDIA"
+UNKNOWN_REGION = "UNKNOWN"
 
 ENVIRONMENTS = (PRODUCTION, SANDBOX)
+REGIONS = (GLOBAL, INDIA)
 
-PRODUCTION_REST_URL = "https://api.delta.exchange"
-SANDBOX_REST_URL = "https://testnet-api.delta.exchange"
-
-PRODUCTION_WS_URL = "wss://public-socket.delta.exchange"
-
-#: Sandbox WebSocket host: UNVERIFIED (no confirmed testnet WS
-#: host). Resolving a sandbox WS endpoint is refused until a
-#: host is verified against official venue evidence.
-SANDBOX_WS_URL: str | None = None
-
-REST_ENDPOINTS = {
-    PRODUCTION: PRODUCTION_REST_URL,
-    SANDBOX: SANDBOX_REST_URL,
+_ENDPOINTS = {
+    (GLOBAL, PRODUCTION): {
+        "rest": "https://api.delta.exchange",
+        "public_ws": "wss://public-socket.delta.exchange",
+        "private_ws": "wss://socket.delta.exchange",
+    },
+    (GLOBAL, SANDBOX): {
+        "rest": "https://testnet-api.delta.exchange",
+        "public_ws": None,
+        "private_ws": None,
+    },
+    (INDIA, PRODUCTION): {
+        "rest": "https://api.india.delta.exchange",
+        "public_ws": "wss://public-socket.india.delta.exchange",
+        "private_ws": "wss://socket.india.delta.exchange",
+    },
+    (INDIA, SANDBOX): {
+        "rest": "https://cdn-ind.testnet.deltaex.org",
+        "public_ws": "wss://socket-ind-pub.testnet.deltaex.org",
+        "private_ws": "wss://socket-ind.testnet.deltaex.org",
+    },
 }
 
+# Compatibility constants retained for existing Global callers.
+PRODUCTION_REST_URL = _ENDPOINTS[(GLOBAL, PRODUCTION)]["rest"]
+SANDBOX_REST_URL = _ENDPOINTS[(GLOBAL, SANDBOX)]["rest"]
+PRODUCTION_WS_URL = _ENDPOINTS[(GLOBAL, PRODUCTION)]["public_ws"]
+SANDBOX_WS_URL: str | None = None
 
 class EnvironmentError(ValueError):
-    """An environment/endpoint/credential combination is unsafe."""
-
+    """An environment/region/endpoint/credential combination is unsafe."""
 
 def resolve_environment(name: object) -> str:
-    """Normalize an environment name; anything unrecognized (or
-    missing) is UNKNOWN. Pure, deterministic."""
     if isinstance(name, str) and name.strip().upper() in ENVIRONMENTS:
         return name.strip().upper()
     return UNKNOWN
 
+def resolve_region(name: object = GLOBAL) -> str:
+    if isinstance(name, str) and name.strip().upper() in REGIONS:
+        return name.strip().upper()
+    return UNKNOWN_REGION
 
-def is_production_endpoint(url: object) -> bool:
-    """True only for the exact production REST host."""
-    return isinstance(url, str) and url.strip().rstrip("/") == PRODUCTION_REST_URL
-
-
-def is_sandbox_endpoint(url: object) -> bool:
-    """True only for the verified sandbox REST host."""
-    return isinstance(url, str) and url.strip().rstrip("/") == SANDBOX_REST_URL
-
-
-def resolve_rest_endpoint(environment: object) -> str:
-    """Return the authoritative REST URL for an environment.
-
-    UNKNOWN (or anything invalid) raises: there is no fallback.
-    """
-    normalized = resolve_environment(environment)
-    if normalized == UNKNOWN:
+def _endpoint(environment: object, region: object, kind: str) -> str:
+    env = resolve_environment(environment)
+    reg = resolve_region(region)
+    if env == UNKNOWN or reg == UNKNOWN_REGION:
+        raise EnvironmentError("UNKNOWN Delta environment or region refuses endpoint resolution")
+    value = _ENDPOINTS[(reg, env)][kind]
+    if not isinstance(value, str) or not value:
         raise EnvironmentError(
-            "UNKNOWN environment refuses endpoint resolution "
-            "(no implicit production fallback)")
-    return REST_ENDPOINTS[normalized]
+            f"{reg} {env} {kind} endpoint is unverified; refusing fallback")
+    return value
 
+def resolve_rest_endpoint(environment: object, region: object = GLOBAL) -> str:
+    return _endpoint(environment, region, "rest")
 
-def resolve_ws_endpoint(environment: object) -> str:
-    """Return the authoritative WS URL for an environment.
+def resolve_ws_endpoint(environment: object, region: object = GLOBAL) -> str:
+    """Resolve the public market-data WebSocket endpoint."""
+    return _endpoint(environment, region, "public_ws")
 
-    Production resolves to the existing public socket. Sandbox
-    raises until a testnet WS host is verified. UNKNOWN raises.
-    """
-    normalized = resolve_environment(environment)
-    if normalized == PRODUCTION:
-        return PRODUCTION_WS_URL
-    if normalized == SANDBOX:
-        raise EnvironmentError(
-            "sandbox WebSocket host is UNVERIFIED; refusing "
-            "until a testnet WS endpoint is confirmed")
-    raise EnvironmentError(
-        "UNKNOWN environment refuses endpoint resolution")
+def resolve_private_ws_endpoint(environment: object, region: object = GLOBAL) -> str:
+    """Resolve the authenticated private WebSocket endpoint."""
+    return _endpoint(environment, region, "private_ws")
 
-
-def assert_endpoint_for_environment(environment: object,
-                                    url: object) -> str:
-    """Fail closed on any endpoint/environment mismatch.
-
-    Returns the normalized endpoint on success. Refuses:
-    SANDBOX+production host, PRODUCTION+sandbox host, UNKNOWN
-    with anything, malformed URLs, and unknown hosts.
-    """
-    normalized = resolve_environment(environment)
-    if normalized == UNKNOWN:
-        raise EnvironmentError(
-            "UNKNOWN environment cannot authorize an endpoint")
+def _canonical_url(url: object) -> str:
     if not isinstance(url, str) or not url.strip():
         raise EnvironmentError("endpoint is missing or malformed")
-    canonical = url.strip().rstrip("/")
-    if normalized == SANDBOX and not is_sandbox_endpoint(canonical):
+    value = url.strip().rstrip("/")
+    from urllib.parse import urlsplit
+    parsed = urlsplit(value)
+    if parsed.scheme not in ("https", "wss") or not parsed.netloc or parsed.path or parsed.query or parsed.fragment:
+        raise EnvironmentError("endpoint must be an exact HTTPS/WSS origin")
+    return value
+
+def assert_endpoint_for_environment(
+    environment: object, url: object, region: object = GLOBAL
+) -> str:
+    env = resolve_environment(environment)
+    reg = resolve_region(region)
+    if env == UNKNOWN or reg == UNKNOWN_REGION:
+        raise EnvironmentError("UNKNOWN Delta environment or region cannot authorize an endpoint")
+    canonical = _canonical_url(url)
+    expected = resolve_rest_endpoint(env, reg)
+    if canonical != expected:
         raise EnvironmentError(
-            "SANDBOX environment refuses non-sandbox endpoint %r "
-            "(production fallback is never silent)" % url)
-    if normalized == PRODUCTION and not is_production_endpoint(canonical):
-        raise EnvironmentError(
-            "PRODUCTION environment refuses non-production "
-            "endpoint %r" % url)
+            f"{reg} {env} refuses endpoint {canonical!r}; expected {expected!r}")
     return canonical
 
-
-def credentials_for(environment: object) -> tuple[str, str]:
-    """Return the (key, secret) sourced for an environment.
-
-    Sandbox credentials come ONLY from DELTA_SANDBOX_API_KEY /
-    DELTA_SANDBOX_API_SECRET; production credentials are never
-    reinterpreted. Missing or UNKNOWN refuses instead of
-    falling back. Values are returned, never logged here —
-    callers must never print them.
-    """
+def credentials_for(environment: object, region: object = GLOBAL) -> tuple[str, str]:
+    """Return only credentials explicitly provisioned for this venue and region."""
     from config.settings import settings
+    env = resolve_environment(environment)
+    reg = resolve_region(region)
+    if env == UNKNOWN or reg == UNKNOWN_REGION:
+        raise EnvironmentError("UNKNOWN Delta environment or region refuses credential resolution")
+    names = {
+        (GLOBAL, PRODUCTION): ("API_KEY", "API_SECRET"),
+        (GLOBAL, SANDBOX): ("SANDBOX_API_KEY", "SANDBOX_API_SECRET"),
+        (INDIA, PRODUCTION): ("INDIA_API_KEY", "INDIA_API_SECRET"),
+        (INDIA, SANDBOX): ("INDIA_SANDBOX_API_KEY", "INDIA_SANDBOX_API_SECRET"),
+    }[(reg, env)]
+    key = str(getattr(settings, names[0], "") or "")
+    secret = str(getattr(settings, names[1], "") or "")
+    if not key or not secret:
+        raise EnvironmentError(
+            f"{reg} {env} credentials are unavailable; no cross-region or cross-environment fallback is permitted")
+    return key, secret
 
-    normalized = resolve_environment(environment)
-    if normalized == SANDBOX:
-        key = str(getattr(settings, "SANDBOX_API_KEY", "") or "")
-        secret = str(getattr(settings, "SANDBOX_API_SECRET", "") or "")
-        if not key or not secret:
-            raise EnvironmentError(
-                "SANDBOX_CREDENTIALS = UNAVAILABLE "
-                "(DELTA_SANDBOX_API_KEY/SECRET not configured; "
-                "production credentials are never substituted)")
-        return key, secret
-    if normalized == PRODUCTION:
-        key = str(getattr(settings, "API_KEY", "") or "")
-        secret = str(getattr(settings, "API_SECRET", "") or "")
-        if not key or not secret:
-            raise EnvironmentError(
-                "production credentials are not configured")
-        return key, secret
-    raise EnvironmentError(
-        "UNKNOWN environment refuses credential resolution")
-
-
-def sandbox_client() -> object:
-    """Build an explicitly-sandbox DeltaExchange (fail-closed).
-
-    Resolves the verified sandbox endpoint, sources sandbox-only
-    credentials, validates the combination, and constructs the
-    client against the sandbox host. Any failure raises before
-    any transport exists. Reuses DeltaExchange/DeltaSignedREST —
-    no second credential system.
-    """
+def client_for(environment: object, region: object = GLOBAL) -> object:
+    """Construct a Delta client with region/environment-pinned credentials and REST host."""
     from core.exchanges.delta.delta_exchange import DeltaExchange
+    env = resolve_environment(environment)
+    reg = resolve_region(region)
+    endpoint = assert_endpoint_for_environment(env, resolve_rest_endpoint(env, reg), reg)
+    key, secret = credentials_for(env, reg)
+    return DeltaExchange(api_key=key, api_secret=secret, base_url=endpoint)
 
-    endpoint = assert_endpoint_for_environment(
-        SANDBOX, resolve_rest_endpoint(SANDBOX))
-    key, secret = credentials_for(SANDBOX)
-    return DeltaExchange(api_key=key, api_secret=secret,
-                         base_url=endpoint)
+def sandbox_client(region: object = GLOBAL) -> object:
+    """Backward-compatible explicit sandbox factory; region defaults to legacy GLOBAL."""
+    return client_for(SANDBOX, region)
+
+def india_sandbox_client() -> object:
+    return client_for(SANDBOX, INDIA)
+
+def india_production_client() -> object:
+    return client_for(PRODUCTION, INDIA)
