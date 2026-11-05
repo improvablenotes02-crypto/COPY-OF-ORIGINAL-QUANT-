@@ -81,6 +81,10 @@ def reconcile_submission(
         return {"resolved": False, "state": UNKNOWN, "reason": "no matching venue history record"}
 
     record = matches[0]
+    for field, expected, label in (("venue", str(venue), "venue"), ("account_id", str(account_id), "account"), ("accountId", str(account_id), "account")):
+        observed = record.get(field)
+        if observed not in (None, "") and str(observed).strip().lower() != expected.strip().lower():
+            raise VenueHistoryEvidenceError(f"matched order {label} scope mismatch")
     verdict = classify_ack(record)
     if verdict.state not in RESOLVABLE:
         return {"resolved": False, "state": UNKNOWN, "reason": verdict.detail}
@@ -89,9 +93,12 @@ def reconcile_submission(
     if row is None:
         raise SubmissionJournalError("submission reservation not found")
     digest = _canonical_digest({
+        "evidence_schema": "quantengine.venue-history.v2",
         "venue": str(venue), "account_id": str(account_id),
         "source": str(source), "snapshot_as_of_ns": as_of,
-        "client_order_id": str(client_order_id), "record": record,
+        "complete": True, "client_order_id": str(client_order_id),
+        "reservation_payload_sha256": row["payload_sha256"],
+        "orders": list(orders), "matched_record": record,
     })
     detail = (
         f"venue_history:{venue}:{account_id}:{source}:"

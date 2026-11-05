@@ -60,6 +60,20 @@ def _snapshot_age(snapshot, *, now_ns, max_age_ns, label):
     return stamp
 
 
+
+def _validate_explicit_scope(record, *, account_id, venue, label):
+    """Reject contradictory scope fields while allowing providers to omit them."""
+    if not isinstance(record, dict):
+        raise DeltaSubmissionReconciliationError(f"{label} must be a mapping")
+    for field in ("account_id", "accountId"):
+        value = record.get(field)
+        if value not in (None, "") and str(value).strip() != str(account_id):
+            raise DeltaSubmissionReconciliationError(f"{label} account scope mismatch")
+    value = record.get("venue")
+    if value not in (None, "") and str(value).strip().lower() != str(venue).lower():
+        raise DeltaSubmissionReconciliationError(f"{label} venue scope mismatch")
+
+
 def reconcile_delta_submission(
     journal,
     client_order_id: str,
@@ -88,6 +102,8 @@ def reconcile_delta_submission(
     if isinstance(now, bool) or not isinstance(now, int) or now <= 0:
         raise ValueError("now_ns must be a positive integer")
     max_age_ns = int(max_age_seconds * 1_000_000_000)
+    _validate_explicit_scope(order_snapshot, account_id=account, venue="delta", label="order snapshot")
+    _validate_explicit_scope(fill_snapshot, account_id=account, venue="delta", label="fill snapshot")
     order_stamp = _snapshot_age(
         order_snapshot, now_ns=now, max_age_ns=max_age_ns, label="order-history"
     )
@@ -116,6 +132,7 @@ def reconcile_delta_submission(
         }
 
     order = matches[0]
+    _validate_explicit_scope(order, account_id=account, venue="delta", label="matched order")
     if order.get("id") in (None, ""):
         raise DeltaSubmissionReconciliationError("matched order is missing venue order id")
     try:
@@ -131,6 +148,9 @@ def reconcile_delta_submission(
     except DeltaFillEvidenceError as exc:
         raise DeltaSubmissionReconciliationError(str(exc)) from exc
 
+    matching_fill_rows = [row for row in fills if str(row.get("order_id", "")) == str(order["id"])]
+    for fill_row in matching_fill_rows:
+        _validate_explicit_scope(fill_row, account_id=account, venue="delta", label="matched fill")
     verdict = classify_ack(order)
     order_state = verdict.state
     has_fills = fill_evidence["has_fill_evidence"]
@@ -198,17 +218,24 @@ def reconcile_delta_submission(
     if final_state not in _RESOLVABLE:
         return {"resolved": False, "state": UNKNOWN, "reason": "unsupported reconciliation state"}
 
-    if journal.get(key) is None:
+    reservation = journal.get(key)
+    if reservation is None:
         raise SubmissionJournalError("submission reservation not found")
     evidence = {
+        "evidence_schema": "quantengine.delta-dual-history.v2",
+        "reservation_payload_sha256": reservation["payload_sha256"],
         "venue": "delta",
         "account_id": account,
         "client_order_id": key,
         "order_source": order_snapshot["source"],
         "order_snapshot_as_of_ns": order_stamp,
-        "order": order,
+        "order_snapshot_complete": True,
+        "order_snapshot": order_snapshot,
         "fill_source": fill_snapshot["source"],
         "fill_snapshot_as_of_ns": fill_stamp,
+        "fill_snapshot_complete": True,
+        "fill_snapshot": fill_snapshot,
+        "order": order,
         "fill_evidence": fill_evidence,
         "resolved_state": final_state,
     }
