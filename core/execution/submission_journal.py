@@ -264,6 +264,27 @@ class SQLiteOrderSubmissionJournal:
             os.close(descriptor)
 
     @staticmethod
+    def _publish_file(temporary: Path, target: Path, *, overwrite: bool) -> None:
+        """Atomically publish a same-filesystem temporary file.
+
+        Without overwrite, an atomic hard-link create prevents a competing
+        process from replacing an already-published destination. Unsupported
+        filesystems fail closed rather than using a racy check-then-replace.
+        """
+        if overwrite:
+            os.replace(temporary, target)
+            return
+        try:
+            os.link(temporary, target)
+        except FileExistsError as exc:
+            raise SubmissionJournalError("destination already exists") from exc
+        except OSError as exc:
+            raise SubmissionJournalError(
+                "atomic no-overwrite publication is unavailable on this filesystem"
+            ) from exc
+        temporary.unlink()
+
+    @staticmethod
     def _file_sha256(path: Path) -> str:
         digest = hashlib.sha256()
         with path.open("rb") as stream:
@@ -299,9 +320,7 @@ class SQLiteOrderSubmissionJournal:
             self._fsync_file(temporary)
             counts = self._validate_database_file(temporary)
             digest = self._file_sha256(temporary)
-            if target.exists() and not overwrite:
-                raise SubmissionJournalError("backup destination already exists")
-            os.replace(temporary, target)
+            self._publish_file(temporary, target, overwrite=overwrite)
             self._fsync_directory(target.parent)
             return {
                 "path": str(target),
@@ -342,9 +361,7 @@ class SQLiteOrderSubmissionJournal:
                 shutil.copyfile(source, temporary)
                 cls._fsync_file(temporary)
                 cls._validate_database_file(temporary)
-                if target.exists() and not overwrite:
-                    raise SubmissionJournalError("restore destination already exists")
-                os.replace(temporary, target)
+                cls._publish_file(temporary, target, overwrite=overwrite)
                 cls._fsync_directory(target.parent)
             finally:
                 temporary.unlink(missing_ok=True)
