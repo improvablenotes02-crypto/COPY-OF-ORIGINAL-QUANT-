@@ -8,7 +8,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, replace
 import json
 import math
+import re
 import sqlite3
+from datetime import datetime
 import threading
 from typing import Protocol
 
@@ -55,7 +57,12 @@ class AccountRiskRepository(Protocol):
     def settle_reservation(
         self, *, scope: AccountRiskScope, reservation_id: str,
         expected_revision: int, reconciled_state: AccountRiskState,
+        evidence: "AccountRiskReconciliationEvidence",
     ) -> bool: ...
+
+    def get_reservation_evidence(
+        self, *, scope: AccountRiskScope, reservation_id: str,
+    ) -> "AccountRiskReconciliationEvidence | None": ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +90,50 @@ class AccountRiskReservation:
             raise AccountRiskError("reservation notional must be positive")
         if isinstance(self.created_revision, bool) or not isinstance(self.created_revision, int) or self.created_revision < 1:
             raise AccountRiskError("reservation revision must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class AccountRiskReconciliationEvidence:
+    """Complete authenticated exchange evidence authorizing reservation settlement."""
+
+    scope: AccountRiskScope
+    reservation_id: str
+    source: str
+    exchange_order_id: str
+    terminal_status: str
+    observed_at: str
+    snapshot_hash: str
+    identity_verified: bool
+    orders_complete: bool
+    fills_complete: bool
+    positions_complete: bool
+    open_order_absent: bool
+
+    def __post_init__(self):
+        if not isinstance(self.scope, AccountRiskScope):
+            raise AccountRiskError("reconciliation evidence scope is invalid")
+        if not isinstance(self.reservation_id, str) or not self.reservation_id.strip():
+            raise AccountRiskError("reconciliation evidence reservation_id is required")
+        object.__setattr__(self, "reservation_id", self.reservation_id.strip())
+        if self.source != "DELTA_AUTHENTICATED_READ":
+            raise AccountRiskError("reconciliation evidence must come from authenticated Delta reads")
+        if not isinstance(self.exchange_order_id, str) or not self.exchange_order_id.strip():
+            raise AccountRiskError("reconciliation evidence exchange_order_id is required")
+        if self.terminal_status not in {"FILLED", "REJECTED", "CANCELED", "CANCELLED", "EXPIRED"}:
+            raise AccountRiskError("reconciliation evidence must identify a terminal exchange order status")
+        if not isinstance(self.observed_at, str):
+            raise AccountRiskError("reconciliation evidence observed_at must be an ISO timestamp")
+        try:
+            observed = datetime.fromisoformat(self.observed_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise AccountRiskError("reconciliation evidence observed_at is invalid") from exc
+        if observed.tzinfo is None or observed.utcoffset() is None or observed.utcoffset().total_seconds() != 0:
+            raise AccountRiskError("reconciliation evidence observed_at must be UTC-aware")
+        if not isinstance(self.snapshot_hash, str) or re.fullmatch(r"[0-9a-f]{64}", self.snapshot_hash) is None:
+            raise AccountRiskError("reconciliation evidence snapshot_hash must be SHA-256 hex")
+        for name in ("identity_verified", "orders_complete", "fills_complete", "positions_complete", "open_order_absent"):
+            if getattr(self, name) is not True:
+                raise AccountRiskError(f"reconciliation evidence {name} must be true")
 
 
 class SQLiteAccountRiskRepository:
@@ -125,6 +176,18 @@ class SQLiteAccountRiskRepository:
                 created_revision INTEGER NOT NULL CHECK (created_revision > 0),
                 FOREIGN KEY (tenant_id, account_id)
                     REFERENCES account_risk_state (tenant_id, account_id)
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS account_risk_reservation_evidence (
+                reservation_id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                FOREIGN KEY (reservation_id)
+                    REFERENCES account_risk_reservations (reservation_id)
             )
             """
         )
@@ -482,10 +545,15 @@ class SQLiteAccountRiskRepository:
     def settle_reservation(
         self, *, scope: AccountRiskScope, reservation_id: str,
         expected_revision: int, reconciled_state: AccountRiskState,
+        evidence: AccountRiskReconciliationEvidence,
     ) -> bool:
         if not isinstance(scope, AccountRiskScope) or not isinstance(reconciled_state, AccountRiskState):
             raise AccountRiskError("valid account scope and reconciled risk state are required")
         self._validate_state(reconciled_state, scope)
+        if not isinstance(evidence, AccountRiskReconciliationEvidence):
+            raise AccountRiskError("complete authenticated reconciliation evidence is required")
+        if evidence.scope != scope or evidence.reservation_id != reservation_id:
+            raise AccountRiskError("reconciliation evidence does not match reservation scope and ID")
         if (
             isinstance(expected_revision, bool)
             or not isinstance(expected_revision, int)
@@ -534,12 +602,61 @@ class SQLiteAccountRiskRepository:
                     "UPDATE account_risk_reservations SET status = 'SETTLED' WHERE reservation_id = ?",
                     (reservation_id,),
                 )
+                evidence_json = self._dump({
+                    "scope": asdict(evidence.scope),
+                    "reservation_id": evidence.reservation_id,
+                    "source": evidence.source,
+                    "exchange_order_id": evidence.exchange_order_id,
+                    "terminal_status": evidence.terminal_status,
+                    "observed_at": evidence.observed_at,
+                    "snapshot_hash": evidence.snapshot_hash,
+                    "identity_verified": evidence.identity_verified,
+                    "orders_complete": evidence.orders_complete,
+                    "fills_complete": evidence.fills_complete,
+                    "positions_complete": evidence.positions_complete,
+                    "open_order_absent": evidence.open_order_absent,
+                })
+                self._connection.execute(
+                    """
+                    INSERT INTO account_risk_reservation_evidence
+                    (reservation_id, tenant_id, account_id, evidence_json)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (reservation_id, *self._key(scope), evidence_json),
+                )
                 self._connection.execute("COMMIT")
                 return True
             except Exception:
                 if self._connection.in_transaction:
                     self._connection.execute("ROLLBACK")
                 raise
+
+    def get_reservation_evidence(
+        self, *, scope: AccountRiskScope, reservation_id: str,
+    ) -> AccountRiskReconciliationEvidence | None:
+        if not isinstance(scope, AccountRiskScope):
+            raise AccountRiskError("valid account risk scope is required")
+        if not isinstance(reservation_id, str) or not reservation_id.strip():
+            raise AccountRiskError("reservation_id is required")
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT tenant_id, account_id, evidence_json
+                FROM account_risk_reservation_evidence WHERE reservation_id = ?
+                """,
+                (reservation_id.strip(),),
+            ).fetchone()
+        if row is None:
+            return None
+        tenant_id, account_id, payload = row
+        if (tenant_id, account_id) != self._key(scope):
+            raise AccountRiskError("reconciliation evidence scope mismatch")
+        data = json.loads(payload)
+        evidence_scope = AccountRiskScope(**data.pop("scope"))
+        evidence = AccountRiskReconciliationEvidence(scope=evidence_scope, **data)
+        if evidence.scope != scope or evidence.reservation_id != reservation_id.strip():
+            raise AccountRiskError("persisted reconciliation evidence identity mismatch")
+        return evidence
 
     def close(self) -> None:
         with self._lock:
@@ -606,6 +723,7 @@ class PersistentAccountRiskCoordinator:
     def settle_reservation(
         self, *, scope: AccountRiskScope, reservation_id: str,
         expected_revision: int, reconciled_state: AccountRiskState,
+        evidence: AccountRiskReconciliationEvidence,
     ) -> bool:
         settle = getattr(self._repository, "settle_reservation", None)
         if not callable(settle):
@@ -613,7 +731,16 @@ class PersistentAccountRiskCoordinator:
         return settle(
             scope=scope, reservation_id=reservation_id,
             expected_revision=expected_revision, reconciled_state=reconciled_state,
+            evidence=evidence,
         )
+
+    def get_reservation_evidence(
+        self, *, scope: AccountRiskScope, reservation_id: str,
+    ) -> AccountRiskReconciliationEvidence | None:
+        getter = getattr(self._repository, "get_reservation_evidence", None)
+        if not callable(getter):
+            raise AccountRiskError("repository does not support reconciliation evidence retrieval")
+        return getter(scope=scope, reservation_id=reservation_id)
 
     def evaluate(self, proposal: OrderRiskProposal) -> AccountRiskDecision:
         if not isinstance(proposal, OrderRiskProposal):
