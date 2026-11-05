@@ -1516,7 +1516,10 @@ class Backtester:
     # Phase 293 — scoped replay with immutable evidence
     # ==================================================
 
-    def run_scoped_with_evidence(self, candles, provenance_records, journal=None):
+    def run_scoped_with_evidence(
+        self, candles, provenance_records, journal=None,
+        strategy_fingerprint=None, configuration_fingerprint=None,
+    ):
         """Run a validated single-symbol replay and return its dataset evidence.
 
         The legacy run_scoped() return type is unchanged. Callers that need
@@ -1537,7 +1540,9 @@ class Backtester:
             )
         payload = validate_candle_payload(candles, records)
         evidence = build_backtest_execution_evidence(
-            records, {records[0].symbol: payload}
+            records, {records[0].symbol: payload},
+            strategy_fingerprint=strategy_fingerprint,
+            configuration_fingerprint=configuration_fingerprint,
         )
         result = self.run(payload, journal=journal)
         return ScopedBacktestOutcome(result=result, evidence=evidence)
