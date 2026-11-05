@@ -115,11 +115,15 @@ async def main():
 
     if mode == ExecutionMode.PAPER:
 
-        from core.runtime.paper_main import build_paper_engine
+        # Resolve the deployment data-quality profile before constructing
+        # the canonical engine. The default remains explicit compatibility
+        # mode; operators selecting strict mode get a mandatory freshness
+        # threshold applied before the lifecycle can start.
+        from core.runtime.paper_gate_profile import build_profiled_paper_engine
 
         from core.monitoring.service import run_paper_with_monitoring
 
-        engine, _manager = build_paper_engine()
+        engine, _manager = build_profiled_paper_engine()
 
         print("\n" + "=" * 60)
         print("QuantEngine Started")
@@ -129,6 +133,14 @@ async def main():
         print("Runtime   : Phase 6E RealTimeEngine")
         print("Strategy  : InstitutionalPipeline (frozen system)")
         print("Paper-only: dry_run=True, zero exchange writes")
+        print(
+            "Market-data gate: "
+            + (
+                "STRICT (max age %.3fs)" % engine.market_data_max_age_seconds
+                if engine.market_data_gate_required
+                else "COMPATIBILITY (freshness gate not required)"
+            )
+        )
         print(
             "Control API: "
             + (
