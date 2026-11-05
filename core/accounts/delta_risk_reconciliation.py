@@ -16,6 +16,7 @@ from core.accounts.account_risk import AccountRiskError, AccountRiskScope, Accou
 from core.accounts.delta_account_registry import DeltaReadOnlySession
 from core.accounts.persistent_account_risk import (
     AccountRiskReconciliationEvidence,
+    hash_account_risk_state,
     PersistentAccountRiskCoordinator,
 )
 from core.execution.delta_submission_reconciliation import reconcile_delta_submission
@@ -191,6 +192,7 @@ def reconcile_and_settle_pending_reservation(
         terminal_status=terminal_status,
         observed_at=observed_at,
         snapshot_hash=_canonical_snapshot_hash(snapshot),
+        risk_state_hash=hash_account_risk_state(reconciled_state),
         identity_verified=True,
         orders_complete=True,
         fills_complete=True,
