@@ -57,6 +57,7 @@ jobs:
           tests/test_delta_account_registry_phase284.py
           tests/test_delta_identity_binding_phase285.py
           tests/test_delta_account_snapshot_phase286.py
+          tests/test_account_risk_isolation_phase287.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
