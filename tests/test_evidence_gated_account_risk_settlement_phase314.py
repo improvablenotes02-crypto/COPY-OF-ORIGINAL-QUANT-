@@ -149,7 +149,7 @@ def test_settlement_evidence_survives_repository_restart(tmp_path):
 def test_evidence_lookup_rejects_cross_account_scope(tmp_path):
     coordinator, repo, scope = _setup(tmp_path / "evidence-scope.sqlite")
     state = _reconciled_state(coordinator, scope)
-    evidence = _evidence(scope, "settle-evidence-314")
+    evidence = _evidence(scope, "settle-evidence-314", hash_account_risk_state(state))
     coordinator.settle_reservation(
         scope=scope, reservation_id=evidence.reservation_id,
         expected_revision=state.revision, reconciled_state=state,
