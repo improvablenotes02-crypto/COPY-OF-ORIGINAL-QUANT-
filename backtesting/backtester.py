@@ -1519,7 +1519,7 @@ class Backtester:
     def run_scoped_with_evidence(
         self, candles, provenance_records, journal=None,
         strategy_fingerprint=None, configuration_fingerprint=None,
-        engine_fingerprint=None,
+        engine_fingerprint=None, engine_build_identity=None,
     ):
         """Run a validated single-symbol replay and return its dataset evidence.
 
@@ -1545,6 +1545,7 @@ class Backtester:
             strategy_fingerprint=strategy_fingerprint,
             configuration_fingerprint=configuration_fingerprint,
             engine_fingerprint=engine_fingerprint,
+            engine_build_identity=engine_build_identity,
         )
         result = self.run(payload, journal=journal)
         return ScopedBacktestOutcome(result=result, evidence=evidence)
