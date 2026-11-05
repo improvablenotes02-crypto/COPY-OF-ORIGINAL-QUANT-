@@ -1,4 +1,5 @@
 """Phase 283: Delta Global/India region and environment isolation."""
+from contextlib import ExitStack
 from unittest import mock
 
 import pytest
@@ -68,7 +69,7 @@ def test_credentials_are_isolated_across_four_venue_scopes():
         mock.patch.object(settings_mod.settings, "INDIA_SANDBOX_API_KEY", "india-demo-key"),
         mock.patch.object(settings_mod.settings, "INDIA_SANDBOX_API_SECRET", "india-demo-secret"),
     ]
-    with mock.ExitStack() as stack:
+    with ExitStack() as stack:
         for patcher in patches:
             stack.enter_context(patcher)
         assert env.credentials_for("PRODUCTION", "GLOBAL") == ("global-prod-key", "global-prod-secret")
