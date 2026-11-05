@@ -98,6 +98,7 @@ class AccountRiskReconciliationEvidence:
 
     scope: AccountRiskScope
     reservation_id: str
+    client_order_id: str
     source: str
     exchange_order_id: str
     terminal_status: str
@@ -115,11 +116,14 @@ class AccountRiskReconciliationEvidence:
         if not isinstance(self.reservation_id, str) or not self.reservation_id.strip():
             raise AccountRiskError("reconciliation evidence reservation_id is required")
         object.__setattr__(self, "reservation_id", self.reservation_id.strip())
+        if not isinstance(self.client_order_id, str) or self.client_order_id.strip() != self.reservation_id:
+            raise AccountRiskError("reconciliation evidence client_order_id must match reservation_id")
+        object.__setattr__(self, "client_order_id", self.client_order_id.strip())
         if self.source != "DELTA_AUTHENTICATED_READ":
             raise AccountRiskError("reconciliation evidence must come from authenticated Delta reads")
         if not isinstance(self.exchange_order_id, str) or not self.exchange_order_id.strip():
             raise AccountRiskError("reconciliation evidence exchange_order_id is required")
-        if self.terminal_status not in {"FILLED", "REJECTED", "CANCELED", "CANCELLED", "EXPIRED"}:
+        if not isinstance(self.terminal_status, str) or self.terminal_status not in {"FILLED", "REJECTED", "CANCELED", "CANCELLED", "EXPIRED"}:
             raise AccountRiskError("reconciliation evidence must identify a terminal exchange order status")
         if not isinstance(self.observed_at, str):
             raise AccountRiskError("reconciliation evidence observed_at must be an ISO timestamp")
@@ -605,6 +609,7 @@ class SQLiteAccountRiskRepository:
                 evidence_json = self._dump({
                     "scope": asdict(evidence.scope),
                     "reservation_id": evidence.reservation_id,
+                    "client_order_id": evidence.client_order_id,
                     "source": evidence.source,
                     "exchange_order_id": evidence.exchange_order_id,
                     "terminal_status": evidence.terminal_status,
