@@ -2,11 +2,11 @@
 
 ## Contract
 
-The evidence-bearing scoped replay APIs accept optional SHA-256 fingerprints for the strategy artifact and its effective configuration. They must be supplied together and each must be exactly 64 lowercase hexadecimal characters.
+The evidence-bearing scoped replay APIs accept SHA-256 fingerprints for the strategy artifact, its effective configuration, and the QuantEngine build. All three must be supplied together and each must be exactly 64 lowercase hexadecimal characters.
 
-When both are supplied, the evidence envelope computes a deterministic execution fingerprint over the validated portfolio payload digest, strategy fingerprint, and configuration fingerprint. Changing either strategy or configuration therefore changes execution identity without changing the dataset payload identity.
+When all three are supplied, the evidence envelope computes a deterministic execution fingerprint over the validated payload digest, complete provenance fingerprint, strategy fingerprint, configuration fingerprint, and engine build fingerprint. Changing any one changes execution identity without changing the candle payload identity.
 
-When neither is supplied, dataset-only evidence remains available and `execution_fingerprint` is null. This makes the distinction explicit: dataset identity alone is not a complete reproducibility claim.
+When none are supplied, dataset-only evidence remains available and `execution_fingerprint` is null. Partial fingerprint sets are rejected. This makes the distinction explicit: dataset identity alone is not a complete reproducibility claim.
 
 ## Caller responsibility
 
