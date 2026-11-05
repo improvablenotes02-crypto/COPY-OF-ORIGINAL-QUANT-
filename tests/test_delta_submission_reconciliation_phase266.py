@@ -131,7 +131,7 @@ class TestDeltaSubmissionReconciliationPhase266(unittest.TestCase):
         self.fill_snapshot["snapshot_as_of_ns"] = self.now - 40_000_000_000
         with self.assertRaisesRegex(DeltaSubmissionReconciliationError, "stale"):
             self.reconcile()
-        self.fill_snapshot["snapshot_as_of_ns"] = self.now + 20_000_000_000
+        self.fill_snapshot["snapshot_as_of_ns"] = self.now - 20_000_000_000
         with self.assertRaisesRegex(DeltaSubmissionReconciliationError, "skew"):
             self.reconcile()
         self.assertEqual(self.journal.get("QE-266")["state"], DISPATCHING)
