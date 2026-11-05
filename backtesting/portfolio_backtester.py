@@ -216,3 +216,42 @@ class PortfolioBacktester:
             )
 
         return processed
+    # -------------------------------------------------
+    # Phase 290 — provenance-gated portfolio replay
+
+    def run_scoped(self, history, provenance_by_symbol, journal=None):
+        """Validate every symbol's complete dataset scope before any replay.
+
+        The mapping must contain exactly the symbols in history. All records
+        are validated together so venue, region, environment, data class, and
+        private account identity cannot drift between portfolio legs.
+        """
+        from core.research.acquisition.scope_provenance import (
+            ScopeProvenanceError,
+            validate_backtest_inputs,
+        )
+
+        if not isinstance(history, dict) or not history:
+            raise ScopeProvenanceError("portfolio history must be a non-empty mapping")
+        if not isinstance(provenance_by_symbol, dict):
+            raise ScopeProvenanceError("portfolio provenance must be a symbol mapping")
+        if set(history) != set(provenance_by_symbol):
+            raise ScopeProvenanceError(
+                "portfolio provenance symbols must exactly match history symbols"
+            )
+
+        all_records = []
+        for symbol, records in provenance_by_symbol.items():
+            if not isinstance(symbol, str) or not symbol.strip():
+                raise ScopeProvenanceError("portfolio symbols must be non-empty strings")
+            validated = validate_backtest_inputs(records)
+            if any(record.symbol != symbol for record in validated):
+                raise ScopeProvenanceError(
+                    f"dataset symbol does not match portfolio key: {symbol}"
+                )
+            all_records.extend(validated)
+
+        # Cross-symbol compatibility is checked as one portfolio evidence set.
+        validate_backtest_inputs(all_records)
+        return self.run(history, journal=journal)
+
