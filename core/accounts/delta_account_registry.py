@@ -309,6 +309,68 @@ class DeltaReadOnlySession:
             self._exchange.get_fill_history_snapshot(max_pages=max_pages)
         )
 
+    def get_account_snapshot(self, *, max_pages: int = 100) -> dict:
+        """Collect complete read-only account views under one verified identity.
+
+        This is a sequence of observations, not an exchange-atomic snapshot.
+        Any unsuccessful or incomplete component refuses the whole result.
+        """
+        expected = self._record.provider_account_id
+        if expected is None:
+            raise AccountScopeError(
+                "Delta account identity must be verified and bound before snapshot collection"
+            )
+        identity_before = self.verify_provider_identity()
+        if identity_before != expected:
+            raise AccountScopeError("authenticated Delta identity does not match the registered account")
+
+        balances = self._exchange.get_balance()
+        positions = self._exchange.get_positions()
+        if not isinstance(balances, dict) or balances.get("success") is not True:
+            raise AccountScopeError("Delta balance observation is unsuccessful or malformed")
+        if not isinstance(positions, dict) or positions.get("success") is not True:
+            raise AccountScopeError("Delta positions observation is unsuccessful or malformed")
+
+        orders = self.get_order_history_snapshot(max_pages=max_pages)
+        fills = self.get_fill_history_snapshot(max_pages=max_pages)
+        if orders.get("complete") is not True or not isinstance(orders.get("orders"), list):
+            raise AccountScopeError("Delta order history is incomplete or malformed")
+        if fills.get("complete") is not True or not isinstance(fills.get("fills"), list):
+            raise AccountScopeError("Delta fill history is incomplete or malformed")
+
+        identity_after = self.verify_provider_identity()
+        if identity_after != identity_before:
+            raise AccountScopeError("authenticated Delta identity changed during snapshot collection")
+
+        return {
+            "venue": "delta",
+            "tenant_id": self._record.tenant_id,
+            "internal_account_id": self._record.account_id,
+            "provider_account_id": identity_before,
+            "region": self._record.region,
+            "environment": self._record.environment,
+            "source": "delta-v2-read-only-account-snapshot",
+            "observed_at_ns": time.time_ns(),
+            "observation_is_exchange_atomic": False,
+            "balances": balances,
+            "positions": positions,
+            "orders": orders["orders"],
+            "fills": fills["fills"],
+            "completeness": {
+                "balances": True,
+                "positions": True,
+                "orders": True,
+                "fills": True,
+                "order_cursor_exhausted": orders.get("pagination_evidence", {}).get("active_cursor_exhausted") is True
+                    and orders.get("pagination_evidence", {}).get("history_cursor_exhausted") is True,
+                "fill_cursor_exhausted": fills.get("pagination_evidence", {}).get("cursor_exhausted") is True,
+            },
+            "component_observed_at_ns": {
+                "orders": orders.get("snapshot_as_of_ns"),
+                "fills": fills.get("snapshot_as_of_ns"),
+            },
+        }
+
 
 class DeltaAccountRegistry:
     """Tenant-scoped account lifecycle; plaintext credentials never leave this service."""
