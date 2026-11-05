@@ -19,7 +19,7 @@ class TestSubmissionJournalHealthReportPhase273(unittest.TestCase):
             journal.transition("QE-health-ack", DISPATCHING)
             journal.transition("QE-health-ack", ACKNOWLEDGED)
             journal.reserve("QE-health-rejected", {"symbol": "SOL"})
-            journal.transition("QE-health-rejected", UNKNOWN)
+            journal.transition("QE-health-rejected", DISPATCHING)
             journal.transition("QE-health-rejected", REJECTED)
 
             before = journal.get("QE-health-prepared")

@@ -97,7 +97,7 @@ def reconcile_submission(
         f"venue_history:{venue}:{account_id}:{source}:"
         f"as_of_ns={as_of}:sha256={digest}:status={verdict.status_raw}"
     )
-    journal.transition(client_order_id, verdict.state, detail)
+    journal.transition(client_order_id, verdict.state, detail, evidence_sha256=digest)
     return {
         "resolved": True, "state": verdict.state,
         "client_order_id": str(client_order_id),

@@ -196,7 +196,15 @@ class SQLiteOrderSubmissionJournal:
                     db.execute("ROLLBACK")
                 raise
 
-    def transition(self, client_order_id: str, state: str, detail: str = "") -> None:
+    def transition(
+        self, client_order_id: str, state: str, detail: str = "", *,
+        evidence_sha256: str | None = None,
+    ) -> None:
+        """Persist a lifecycle transition, requiring evidence to resolve UNKNOWN.
+
+        The digest binds the transition record to caller-supplied evidence bytes;
+        it is a provenance/integrity reference, not proof of venue authenticity.
+        """
         target = str(state).upper()
         if target not in _ALLOWED:
             raise ValueError(f"unsupported submission state: {target}")
@@ -211,6 +219,18 @@ class SQLiteOrderSubmissionJournal:
                 db.execute("ROLLBACK")
                 raise SubmissionJournalError("submission reservation not found")
             current = row[0]
+            if current == UNKNOWN and target != UNKNOWN:
+                valid_digest = (
+                    isinstance(evidence_sha256, str)
+                    and len(evidence_sha256) == 64
+                    and all(ch in "0123456789abcdef" for ch in evidence_sha256)
+                )
+                if not valid_digest:
+                    db.execute("ROLLBACK")
+                    raise SubmissionJournalError(
+                        "resolving UNKNOWN requires a lowercase SHA-256 evidence digest"
+                    )
+                detail = f"{str(detail)[:400]}|evidence_sha256={evidence_sha256}"
             if target not in _ALLOWED[current]:
                 db.execute("ROLLBACK")
                 raise SubmissionJournalError(

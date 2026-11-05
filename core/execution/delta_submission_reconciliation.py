@@ -217,7 +217,7 @@ def reconcile_delta_submission(
         f"delta_dual_history:{account}:order_as_of_ns={order_stamp}:"
         f"fills_as_of_ns={fill_stamp}:sha256={digest}:state={final_state}"
     )
-    journal.transition(key, final_state, detail)
+    journal.transition(key, final_state, detail, evidence_sha256=digest)
     return {
         "resolved": True,
         "state": final_state,
