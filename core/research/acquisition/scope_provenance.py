@@ -101,6 +101,44 @@ class StrategyArtifactIdentity:
         ).hexdigest()
 
 
+def _validate_canonical_json_value(value, path="$") -> None:
+    """Reject values that cannot be represented unambiguously in canonical JSON."""
+    import math
+
+    if value is None or isinstance(value, (str, bool, int)):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ScopeProvenanceError(f"non-finite number in canonical configuration at {path}")
+        return
+    if isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _validate_canonical_json_value(item, f"{path}[{index}]")
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ScopeProvenanceError(f"configuration object key must be a string at {path}")
+            _validate_canonical_json_value(item, f"{path}.{key}")
+        return
+    raise ScopeProvenanceError(
+        f"unsupported canonical configuration value {type(value).__name__} at {path}"
+    )
+
+
+def hash_canonical_json(value) -> str:
+    """Hash a JSON-compatible configuration with deterministic UTF-8 encoding."""
+    import hashlib
+    import json
+
+    _validate_canonical_json_value(value)
+    payload = json.dumps(
+        value, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class BacktestConfigurationIdentity:
     """Canonical identity for a normalized effective backtest configuration."""
@@ -108,6 +146,17 @@ class BacktestConfigurationIdentity:
     configuration_version: str
     configuration_sha256: str
     parameter_schema_version: str
+
+    @classmethod
+    def from_configuration(
+        cls, configuration, configuration_version: str,
+        parameter_schema_version: str,
+    ) -> "BacktestConfigurationIdentity":
+        return cls(
+            configuration_version=configuration_version,
+            configuration_sha256=hash_canonical_json(configuration),
+            parameter_schema_version=parameter_schema_version,
+        )
 
     def __post_init__(self) -> None:
         for name in ("configuration_version", "parameter_schema_version"):
