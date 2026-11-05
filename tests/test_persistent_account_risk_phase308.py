@@ -117,7 +117,7 @@ def test_repository_backed_risk_evaluation_uses_persisted_account_state(tmp_path
 def test_non_finite_state_is_rejected_before_persistence(tmp_path):
     repo = SQLiteAccountRiskRepository(str(tmp_path / "risk.sqlite"))
     scope = _scope()
-    with pytest.raises(AccountRiskError, match="serializable"):
+    with pytest.raises(AccountRiskError, match="finite and positive"):
         repo.register(
             scope=scope, profile=_profile(),
             initial_state=_state(scope, equity=float("nan")),
