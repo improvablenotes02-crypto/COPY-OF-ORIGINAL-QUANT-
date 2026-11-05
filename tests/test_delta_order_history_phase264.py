@@ -75,6 +75,25 @@ class TestDeltaOrderHistoryPhase264(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "invalid result"):
             DeltaExchange(api_key="key", api_secret="secret", rest=rest).get_order_history_snapshot()
 
+    def test_collects_paginated_fill_history_separately(self):
+        rest = FakeHistoryREST({
+            ("/v2/fills", None): {
+                "success": True, "result": [{"id": "f1", "order_id": 1, "size": "1"}],
+                "meta": {"after": "fills-next"},
+            },
+            ("/v2/fills", "fills-next"): {
+                "success": True, "result": [{"id": "f2", "order_id": 1, "size": "2"}],
+                "meta": {"after": None},
+            },
+        })
+        snapshot = DeltaExchange(api_key="key", api_secret="secret", rest=rest).get_fill_history_snapshot()
+        self.assertTrue(snapshot["complete"])
+        self.assertFalse(snapshot["observation_is_exchange_atomic"])
+        self.assertEqual([row["id"] for row in snapshot["fills"]], ["f1", "f2"])
+        self.assertEqual(snapshot["pagination"], {"pages": 2, "page_size": 50})
+        self.assertIn("page_size=50", rest.calls[0])
+        self.assertIn("after=fills-next", rest.calls[1])
+
     def test_authentication_required_before_any_history_read(self):
         rest = FakeHistoryREST({})
         rest.authenticated = False
