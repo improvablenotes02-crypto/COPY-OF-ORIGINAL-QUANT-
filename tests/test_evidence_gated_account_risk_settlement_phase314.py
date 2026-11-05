@@ -92,6 +92,7 @@ def test_settlement_requires_complete_authenticated_terminal_evidence(tmp_path):
     "changes",
     [
         {"source": "UNVERIFIED"},
+        {"client_order_id": "different-client-order"},
         {"identity_verified": False},
         {"orders_complete": False},
         {"fills_complete": False},
