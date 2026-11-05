@@ -156,7 +156,7 @@ class DatasetScopeProvenance:
             if not isinstance(value, str) or not value.strip():
                 raise ScopeProvenanceError(f"{name} is required")
             object.__setattr__(self, name, value.strip())
-        from datetime import datetime
+        from datetime import datetime, timezone
         try:
             parsed_source_timestamp = datetime.fromisoformat(
                 self.source_timestamp.replace("Z", "+00:00")
@@ -169,6 +169,12 @@ class DatasetScopeProvenance:
             raise ScopeProvenanceError(
                 "source_timestamp must be timezone-aware ISO-8601"
             )
+        canonical_source_timestamp = (
+            parsed_source_timestamp.astimezone(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        object.__setattr__(self, "source_timestamp", canonical_source_timestamp)
         region = str(self.region).strip().upper()
         environment = str(self.environment).strip().upper()
         data_class = str(self.data_class).strip().upper()
