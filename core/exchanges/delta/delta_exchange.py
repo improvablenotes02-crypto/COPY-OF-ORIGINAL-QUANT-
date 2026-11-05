@@ -210,6 +210,7 @@ class DeltaExchange(BaseExchange):
         query["page_size"] = 50  # Delta documents a maximum of 50 for history APIs.
         cursor = None
         seen_cursors = set()
+        cursor_chain = []
         records = []
         pages = 0
         while True:
@@ -218,25 +219,31 @@ class DeltaExchange(BaseExchange):
                 page_query["after"] = cursor
             path = endpoint + "?" + urlencode(page_query)
             response = self.rest.get(path)
-            if not isinstance(response, dict) or response.get("success") is False:
+            if not isinstance(response, dict) or response.get("success") is not True:
                 raise RuntimeError("Delta order-history response is not a successful object")
             rows = response.get("result")
             if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
                 raise RuntimeError("Delta order-history response has invalid result rows")
             records.extend(rows)
             pages += 1
-            meta = response.get("meta") or {}
-            if not isinstance(meta, dict):
-                raise RuntimeError("Delta order-history pagination metadata is invalid")
-            next_cursor = meta.get("after")
-            if next_cursor in (None, ""):
-                return records, pages
-            next_cursor = str(next_cursor)
+            meta = response.get("meta")
+            if not isinstance(meta, dict) or "after" not in meta:
+                raise RuntimeError("Delta order-history pagination metadata is missing explicit after cursor")
+            next_cursor = meta["after"]
+            if next_cursor is None:
+                return records, pages, {
+                    "cursor_exhausted": True,
+                    "cursor_hops": len(cursor_chain),
+                    "record_count": len(records),
+                }
+            if not isinstance(next_cursor, str) or not next_cursor.strip():
+                raise RuntimeError("Delta order-history pagination after cursor is invalid")
             if next_cursor in seen_cursors or next_cursor == cursor:
                 raise RuntimeError("Delta order-history pagination cursor repeated")
             if pages >= max_pages:
                 raise RuntimeError("Delta order-history page limit reached; snapshot is incomplete")
             seen_cursors.add(next_cursor)
+            cursor_chain.append(next_cursor)
             cursor = next_cursor
 
     def get_order_history_snapshot(self, *, max_pages=100):
@@ -248,10 +255,10 @@ class DeltaExchange(BaseExchange):
         snapshot timestamp; callers must account for concurrent order updates.
         """
         self._require_auth()
-        active, active_pages = self._read_paginated_order_records(
+        active, active_pages, active_pagination = self._read_paginated_order_records(
             "/v2/orders", params={"state": "open"}, max_pages=max_pages
         )
-        historical, history_pages = self._read_paginated_order_records(
+        historical, history_pages, history_pagination = self._read_paginated_order_records(
             "/v2/orders/history", params={}, max_pages=max_pages
         )
         observed_at_ns = time.time_ns()
@@ -265,6 +272,12 @@ class DeltaExchange(BaseExchange):
             "pagination": {
                 "active_pages": active_pages,
                 "history_pages": history_pages,
+                "active_cursor_exhausted": active_pagination["cursor_exhausted"],
+                "history_cursor_exhausted": history_pagination["cursor_exhausted"],
+                "active_cursor_hops": active_pagination["cursor_hops"],
+                "history_cursor_hops": history_pagination["cursor_hops"],
+                "active_record_count": active_pagination["record_count"],
+                "history_record_count": history_pagination["record_count"],
                 "page_size": 50,
             },
         }
@@ -277,7 +290,7 @@ class DeltaExchange(BaseExchange):
         scope and must not infer rejection from an order having no fills.
         """
         self._require_auth()
-        fills, pages = self._read_paginated_order_records(
+        fills, pages, pagination = self._read_paginated_order_records(
             "/v2/fills", params={}, max_pages=max_pages
         )
         return {
@@ -287,7 +300,12 @@ class DeltaExchange(BaseExchange):
             "complete": True,
             "snapshot_as_of_ns": time.time_ns(),
             "observation_is_exchange_atomic": False,
-            "pagination": {"pages": pages, "page_size": 50},
+            "pagination": {
+                "pages": pages, "page_size": 50,
+                "cursor_exhausted": pagination["cursor_exhausted"],
+                "cursor_hops": pagination["cursor_hops"],
+                "record_count": pagination["record_count"],
+            },
         }
 
     # -------------------------------------------------
