@@ -54,6 +54,7 @@ jobs:
           tests/test_venue_history_identity_phase281.py
           tests/test_delta_account_identity_phase282.py
           tests/test_delta_region_authority_phase283.py
+          tests/test_delta_account_registry_phase284.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
