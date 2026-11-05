@@ -107,6 +107,11 @@ class AccountRiskState:
     pending_exposure: float = 0.0
     kill_switch: bool = False
     trading_enabled: bool = True
+    revision: int = 0
+
+    def __post_init__(self):
+        if isinstance(self.revision, bool) or not isinstance(self.revision, int) or self.revision < 0:
+            raise ValueError("risk state revision must be a non-negative integer")
 
 
 @dataclass(frozen=True, slots=True)
