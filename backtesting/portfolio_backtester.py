@@ -260,3 +260,56 @@ class PortfolioBacktester:
         validate_backtest_inputs(all_records)
         return self.run(verified_history, journal=journal)
 
+
+
+    # -------------------------------------------------
+    # Phase 293 — evidence-bearing portfolio replay
+    # -------------------------------------------------
+
+    def run_scoped_with_evidence(self, history, provenance_by_symbol, journal=None):
+        """Run a fully validated portfolio replay and return dataset evidence.
+
+        Every symbol payload is validated before the first engine is invoked.
+        The outcome evidence is deterministic for the exact ordered symbol
+        set and the validated candle payload digests.
+        """
+        from core.research.acquisition.scope_provenance import (
+            ScopeProvenanceError,
+            ScopedBacktestOutcome,
+            build_backtest_execution_evidence,
+            validate_backtest_inputs,
+            validate_candle_payload,
+        )
+
+        if not isinstance(history, dict) or not history:
+            raise ScopeProvenanceError("portfolio history must be a non-empty mapping")
+        if not isinstance(provenance_by_symbol, dict):
+            raise ScopeProvenanceError("portfolio provenance must be a symbol mapping")
+        if set(history) != set(provenance_by_symbol):
+            raise ScopeProvenanceError(
+                "portfolio provenance symbols must exactly match history symbols"
+            )
+
+        all_records = []
+        verified_history = {}
+        for symbol, records in provenance_by_symbol.items():
+            if not isinstance(symbol, str) or not symbol.strip():
+                raise ScopeProvenanceError("portfolio symbols must be non-empty strings")
+            validated = validate_backtest_inputs(records)
+            if len(validated) != 1:
+                raise ScopeProvenanceError(
+                    f"portfolio symbol requires exactly one provenance record: {symbol}"
+                )
+            if validated[0].symbol != symbol:
+                raise ScopeProvenanceError(
+                    f"dataset symbol does not match portfolio key: {symbol}"
+                )
+            verified_history[symbol] = validate_candle_payload(
+                history[symbol], validated
+            )
+            all_records.extend(validated)
+
+        validate_backtest_inputs(all_records)
+        evidence = build_backtest_execution_evidence(all_records, verified_history)
+        result = self.run(verified_history, journal=journal)
+        return ScopedBacktestOutcome(result=result, evidence=evidence)
