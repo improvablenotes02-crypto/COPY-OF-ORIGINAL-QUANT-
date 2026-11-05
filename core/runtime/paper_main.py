@@ -352,6 +352,9 @@ def build_paper_engine(
     registry=None,
     liquidity_provider=None,
     history_provider=None,
+    market_data_max_age_seconds=None,
+    market_data_now_provider=None,
+    market_data_gate_required=False,
 ):
     """Assemble the canonical multi-symbol Phase 6E
     RealTimeEngine in PAPER mode.
@@ -425,6 +428,9 @@ def build_paper_engine(
         portfolio_manager=portfolio_manager,
         portfolio_state=portfolio_state,
         journal=journal,
+        market_data_max_age_seconds=market_data_max_age_seconds,
+        market_data_now_provider=market_data_now_provider,
+        market_data_gate_required=market_data_gate_required,
     )
 
     return engine, manager
