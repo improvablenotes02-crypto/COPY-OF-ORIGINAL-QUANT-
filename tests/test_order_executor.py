@@ -223,6 +223,55 @@ class TestExecute(unittest.TestCase):
         self.assertEqual(result["reason"], reason)
         self.assertEqual(exchange.placed, [])
 
+    def test_duplicate_client_order_id_is_blocked_before_second_write(self):
+        from core.execution.live_safety_gate import LiveSafetyGate
+
+        executor, exchange = self._executor()
+        order = intent()
+
+        first = executor.execute(
+            order, safety=LiveSafetyGate.test_armed()
+        )
+        second = executor.execute(
+            order, safety=LiveSafetyGate.test_armed()
+        )
+
+        self.assertTrue(first["success"])
+        self.assertFalse(second["success"])
+        self.assertIn("duplicate client_order_id", second["reason"])
+        self.assertEqual(len(exchange.placed), 1)
+
+    def test_ambiguous_transport_timeout_keeps_client_id_reserved(self):
+        from core.execution.live_safety_gate import LiveSafetyGate
+
+        class _AcceptedThenTimedOut(_FakeExchange):
+            def post(self, path, payload=None):
+                self.placed.append(payload)
+                raise TimeoutError("acknowledgement timed out")
+
+        registry = ContractRegistry()
+        registry.add(contract())
+        exchange = _AcceptedThenTimedOut()
+        executor = DeltaOrderExecutor(
+            exchange=exchange,
+            registry=registry,
+            order_id_factory=lambda order: "QE-AMBIGUOUS-1",
+        )
+        order = intent()
+
+        with self.assertRaises(TimeoutError):
+            executor.execute(
+                order, safety=LiveSafetyGate.test_armed()
+            )
+
+        retry = executor.execute(
+            order, safety=LiveSafetyGate.test_armed()
+        )
+
+        self.assertFalse(retry["success"])
+        self.assertIn("reconcile the original submission", retry["reason"])
+        self.assertEqual(len(exchange.placed), 1)
+
     def test_execute_raises_without_contract(self):
         empty = ContractRegistry()
         exchange = _FakeExchange()
