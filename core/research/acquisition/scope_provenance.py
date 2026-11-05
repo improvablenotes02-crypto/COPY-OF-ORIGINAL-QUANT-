@@ -130,6 +130,7 @@ def hash_backtest_candles(candles: Iterable[object]) -> tuple[str, int]:
     import math
 
     rows = []
+    previous_timestamp = None
     for index, candle in enumerate(candles):
         try:
             timestamp = candle.timestamp
@@ -148,6 +149,11 @@ def hash_backtest_candles(candles: Iterable[object]) -> tuple[str, int]:
             ) from exc
         if isinstance(timestamp, bool) or not isinstance(timestamp, int):
             raise ScopeProvenanceError(f"candle {index} timestamp must be an integer")
+        if previous_timestamp is not None and timestamp <= previous_timestamp:
+            raise ScopeProvenanceError(
+                f"candle {index} timestamp is duplicate or out of chronological order"
+            )
+        previous_timestamp = timestamp
         if not isinstance(closed, bool) or not closed:
             raise ScopeProvenanceError(f"candle {index} is not confirmed closed")
         if not isinstance(symbol, str):
