@@ -23,6 +23,47 @@ class ScopeProvenanceError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class EngineBuildIdentity:
+    """Canonical, caller-supplied identity for a QuantEngine runtime build."""
+
+    release_version: str
+    source_revision: str
+    artifact_sha256: str
+    dependency_lock_sha256: str
+    runtime_identity: str
+
+    def __post_init__(self) -> None:
+        for name in ("release_version", "source_revision", "runtime_identity"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ScopeProvenanceError(f"engine build {name} is required")
+            object.__setattr__(self, name, value.strip())
+        if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", self.source_revision):
+            raise ScopeProvenanceError("engine build source_revision must be a lowercase Git revision")
+        for name in ("artifact_sha256", "dependency_lock_sha256"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not _HASH.fullmatch(value):
+                raise ScopeProvenanceError(f"engine build {name} must be SHA-256")
+
+    @property
+    def fingerprint(self) -> str:
+        """Return the deterministic SHA-256 identity of this build descriptor."""
+        import hashlib
+        import json
+
+        canonical = {
+            "release_version": self.release_version,
+            "source_revision": self.source_revision,
+            "artifact_sha256": self.artifact_sha256,
+            "dependency_lock_sha256": self.dependency_lock_sha256,
+            "runtime_identity": self.runtime_identity,
+        }
+        return hashlib.sha256(
+            json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
 class AccountDataIdentity:
     tenant_id: str
     internal_account_id: str
