@@ -30,6 +30,7 @@ from core.execution.live_safety_gate import LiveSafetyGate
 from core.risk.costs import post_cost_rr
 
 import math
+from threading import Lock
 
 
 class InvalidContractError(ValueError):
@@ -102,6 +103,15 @@ class DeltaOrderExecutor:
             order_id_factory
             or self._default_client_order_id
         )
+
+        # A client order id is a one-shot submission key. Keep the
+        # reservation even when transport raises: a timeout can mean
+        # the venue accepted the order but the acknowledgement was lost.
+        # A retry must reconcile the original id, never create a second
+        # write. The lock makes the check-and-reserve atomic for callers
+        # that share this executor across worker threads.
+        self._submission_lock = Lock()
+        self._submitted_client_order_ids = set()
 
     # -------------------------------------------------
 
@@ -217,6 +227,29 @@ class DeltaOrderExecutor:
 
         payload = self._validated_payload(intent, contract)
 
+        client_order_id = str(payload.get("client_order_id") or "").strip()
+        if not client_order_id:
+            raise InvalidContractError(
+                "client_order_id is required for an exchange submission"
+            )
+
+        with self._submission_lock:
+            if client_order_id in self._submitted_client_order_ids:
+                return {
+                    "success": False,
+                    "reason": (
+                        "duplicate client_order_id blocked; reconcile the "
+                        "original submission before retrying"
+                    ),
+                    "intent": intent,
+                    "payload": payload,
+                }
+            self._submitted_client_order_ids.add(client_order_id)
+
+        # Reservation intentionally precedes the transport call. Do not
+        # clear it on exceptions or ambiguous responses: only an external
+        # authoritative reconciliation can establish whether a timed-out
+        # request reached the venue.
         base_url = getattr(self.exchange.rest, "base_url", None)
         authority = token_for_live_safety(
             safety, base_url=base_url, endpoint="/v2/orders"
