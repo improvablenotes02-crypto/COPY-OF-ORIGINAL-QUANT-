@@ -116,3 +116,83 @@ def validate_backtest_inputs(datasets: Iterable[DatasetScopeProvenance]) -> tupl
         if item.data_class == "PRIVATE_ACCOUNT" and item.account != first.account:
             raise ScopeProvenanceError("private account identity mismatch")
     return items
+
+# Phase 291 — bind the replay payload to the declared dataset digest.
+def hash_backtest_candles(candles: Iterable[object]) -> tuple[str, int]:
+    """Hash canonical OHLCV rows using the frozen Phase 11G JSON/SHA-256 rule.
+
+    Only closed, structurally valid candles are admitted. Candle symbol may be
+    empty for legacy historical Candle objects; a populated symbol is checked
+    against the provenance record by the caller.
+    """
+    import hashlib
+    import json
+    import math
+
+    rows = []
+    for index, candle in enumerate(candles):
+        try:
+            timestamp = candle.timestamp
+            values = {
+                "open": float(candle.open),
+                "high": float(candle.high),
+                "low": float(candle.low),
+                "close": float(candle.close),
+                "volume": float(candle.volume),
+            }
+            closed = getattr(candle, "closed", True)
+            symbol = getattr(candle, "symbol", "")
+        except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+            raise ScopeProvenanceError(
+                f"candle {index} is missing canonical OHLCV fields"
+            ) from exc
+        if isinstance(timestamp, bool) or not isinstance(timestamp, int):
+            raise ScopeProvenanceError(f"candle {index} timestamp must be an integer")
+        if not isinstance(closed, bool) or not closed:
+            raise ScopeProvenanceError(f"candle {index} is not confirmed closed")
+        if not isinstance(symbol, str):
+            raise ScopeProvenanceError(f"candle {index} symbol must be a string")
+        if any(not math.isfinite(value) for value in values.values()):
+            raise ScopeProvenanceError(f"candle {index} contains non-finite OHLCV")
+        if values["high"] < max(values["open"], values["close"], values["low"]):
+            raise ScopeProvenanceError(f"candle {index} has invalid high")
+        if values["low"] > min(values["open"], values["close"], values["high"]):
+            raise ScopeProvenanceError(f"candle {index} has invalid low")
+        if values["volume"] < 0:
+            raise ScopeProvenanceError(f"candle {index} has negative volume")
+        rows.append({
+            "timestamp": timestamp,
+            "open": values["open"],
+            "high": values["high"],
+            "low": values["low"],
+            "close": values["close"],
+            "volume": values["volume"],
+            "closed": closed,
+            "symbol": symbol,
+        })
+    blob = json.dumps(rows, sort_keys=True, default=str).encode()
+    return hashlib.sha256(blob).hexdigest(), len(rows)
+
+
+def validate_candle_payload(candles: Iterable[object],
+                            datasets: Iterable[DatasetScopeProvenance]):
+    """Return a materialized replay payload only when bytes match provenance."""
+    items = validate_backtest_inputs(datasets)
+    payload = tuple(candles)
+    digest, count = hash_backtest_candles(payload)
+    if len(items) != 1:
+        raise ScopeProvenanceError(
+            "single-symbol backtest requires exactly one dataset provenance record"
+        )
+    record = items[0]
+    if count != record.row_count:
+        raise ScopeProvenanceError("candle row count does not match provenance")
+    if digest != record.dataset_hash:
+        raise ScopeProvenanceError("candle payload hash does not match provenance")
+    for index, candle in enumerate(payload):
+        symbol = getattr(candle, "symbol", "")
+        if symbol and symbol != record.symbol:
+            raise ScopeProvenanceError(
+                f"candle {index} symbol does not match dataset provenance"
+            )
+    return payload
