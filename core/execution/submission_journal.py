@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shutil
 import sqlite3
+import tempfile
 import threading
 import time
 from contextlib import contextmanager
@@ -219,6 +222,130 @@ class SQLiteOrderSubmissionJournal:
                 (target, str(detail)[:500], time.time_ns(), str(client_order_id)),
             )
             db.execute("COMMIT")
+
+    @classmethod
+    def _validate_database_file(cls, path: str | Path) -> dict:
+        """Validate a standalone journal database without initializing or mutating it."""
+        probe = object.__new__(cls)
+        with sqlite3.connect(str(path), timeout=10.0, isolation_level=None) as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                probe._validate_integrity(db)
+                total = db.execute("SELECT COUNT(*) FROM order_submissions").fetchone()[0]
+                placeholders = ",".join("?" for _ in _UNRESOLVED)
+                unresolved = db.execute(
+                    f"SELECT COUNT(*) FROM order_submissions WHERE state IN ({placeholders})",
+                    _UNRESOLVED,
+                ).fetchone()[0]
+                db.execute("COMMIT")
+                return {"record_count": total, "unresolved_count": unresolved}
+            except Exception:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise
+
+    @staticmethod
+    def _fsync_file(path: Path) -> None:
+        with path.open("rb") as stream:
+            os.fsync(stream.fileno())
+
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        if os.name == "nt":
+            return
+        descriptor = os.open(str(path), os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    @staticmethod
+    def _file_sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def backup_to(self, destination: str | Path, *, overwrite: bool = False) -> dict:
+        """Create a consistent, validated SQLite backup and atomically publish it.
+
+        The backup is a standalone SQLite database. The returned SHA-256 is
+        an integrity fingerprint for transport/storage verification, not a
+        signed authenticity guarantee.
+        """
+        target = Path(destination).expanduser().resolve()
+        source = self.path.expanduser().resolve()
+        if target == source:
+            raise SubmissionJournalError("backup destination must differ from live journal")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and not overwrite:
+            raise SubmissionJournalError("backup destination already exists")
+        fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+        os.close(fd)
+        temporary = Path(temp_name)
+        try:
+            with self._lock, self._connection() as source_db:
+                self._validate_integrity(source_db)
+                with sqlite3.connect(str(temporary), isolation_level=None) as backup_db:
+                    source_db.backup(backup_db)
+            self._fsync_file(temporary)
+            counts = self._validate_database_file(temporary)
+            digest = self._file_sha256(temporary)
+            if target.exists() and not overwrite:
+                raise SubmissionJournalError("backup destination already exists")
+            os.replace(temporary, target)
+            self._fsync_directory(target.parent)
+            return {
+                "path": str(target),
+                "sha256": digest,
+                "schema_version": SCHEMA_VERSION,
+                **counts,
+            }
+        except Exception as exc:
+            temporary.unlink(missing_ok=True)
+            if isinstance(exc, SubmissionJournalError):
+                raise
+            raise SubmissionJournalError("submission journal backup failed") from exc
+
+    @classmethod
+    def restore_from(
+        cls, backup: str | Path, destination: str | Path, *,
+        expected_sha256: str | None = None, overwrite: bool = False,
+    ) -> "SQLiteOrderSubmissionJournal":
+        """Validate a backup fully, then atomically install it at destination."""
+        source = Path(backup).expanduser().resolve()
+        target = Path(destination).expanduser().resolve()
+        if source == target:
+            raise SubmissionJournalError("restore source and destination must differ")
+        if not source.is_file():
+            raise SubmissionJournalError("journal backup file does not exist")
+        if target.exists() and not overwrite:
+            raise SubmissionJournalError("restore destination already exists")
+        try:
+            cls._validate_database_file(source)
+            digest = cls._file_sha256(source)
+            if expected_sha256 is not None and digest.lower() != str(expected_sha256).lower():
+                raise SubmissionJournalError("journal backup SHA-256 does not match expected value")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".restore", dir=target.parent)
+            os.close(fd)
+            temporary = Path(temp_name)
+            try:
+                shutil.copyfile(source, temporary)
+                cls._fsync_file(temporary)
+                cls._validate_database_file(temporary)
+                if target.exists() and not overwrite:
+                    raise SubmissionJournalError("restore destination already exists")
+                os.replace(temporary, target)
+                cls._fsync_directory(target.parent)
+            finally:
+                temporary.unlink(missing_ok=True)
+            return cls(target)
+        except Exception as exc:
+            if isinstance(exc, SubmissionJournalError):
+                raise
+            raise SubmissionJournalError("submission journal restore failed") from exc
 
     def unresolved(self):
         """Return immutable dictionaries for rows requiring venue reconciliation."""
