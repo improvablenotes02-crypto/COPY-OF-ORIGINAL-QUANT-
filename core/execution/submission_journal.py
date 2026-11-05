@@ -409,7 +409,7 @@ class SQLiteOrderSubmissionJournal:
     def unresolved(self):
         """Return validated, immutable dictionaries requiring venue reconciliation.
 
-        Integrity validation and selection share one SQLite write transaction,
+        Integrity validation and selection share one SQLite read transaction,
         so a caller never receives a partial or unvalidated journal snapshot.
         """
         placeholders = ",".join("?" for _ in _UNRESOLVED)
