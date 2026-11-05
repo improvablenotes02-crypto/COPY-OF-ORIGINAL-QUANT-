@@ -156,6 +156,19 @@ class DatasetScopeProvenance:
             if not isinstance(value, str) or not value.strip():
                 raise ScopeProvenanceError(f"{name} is required")
             object.__setattr__(self, name, value.strip())
+        from datetime import datetime
+        try:
+            parsed_source_timestamp = datetime.fromisoformat(
+                self.source_timestamp.replace("Z", "+00:00")
+            )
+        except ValueError as exc:
+            raise ScopeProvenanceError(
+                "source_timestamp must be timezone-aware ISO-8601"
+            ) from exc
+        if parsed_source_timestamp.tzinfo is None or parsed_source_timestamp.utcoffset() is None:
+            raise ScopeProvenanceError(
+                "source_timestamp must be timezone-aware ISO-8601"
+            )
         region = str(self.region).strip().upper()
         environment = str(self.environment).strip().upper()
         data_class = str(self.data_class).strip().upper()
