@@ -419,6 +419,22 @@ def validate_candle_payload(candles: Iterable[object],
     return payload
 
 
+# Phase 304 — resolve a typed engine build descriptor to its canonical digest.
+def resolve_engine_fingerprint(
+    engine_fingerprint: str | None = None,
+    engine_build_identity: EngineBuildIdentity | None = None,
+) -> str | None:
+    """Resolve the typed build identity, rejecting conflicting raw digests."""
+    if engine_build_identity is None:
+        return engine_fingerprint
+    if not isinstance(engine_build_identity, EngineBuildIdentity):
+        raise ScopeProvenanceError("engine_build_identity must be EngineBuildIdentity")
+    canonical = engine_build_identity.fingerprint
+    if engine_fingerprint is not None and engine_fingerprint != canonical:
+        raise ScopeProvenanceError("engine fingerprint conflicts with build identity")
+    return canonical
+
+
 # Phase 293 — immutable scoped replay execution evidence.
 def build_backtest_execution_evidence(
     datasets: Iterable[DatasetScopeProvenance],
@@ -426,11 +442,15 @@ def build_backtest_execution_evidence(
     strategy_fingerprint: str | None = None,
     configuration_fingerprint: str | None = None,
     engine_fingerprint: str | None = None,
+    engine_build_identity: EngineBuildIdentity | None = None,
 ) -> BacktestExecutionEvidence:
     """Validate every input leg and produce a deterministic replay evidence ID."""
     import hashlib
     import json
 
+    engine_fingerprint = resolve_engine_fingerprint(
+        engine_fingerprint, engine_build_identity
+    )
     records = validate_backtest_inputs(datasets)
     if not isinstance(candles_by_symbol, dict):
         raise ScopeProvenanceError("execution evidence requires symbol-keyed candle payloads")
