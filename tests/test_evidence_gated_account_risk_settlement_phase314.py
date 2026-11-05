@@ -12,6 +12,7 @@ from core.accounts.account_risk import (
     OrderRiskProposal,
 )
 from core.accounts.persistent_account_risk import (
+    hash_account_risk_state,
     AccountRiskReconciliationEvidence,
     PersistentAccountRiskCoordinator,
     SQLiteAccountRiskRepository,
@@ -35,12 +36,12 @@ def _profile():
     )
 
 
-def _evidence(scope, reservation_id, **changes):
+def _evidence(scope, reservation_id, state_hash=None, **changes):
     values = dict(
         scope=scope, reservation_id=reservation_id,
         client_order_id=reservation_id, source="DELTA_AUTHENTICATED_READ", exchange_order_id="delta-order-314",
         terminal_status="FILLED", observed_at="2026-11-06T00:00:00+00:00",
-        snapshot_hash="b" * 64, identity_verified=True,
+        snapshot_hash="b" * 64, risk_state_hash=state_hash or ("c" * 64), identity_verified=True,
         orders_complete=True, fills_complete=True, positions_complete=True,
         open_order_absent=True,
     )
@@ -77,7 +78,7 @@ def _reconciled_state(coordinator, scope):
 
 def test_settlement_requires_complete_authenticated_terminal_evidence(tmp_path):
     coordinator, repo, scope = _setup(tmp_path / "evidence-required.sqlite")
-    evidence = _evidence(scope, "settle-evidence-314")
+    evidence = _evidence(scope, "settle-evidence-314", hash_account_risk_state(state))
     state = _reconciled_state(coordinator, scope)
     assert coordinator.settle_reservation(
         scope=scope, reservation_id=evidence.reservation_id,
@@ -112,7 +113,7 @@ def test_incomplete_or_untrusted_evidence_is_rejected(tmp_path, changes):
 def test_evidence_must_bind_to_exact_reservation_and_scope(tmp_path):
     coordinator, repo, scope = _setup(tmp_path / "evidence-binding.sqlite")
     state = _reconciled_state(coordinator, scope)
-    wrong_id = _evidence(scope, "different-reservation")
+    wrong_id = _evidence(scope, "different-reservation", hash_account_risk_state(state))
     with pytest.raises(AccountRiskError, match="does not match"):
         coordinator.settle_reservation(
             scope=scope, reservation_id="settle-evidence-314",
@@ -127,7 +128,7 @@ def test_settlement_evidence_survives_repository_restart(tmp_path):
     path = str(tmp_path / "evidence-durable.sqlite")
     coordinator, first_repo, scope = _setup(path)
     state = _reconciled_state(coordinator, scope)
-    evidence = _evidence(scope, "settle-evidence-314")
+    evidence = _evidence(scope, "settle-evidence-314", hash_account_risk_state(state))
     assert coordinator.settle_reservation(
         scope=scope, reservation_id=evidence.reservation_id,
         expected_revision=state.revision, reconciled_state=state,
