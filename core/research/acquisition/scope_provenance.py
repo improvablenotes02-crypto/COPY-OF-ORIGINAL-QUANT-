@@ -44,6 +44,9 @@ class BacktestExecutionEvidence:
     symbols: tuple[str, ...]
     row_counts: tuple[int, ...]
     payload_hash: str
+    strategy_fingerprint: str | None = None
+    configuration_fingerprint: str | None = None
+    execution_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
         if not self.dataset_provenance or not self.symbols:
@@ -52,6 +55,20 @@ class BacktestExecutionEvidence:
             raise ScopeProvenanceError("execution evidence dimensions do not match")
         if not isinstance(self.payload_hash, str) or not _HASH.fullmatch(self.payload_hash):
             raise ScopeProvenanceError("execution evidence payload_hash must be SHA-256")
+        supplied = (self.strategy_fingerprint, self.configuration_fingerprint)
+        if (supplied[0] is None) != (supplied[1] is None):
+            raise ScopeProvenanceError(
+                "strategy and configuration fingerprints must be supplied together"
+            )
+        if supplied[0] is not None and any(
+            not isinstance(value, str) or not _HASH.fullmatch(value) for value in supplied
+        ):
+            raise ScopeProvenanceError("strategy/configuration fingerprints must be SHA-256")
+        if supplied[0] is None:
+            if self.execution_fingerprint is not None:
+                raise ScopeProvenanceError("execution fingerprint requires strategy/configuration")
+        elif not isinstance(self.execution_fingerprint, str) or not _HASH.fullmatch(self.execution_fingerprint):
+            raise ScopeProvenanceError("execution_fingerprint must be SHA-256")
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +251,8 @@ def validate_candle_payload(candles: Iterable[object],
 def build_backtest_execution_evidence(
     datasets: Iterable[DatasetScopeProvenance],
     candles_by_symbol: dict[str, Iterable[object]],
+    strategy_fingerprint: str | None = None,
+    configuration_fingerprint: str | None = None,
 ) -> BacktestExecutionEvidence:
     """Validate every input leg and produce a deterministic replay evidence ID."""
     import hashlib
@@ -265,10 +284,31 @@ def build_backtest_execution_evidence(
     payload_hash = hashlib.sha256(
         json.dumps(canonical_rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+    supplied = (strategy_fingerprint, configuration_fingerprint)
+    if (supplied[0] is None) != (supplied[1] is None):
+        raise ScopeProvenanceError(
+            "strategy and configuration fingerprints must be supplied together"
+        )
+    if supplied[0] is not None and any(
+        not isinstance(value, str) or not _HASH.fullmatch(value) for value in supplied
+    ):
+        raise ScopeProvenanceError("strategy/configuration fingerprints must be SHA-256")
+    execution_fingerprint = None
+    if supplied[0] is not None:
+        execution_fingerprint = hashlib.sha256(
+            json.dumps({
+                "payload_hash": payload_hash,
+                "strategy_fingerprint": strategy_fingerprint,
+                "configuration_fingerprint": configuration_fingerprint,
+            }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
     ordered_records = tuple(records_by_symbol[symbol] for symbol in symbols)
     return BacktestExecutionEvidence(
         dataset_provenance=ordered_records,
         symbols=symbols,
         row_counts=tuple(row_counts),
         payload_hash=payload_hash,
+        strategy_fingerprint=strategy_fingerprint,
+        configuration_fingerprint=configuration_fingerprint,
+        execution_fingerprint=execution_fingerprint,
     )
