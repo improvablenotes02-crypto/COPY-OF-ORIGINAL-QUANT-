@@ -73,6 +73,7 @@ jobs:
           tests/test_scoped_portfolio_replay_order_phase301.py
           tests/test_engine_build_identity_phase303.py
           tests/test_typed_engine_build_identity_integration_phase304.py
+          tests/test_typed_strategy_configuration_identity_phase306.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
