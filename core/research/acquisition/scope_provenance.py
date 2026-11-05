@@ -37,6 +37,32 @@ class AccountDataIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class BacktestExecutionEvidence:
+    """Immutable reference from a scoped replay to its validated input datasets."""
+
+    dataset_provenance: tuple["DatasetScopeProvenance", ...]
+    symbols: tuple[str, ...]
+    row_counts: tuple[int, ...]
+    payload_hash: str
+
+    def __post_init__(self) -> None:
+        if not self.dataset_provenance or not self.symbols:
+            raise ScopeProvenanceError("execution evidence requires dataset provenance")
+        if len(self.dataset_provenance) != len(self.symbols) or len(self.symbols) != len(self.row_counts):
+            raise ScopeProvenanceError("execution evidence dimensions do not match")
+        if not isinstance(self.payload_hash, str) or not _HASH.fullmatch(self.payload_hash):
+            raise ScopeProvenanceError("execution evidence payload_hash must be SHA-256")
+
+
+@dataclass(frozen=True, slots=True)
+class ScopedBacktestOutcome:
+    """Result plus immutable dataset identity evidence; does not imply profitability."""
+
+    result: object
+    evidence: BacktestExecutionEvidence
+
+
+@dataclass(frozen=True, slots=True)
 class DatasetScopeProvenance:
     venue: str
     region: str
@@ -202,3 +228,47 @@ def validate_candle_payload(candles: Iterable[object],
     if digest != record.dataset_hash:
         raise ScopeProvenanceError("candle payload hash does not match provenance")
     return payload
+
+
+# Phase 293 — immutable scoped replay execution evidence.
+def build_backtest_execution_evidence(
+    datasets: Iterable[DatasetScopeProvenance],
+    candles_by_symbol: dict[str, Iterable[object]],
+) -> BacktestExecutionEvidence:
+    """Validate every input leg and produce a deterministic replay evidence ID."""
+    import hashlib
+    import json
+
+    records = validate_backtest_inputs(datasets)
+    if not isinstance(candles_by_symbol, dict):
+        raise ScopeProvenanceError("execution evidence requires symbol-keyed candle payloads")
+    symbols = tuple(sorted(record.symbol for record in records))
+    if len(set(symbols)) != len(symbols):
+        raise ScopeProvenanceError("execution evidence requires one dataset per symbol")
+    if set(symbols) != set(candles_by_symbol):
+        raise ScopeProvenanceError("execution evidence symbols do not match candle payloads")
+
+    records_by_symbol = {record.symbol: record for record in records}
+    canonical_rows = []
+    row_counts = []
+    for symbol in symbols:
+        record = records_by_symbol[symbol]
+        payload = validate_candle_payload(candles_by_symbol[symbol], (record,))
+        digest, count = hash_backtest_candles(payload)
+        canonical_rows.append({
+            "symbol": symbol,
+            "dataset_hash": digest,
+            "row_count": count,
+        })
+        row_counts.append(count)
+
+    payload_hash = hashlib.sha256(
+        json.dumps(canonical_rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    ordered_records = tuple(records_by_symbol[symbol] for symbol in symbols)
+    return BacktestExecutionEvidence(
+        dataset_provenance=ordered_records,
+        symbols=symbols,
+        row_counts=tuple(row_counts),
+        payload_hash=payload_hash,
+    )
