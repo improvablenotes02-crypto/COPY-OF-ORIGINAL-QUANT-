@@ -13,6 +13,7 @@ import json
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 SCHEMA_VERSION = 1
@@ -61,7 +62,7 @@ class SQLiteOrderSubmissionJournal:
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self._lock = threading.RLock()
-        with self._connect() as db:
+        with self._connection() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
             db.execute(
@@ -79,6 +80,14 @@ class SQLiteOrderSubmissionJournal:
                 "CREATE INDEX IF NOT EXISTS idx_order_submissions_state "
                 "ON order_submissions(state)"
             )
+
+    @contextmanager
+    def _connection(self):
+        db = self._connect()
+        try:
+            yield db
+        finally:
+            db.close()
 
     def _connect(self):
         db = sqlite3.connect(
@@ -154,7 +163,7 @@ class SQLiteOrderSubmissionJournal:
     def unresolved(self):
         """Return immutable dictionaries for rows requiring venue reconciliation."""
         placeholders = ",".join("?" for _ in _UNRESOLVED)
-        with self._connect() as db:
+        with self._connection() as db:
             rows = db.execute(
                 f"""SELECT client_order_id, payload_sha256, state, detail,
                     created_at_ns, updated_at_ns, schema_version
@@ -169,7 +178,7 @@ class SQLiteOrderSubmissionJournal:
         return [dict(zip(fields, row)) for row in rows]
 
     def get(self, client_order_id: str):
-        with self._connect() as db:
+        with self._connection() as db:
             row = db.execute(
                 """SELECT client_order_id, payload_sha256, state, detail,
                    created_at_ns, updated_at_ns, schema_version
