@@ -1,4 +1,4 @@
-﻿"""
+"""
 ====================================================
 
 Delta Exchange Adapter
@@ -267,6 +267,27 @@ class DeltaExchange(BaseExchange):
                 "history_pages": history_pages,
                 "page_size": 50,
             },
+        }
+
+    def get_fill_history_snapshot(self, *, max_pages=100):
+        """Return a fully paginated, read-only Delta fills snapshot.
+
+        This is a separate observation from order history and is not
+        exchange-atomic with it. Callers must bind it to an explicit account
+        scope and must not infer rejection from an order having no fills.
+        """
+        self._require_auth()
+        fills, pages = self._read_paginated_order_records(
+            "/v2/fills", params={}, max_pages=max_pages
+        )
+        return {
+            "venue": "delta",
+            "source": "delta-v2-fills",
+            "fills": fills,
+            "complete": True,
+            "snapshot_as_of_ns": time.time_ns(),
+            "observation_is_exchange_atomic": False,
+            "pagination": {"pages": pages, "page_size": 50},
         }
 
     # -------------------------------------------------
