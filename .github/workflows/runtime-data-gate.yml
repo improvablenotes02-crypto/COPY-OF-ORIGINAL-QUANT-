@@ -79,6 +79,7 @@ jobs:
           tests/test_persistent_account_risk_concurrency_phase309.py
           tests/test_atomic_account_risk_reservations_phase310.py
           tests/test_atomic_risk_reservation_concurrency_phase311.py
+          tests/test_pending_risk_reservation_recovery_phase312.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
