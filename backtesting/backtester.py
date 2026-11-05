@@ -1505,8 +1505,8 @@ class Backtester:
         incomplete or cross-environment data is rejected before replay.
         """
         from core.research.acquisition.scope_provenance import (
-            validate_backtest_inputs,
+            validate_candle_payload,
         )
 
-        validate_backtest_inputs(provenance_records)
-        return self.run(candles, journal=journal)
+        payload = validate_candle_payload(candles, provenance_records)
+        return self.run(payload, journal=journal)
