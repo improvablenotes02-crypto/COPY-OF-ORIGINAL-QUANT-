@@ -61,10 +61,10 @@ class TestDeltaPaginationExhaustionPhase280(unittest.TestCase):
         })
         snapshot = exchange.get_order_history_snapshot()
         self.assertTrue(snapshot["complete"])
-        self.assertTrue(snapshot["pagination"]["active_cursor_exhausted"])
-        self.assertTrue(snapshot["pagination"]["history_cursor_exhausted"])
-        self.assertEqual(snapshot["pagination"]["active_record_count"], 1)
-        self.assertEqual(snapshot["pagination"]["history_record_count"], 1)
+        self.assertTrue(snapshot["pagination_evidence"]["active_cursor_exhausted"])
+        self.assertTrue(snapshot["pagination_evidence"]["history_cursor_exhausted"])
+        self.assertEqual(snapshot["pagination_evidence"]["active_record_count"], 1)
+        self.assertEqual(snapshot["pagination_evidence"]["history_record_count"], 1)
 
     def test_fill_snapshot_records_explicit_cursor_exhaustion(self):
         exchange, _ = self.exchange({
@@ -72,8 +72,8 @@ class TestDeltaPaginationExhaustionPhase280(unittest.TestCase):
         })
         snapshot = exchange.get_fill_history_snapshot()
         self.assertTrue(snapshot["complete"])
-        self.assertTrue(snapshot["pagination"]["cursor_exhausted"])
-        self.assertEqual(snapshot["pagination"]["record_count"], 1)
+        self.assertTrue(snapshot["pagination_evidence"]["cursor_exhausted"])
+        self.assertEqual(snapshot["pagination_evidence"]["record_count"], 1)
 
 
 if __name__ == "__main__":

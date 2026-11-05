@@ -272,13 +272,15 @@ class DeltaExchange(BaseExchange):
             "pagination": {
                 "active_pages": active_pages,
                 "history_pages": history_pages,
+                "page_size": 50,
+            },
+            "pagination_evidence": {
                 "active_cursor_exhausted": active_pagination["cursor_exhausted"],
                 "history_cursor_exhausted": history_pagination["cursor_exhausted"],
                 "active_cursor_hops": active_pagination["cursor_hops"],
                 "history_cursor_hops": history_pagination["cursor_hops"],
                 "active_record_count": active_pagination["record_count"],
                 "history_record_count": history_pagination["record_count"],
-                "page_size": 50,
             },
         }
 
@@ -300,8 +302,8 @@ class DeltaExchange(BaseExchange):
             "complete": True,
             "snapshot_as_of_ns": time.time_ns(),
             "observation_is_exchange_atomic": False,
-            "pagination": {
-                "pages": pages, "page_size": 50,
+            "pagination": {"pages": pages, "page_size": 50},
+            "pagination_evidence": {
                 "cursor_exhausted": pagination["cursor_exhausted"],
                 "cursor_hops": pagination["cursor_hops"],
                 "record_count": pagination["record_count"],
