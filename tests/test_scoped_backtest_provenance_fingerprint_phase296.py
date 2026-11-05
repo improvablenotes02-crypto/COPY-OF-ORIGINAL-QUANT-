@@ -44,6 +44,7 @@ def _run(scope):
     return _Harness().run_scoped_with_evidence(
         candles, [scope], strategy_fingerprint="a" * 64,
         configuration_fingerprint="b" * 64,
+        engine_fingerprint="d" * 64,
     )
 
 
