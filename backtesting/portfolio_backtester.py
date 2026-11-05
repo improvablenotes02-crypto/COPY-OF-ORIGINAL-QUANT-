@@ -266,7 +266,10 @@ class PortfolioBacktester:
     # Phase 293 — evidence-bearing portfolio replay
     # -------------------------------------------------
 
-    def run_scoped_with_evidence(self, history, provenance_by_symbol, journal=None):
+    def run_scoped_with_evidence(
+        self, history, provenance_by_symbol, journal=None,
+        strategy_fingerprint=None, configuration_fingerprint=None,
+    ):
         """Run a fully validated portfolio replay and return dataset evidence.
 
         Every symbol payload is validated before the first engine is invoked.
@@ -310,6 +313,11 @@ class PortfolioBacktester:
             all_records.extend(validated)
 
         validate_backtest_inputs(all_records)
-        evidence = build_backtest_execution_evidence(all_records, verified_history)
+        evidence = build_backtest_execution_evidence(
+            all_records,
+            verified_history,
+            strategy_fingerprint=strategy_fingerprint,
+            configuration_fingerprint=configuration_fingerprint,
+        )
         result = self.run(verified_history, journal=journal)
         return ScopedBacktestOutcome(result=result, evidence=evidence)
