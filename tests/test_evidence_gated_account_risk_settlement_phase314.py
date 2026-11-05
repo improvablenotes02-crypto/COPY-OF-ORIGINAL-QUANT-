@@ -38,7 +38,7 @@ def _profile():
 def _evidence(scope, reservation_id, **changes):
     values = dict(
         scope=scope, reservation_id=reservation_id,
-        source="DELTA_AUTHENTICATED_READ", exchange_order_id="delta-order-314",
+        client_order_id=reservation_id, source="DELTA_AUTHENTICATED_READ", exchange_order_id="delta-order-314",
         terminal_status="FILLED", observed_at="2026-11-06T00:00:00+00:00",
         snapshot_hash="b" * 64, identity_verified=True,
         orders_complete=True, fills_complete=True, positions_complete=True,
