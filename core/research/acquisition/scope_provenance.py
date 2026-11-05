@@ -217,9 +217,13 @@ def validate_backtest_inputs(datasets: Iterable[DatasetScopeProvenance]) -> tupl
     first = items[0]
     if first.completeness != "COMPLETE":
         raise ScopeProvenanceError("backtest rejects non-complete dataset")
+    if first.row_count == 0:
+        raise ScopeProvenanceError("backtest rejects empty dataset with zero rows")
     for item in items[1:]:
         if item.completeness != "COMPLETE":
             raise ScopeProvenanceError("backtest rejects non-complete dataset")
+        if item.row_count == 0:
+            raise ScopeProvenanceError("backtest rejects empty dataset with zero rows")
         if (item.venue, item.region, item.environment) != (
             first.venue, first.region, first.environment
         ):
