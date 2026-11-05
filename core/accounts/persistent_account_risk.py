@@ -5,7 +5,7 @@ deployments must inject a shared transactional implementation of the protocol.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 import json
 import math
 import sqlite3
