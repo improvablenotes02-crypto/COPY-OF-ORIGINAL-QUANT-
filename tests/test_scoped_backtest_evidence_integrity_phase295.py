@@ -59,7 +59,7 @@ def test_tampered_evidence_envelope_rejected_at_construction(changes, match):
         replace(evidence, **changes)
 
 
-def test_evidence_rejects_unsorted_or_duplicate_symbols():
+def test_evidence_rejects_symbol_dimension_mismatch():
     evidence = _outcome().evidence
-    with pytest.raises(ScopeProvenanceError, match="unique and sorted"):
-        replace(evidence, symbols=("ETHUSD", "BTCUSD"))
+    with pytest.raises(ScopeProvenanceError, match="symbol/provenance"):
+        replace(evidence, symbols=("ETHUSD",))
