@@ -30,6 +30,9 @@ def _outcome():
     )
 
     class Harness(Backtester):
+        def __init__(self):
+            pass
+
         def run(self, bars, journal=None):
             return {"count": len(bars)}
 
