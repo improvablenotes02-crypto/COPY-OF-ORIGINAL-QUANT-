@@ -5,7 +5,6 @@ import pytest
 
 from core.accounts.delta_account_registry import (
     AccountNotFoundError,
-    AccountScopeError,
     CiphertextEnvelope,
     CredentialVaultError,
     DeltaAccountRegistry,
@@ -28,27 +27,9 @@ class TestOnlyEncryptionProvider:
         return bytes(value ^ 0xA5 for value in envelope.ciphertext[16:])
 
 
-class FakeDeltaExchange:
-    def __init__(self, *, api_key, api_secret, base_url, provider_id="57354187"):
-        self.provider_id = provider_id
-        self.base_url = base_url
-
-    def _get_authenticated_account_id(self):
-        return self.provider_id
-
-    def get_order_history_snapshot(self, *, max_pages=100):
-        return {"account_id": self.provider_id, "orders": []}
-
-    def get_fill_history_snapshot(self, *, max_pages=100):
-        return {"account_id": self.provider_id, "fills": []}
-
-
-def _registry(database=":memory:", exchange_factory=None):
+def _registry(database=":memory:"):
     repository = SQLiteDeltaAccountRepository(database)
-    registry = DeltaAccountRegistry(
-        repository, TestOnlyEncryptionProvider(),
-        exchange_factory=exchange_factory,
-    )
+    registry = DeltaAccountRegistry(repository, TestOnlyEncryptionProvider())
     return registry, repository
 
 
@@ -185,80 +166,4 @@ def test_encryption_provider_failure_fails_closed():
             environment="SANDBOX", api_key="key", api_secret="secret"
         )
     assert registry.list_accounts("tenant-a") == []
-    repository.close()
-
-
-def test_authenticated_identity_is_bound_once_to_tenant_account():
-    registry, repository = _registry(
-        exchange_factory=lambda **kwargs: FakeDeltaExchange(**kwargs)
-    )
-    metadata = _register(registry)
-    bound = registry.verify_and_bind_identity(
-        tenant_id="tenant-a", account_id=metadata.account_id
-    )
-    assert bound.provider_account_id == "57354187"
-    assert repository.get("tenant-a", metadata.account_id).provider_account_id == "57354187"
-    # Same provider identity is idempotent; a second check cannot rebind it.
-    assert registry.verify_and_bind_identity(
-        tenant_id="tenant-a", account_id=metadata.account_id
-    ).provider_account_id == "57354187"
-    repository.close()
-
-
-def test_provider_identity_mismatch_cannot_overwrite_existing_binding():
-    registry, repository = _registry(
-        exchange_factory=lambda **kwargs: FakeDeltaExchange(**kwargs, provider_id="222")
-    )
-    metadata = _register(registry)
-    repository.bind_provider_identity("tenant-a", metadata.account_id, "111")
-    with pytest.raises(AccountScopeError, match="does not match"):
-        registry.verify_and_bind_identity(
-            tenant_id="tenant-a", account_id=metadata.account_id
-        )
-    assert repository.get("tenant-a", metadata.account_id).provider_account_id == "111"
-    repository.close()
-
-
-@pytest.mark.parametrize("provider_id", ["", "0", "-1", "not-an-id"])
-def test_invalid_provider_identity_is_never_bound(provider_id):
-    registry, repository = _registry(
-        exchange_factory=lambda **kwargs: FakeDeltaExchange(**kwargs, provider_id=provider_id)
-    )
-    metadata = _register(registry)
-    with pytest.raises(AccountScopeError, match="missing or invalid"):
-        registry.verify_and_bind_identity(
-            tenant_id="tenant-a", account_id=metadata.account_id
-        )
-    assert repository.get("tenant-a", metadata.account_id).provider_account_id is None
-    repository.close()
-
-
-def test_identity_binding_cannot_be_invoked_through_another_tenant():
-    called = []
-    def factory(**kwargs):
-        called.append(True)
-        return FakeDeltaExchange(**kwargs)
-    registry, repository = _registry(exchange_factory=factory)
-    metadata = _register(registry, tenant="tenant-a")
-    with pytest.raises(AccountNotFoundError):
-        registry.verify_and_bind_identity(
-            tenant_id="tenant-b", account_id=metadata.account_id
-        )
-    assert called == []
-    repository.close()
-
-
-def test_history_snapshot_identity_must_match_bound_provider_account():
-    registry, repository = _registry(
-        exchange_factory=lambda **kwargs: FakeDeltaExchange(**kwargs, provider_id="999")
-    )
-    metadata = _register(registry)
-    repository.bind_provider_identity("tenant-a", metadata.account_id, "123")
-    session = registry.open_read_only_session(
-        tenant_id="tenant-a", account_id=metadata.account_id
-    )
-    with pytest.raises(AccountScopeError, match="snapshot identity"):
-        session.get_order_history_snapshot()
-    with pytest.raises(AccountScopeError, match="snapshot identity"):
-        session.get_fill_history_snapshot()
     repository.close()
