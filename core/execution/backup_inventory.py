@@ -7,6 +7,7 @@ under the currently supported journal schema.
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import time
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -87,7 +88,7 @@ def verify_backup_inventory(
             )
             if hash_status == "mismatch":
                 entry["error"] = "backup SHA-256 does not match supplied expected digest"
-        except (OSError, SubmissionJournalError) as exc:
+        except (OSError, sqlite3.DatabaseError, SubmissionJournalError) as exc:
             entry["error"] = str(exc)
         entries.append(entry)
     return {
