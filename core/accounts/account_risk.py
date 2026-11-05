@@ -238,7 +238,11 @@ class AccountRiskCoordinator:
         self, *, scope: AccountRiskScope, profile: AccountRiskProfile,
         initial_state: AccountRiskState,
     ) -> None:
-        if not isinstance(scope, AccountRiskScope) or initial_state.scope != scope:
+        if (
+            not isinstance(scope, AccountRiskScope)
+            or not isinstance(initial_state, AccountRiskState)
+            or initial_state.scope != scope
+        ):
             raise AccountRiskError("initial risk state must match the registered account scope")
         if not isinstance(profile, AccountRiskProfile):
             raise AccountRiskError("an explicit account risk profile is required")
