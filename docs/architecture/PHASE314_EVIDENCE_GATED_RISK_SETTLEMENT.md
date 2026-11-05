@@ -9,7 +9,7 @@ A durable reservation should not be marked settled merely because a caller suppl
 Settlement now requires an immutable `AccountRiskReconciliationEvidence` record bound to the exact account scope and reservation ID. It requires:
 
 - Delta authenticated-read source designation;
-- provider exchange order ID and terminal order status;
+- the original client order ID exactly matching the reservation ID, plus the provider exchange order ID and terminal order status;
 - UTC-aware observation time;
 - SHA-256 snapshot identity;
 - verified account identity;
