@@ -13,6 +13,7 @@ from core.accounts.account_risk import (
     OrderRiskProposal,
 )
 from core.accounts.delta_account_registry import (
+    AccountScopeError,
     DeltaReadOnlySession,
     EncryptedDeltaAccount,
 )
@@ -30,7 +31,7 @@ class _ReadOnlyDelta:
         self.base = time.time_ns()
 
     def _get_authenticated_account_id(self):
-        return 99125
+        return "99125"
 
     def get_balance(self):
         return {"success": True, "result": [{"asset": "USD", "available_balance": "10000"}]}
@@ -164,7 +165,7 @@ def test_incomplete_delta_snapshot_cannot_settle_reservation(tmp_path):
     coordinator, repo, scope, session, reconciled = _setup(
         tmp_path, orders_complete=False,
     )
-    with pytest.raises(Exception):
+    with pytest.raises(AccountScopeError):
         reconcile_and_settle_pending_reservation(
             coordinator=coordinator, journal=_Journal(), scope=scope,
             reservation_id="QE-315", session=session,
@@ -182,11 +183,13 @@ def test_settlement_cannot_release_other_pending_order_capacity(tmp_path):
             scope=scope, risk_amount=25.0, notional=100.0, leverage=1.0,
         ),
     )
+    current = coordinator.get_state(scope)[1]
+    bad_reconciled = replace(current, pending_orders=0, pending_exposure=0.0)
     with pytest.raises(AccountRiskError, match="other pending orders"):
         reconcile_and_settle_pending_reservation(
             coordinator=coordinator, journal=_Journal(), scope=scope,
             reservation_id="QE-315", session=session,
-            reconciled_state=reconciled, now_ns=time.time_ns() + 2_000_000_000,
+            reconciled_state=bad_reconciled, now_ns=time.time_ns() + 2_000_000_000,
         )
     assert len(coordinator.list_pending_reservations(scope)) == 2
     repo.close()
