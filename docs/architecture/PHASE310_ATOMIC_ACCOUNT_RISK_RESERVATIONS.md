@@ -7,12 +7,12 @@ The persistent risk repository now supports atomic order-risk reservation, relea
 - `reserve_order()` evaluates the proposal and increments pending order count/exposure in the same SQLite write transaction.
 - A globally unique reservation ID binds to the exact account scope and proposal. Repeating the same request is idempotent; reusing the ID for a different proposal is rejected.
 - `release_reservation()` removes pending exposure once, for an order confirmed not submitted, rejected, or cancelled.
-- `settle_reservation()` replaces the pending reservation state with a caller-supplied authoritative reconciled account snapshot and marks the reservation settled.
+- `settle_reservation()` replaces the pending reservation state only when supplied with a scope- and reservation-bound `AccountRiskReconciliationEvidence` record. Evidence and state transition are persisted atomically.
 - Exposure and pending-order limits are re-evaluated under the transaction, so simultaneous proposals cannot both consume the same remaining headroom.
 
 ## Ambiguous order outcomes
 
-A reservation must remain pending when order submission has an ambiguous transport outcome. Do not release it merely because a client timed out. Keep the risk capacity locked until authenticated exchange reconciliation determines whether the order exists and the caller supplies a reconciled state or confirmed cancellation/rejection.
+A reservation must remain pending when order submission has an ambiguous transport outcome. Do not release it merely because a client timed out. Keep the risk capacity locked until authenticated exchange reconciliation determines the terminal order status and supplies a complete reconciled state plus evidence. The evidence contract requires identity verification, complete order/fill/position observations, and confirmation that the order is no longer open.
 
 ## Deployment boundary
 
@@ -20,4 +20,4 @@ This is a risk preflight/reservation primitive, not an order executor. It does n
 
 ## Verification
 
-Tests cover atomic pending exposure updates, idempotent reservation IDs, conflicting ID reuse, one-time release, authoritative settlement, ambiguous-outcome lock retention, and account exposure limit enforcement.
+Tests cover atomic pending exposure updates, idempotent reservation IDs, conflicting ID reuse, one-time release, evidence-gated settlement, ambiguous-outcome lock retention, and account exposure limit enforcement.
