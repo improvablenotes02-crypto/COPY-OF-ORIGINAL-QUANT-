@@ -44,7 +44,7 @@ def _state(scope, **changes):
 def _evidence(scope, reservation_id):
     return AccountRiskReconciliationEvidence(
         scope=scope, reservation_id=reservation_id,
-        source="DELTA_AUTHENTICATED_READ", exchange_order_id="delta-order-313",
+        client_order_id=reservation_id, source="DELTA_AUTHENTICATED_READ", exchange_order_id="delta-order-313",
         terminal_status="FILLED", observed_at="2026-11-06T00:00:00+00:00",
         snapshot_hash="c" * 64, identity_verified=True,
         orders_complete=True, fills_complete=True, positions_complete=True,
