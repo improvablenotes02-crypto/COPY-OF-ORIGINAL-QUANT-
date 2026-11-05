@@ -64,6 +64,76 @@ class EngineBuildIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class StrategyArtifactIdentity:
+    """Canonical identity for a versioned strategy artifact."""
+
+    strategy_id: str
+    version: str
+    source_revision: str
+    artifact_sha256: str
+    parameter_schema_version: str
+
+    def __post_init__(self) -> None:
+        for name in ("strategy_id", "version", "source_revision", "parameter_schema_version"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ScopeProvenanceError(f"strategy identity {name} is required")
+            object.__setattr__(self, name, value.strip())
+        if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", self.source_revision):
+            raise ScopeProvenanceError("strategy source_revision must be a lowercase Git revision")
+        if not isinstance(self.artifact_sha256, str) or not _HASH.fullmatch(self.artifact_sha256):
+            raise ScopeProvenanceError("strategy artifact_sha256 must be SHA-256")
+
+    @property
+    def fingerprint(self) -> str:
+        import hashlib
+        import json
+
+        canonical = {
+            "strategy_id": self.strategy_id,
+            "version": self.version,
+            "source_revision": self.source_revision,
+            "artifact_sha256": self.artifact_sha256,
+            "parameter_schema_version": self.parameter_schema_version,
+        }
+        return hashlib.sha256(
+            json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestConfigurationIdentity:
+    """Canonical identity for a normalized effective backtest configuration."""
+
+    configuration_version: str
+    configuration_sha256: str
+    parameter_schema_version: str
+
+    def __post_init__(self) -> None:
+        for name in ("configuration_version", "parameter_schema_version"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ScopeProvenanceError(f"configuration identity {name} is required")
+            object.__setattr__(self, name, value.strip())
+        if not isinstance(self.configuration_sha256, str) or not _HASH.fullmatch(self.configuration_sha256):
+            raise ScopeProvenanceError("configuration_sha256 must be SHA-256")
+
+    @property
+    def fingerprint(self) -> str:
+        import hashlib
+        import json
+
+        canonical = {
+            "configuration_version": self.configuration_version,
+            "configuration_sha256": self.configuration_sha256,
+            "parameter_schema_version": self.parameter_schema_version,
+        }
+        return hashlib.sha256(
+            json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
 class AccountDataIdentity:
     tenant_id: str
     internal_account_id: str
@@ -419,6 +489,31 @@ def validate_candle_payload(candles: Iterable[object],
     return payload
 
 
+# Phase 306 — resolve typed strategy and configuration identities.
+def _resolve_typed_fingerprint(raw_fingerprint, identity, expected_type, label):
+    if identity is None:
+        return raw_fingerprint
+    if not isinstance(identity, expected_type):
+        raise ScopeProvenanceError(f"{label}_identity must be {expected_type.__name__}")
+    canonical = identity.fingerprint
+    if raw_fingerprint is not None and raw_fingerprint != canonical:
+        raise ScopeProvenanceError(f"{label} fingerprint conflicts with typed identity")
+    return canonical
+
+
+def resolve_strategy_fingerprint(raw_fingerprint=None, strategy_identity=None):
+    return _resolve_typed_fingerprint(
+        raw_fingerprint, strategy_identity, StrategyArtifactIdentity, "strategy"
+    )
+
+
+def resolve_configuration_fingerprint(raw_fingerprint=None, configuration_identity=None):
+    return _resolve_typed_fingerprint(
+        raw_fingerprint, configuration_identity,
+        BacktestConfigurationIdentity, "configuration"
+    )
+
+
 # Phase 304 — resolve a typed engine build descriptor to its canonical digest.
 def resolve_engine_fingerprint(
     engine_fingerprint: str | None = None,
@@ -443,11 +538,19 @@ def build_backtest_execution_evidence(
     configuration_fingerprint: str | None = None,
     engine_fingerprint: str | None = None,
     engine_build_identity: EngineBuildIdentity | None = None,
+    strategy_identity: StrategyArtifactIdentity | None = None,
+    configuration_identity: BacktestConfigurationIdentity | None = None,
 ) -> BacktestExecutionEvidence:
     """Validate every input leg and produce a deterministic replay evidence ID."""
     import hashlib
     import json
 
+    strategy_fingerprint = resolve_strategy_fingerprint(
+        strategy_fingerprint, strategy_identity
+    )
+    configuration_fingerprint = resolve_configuration_fingerprint(
+        configuration_fingerprint, configuration_identity
+    )
     engine_fingerprint = resolve_engine_fingerprint(
         engine_fingerprint, engine_build_identity
     )
