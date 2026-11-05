@@ -138,7 +138,7 @@ class SQLiteOrderSubmissionJournal:
         target = str(state).upper()
         if target not in _ALLOWED:
             raise ValueError(f"unsupported submission state: {target}")
-        with self._lock, self._connect() as db:
+        with self._lock, self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT state FROM order_submissions WHERE client_order_id = ?",
