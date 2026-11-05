@@ -83,8 +83,16 @@ def reconcile_submission(
     record = matches[0]
     for field, expected, label in (("venue", str(venue), "venue"), ("account_id", str(account_id), "account"), ("accountId", str(account_id), "account")):
         observed = record.get(field)
-        if observed not in (None, "") and str(observed).strip().lower() != expected.strip().lower():
-            raise VenueHistoryEvidenceError(f"matched order {label} scope mismatch")
+        if observed not in (None, ""):
+            actual_value = str(observed).strip()
+            expected_value = expected.strip()
+            mismatch = (
+                actual_value != expected_value
+                if label == "account"
+                else actual_value.casefold() != expected_value.casefold()
+            )
+            if mismatch:
+                raise VenueHistoryEvidenceError(f"matched order {label} scope mismatch")
     verdict = classify_ack(record)
     if verdict.state not in RESOLVABLE:
         return {"resolved": False, "state": UNKNOWN, "reason": verdict.detail}

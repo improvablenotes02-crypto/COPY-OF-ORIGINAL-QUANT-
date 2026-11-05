@@ -51,6 +51,7 @@ jobs:
           tests/test_order_executor_phase277.py
           tests/test_submission_journal_phase278.py
           tests/test_reconciliation_evidence_phase279.py
+          tests/test_venue_history_identity_phase281.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
