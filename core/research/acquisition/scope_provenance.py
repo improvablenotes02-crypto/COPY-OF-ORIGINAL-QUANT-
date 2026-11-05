@@ -207,6 +207,10 @@ def validate_backtest_inputs(datasets: Iterable[DatasetScopeProvenance]) -> tupl
             raise ScopeProvenanceError("venue, region, or environment mismatch")
         if item.data_class != first.data_class:
             raise ScopeProvenanceError("public and private datasets cannot be mixed")
+        if item.schema_version != first.schema_version:
+            raise ScopeProvenanceError("dataset schema version mismatch")
+        if item.normalization_version != first.normalization_version:
+            raise ScopeProvenanceError("dataset normalization version mismatch")
         if item.data_class == "PRIVATE_ACCOUNT" and item.account != first.account:
             raise ScopeProvenanceError("private account identity mismatch")
     return items
