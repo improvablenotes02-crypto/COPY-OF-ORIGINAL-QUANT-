@@ -41,6 +41,7 @@ jobs:
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
           tests/test_delta_fill_reconciliation_phase265.py
+          tests/test_delta_submission_reconciliation_phase266.py
           tests/test_delta_exchange.py
           tests/test_phase203_market_data_validation.py
           tests/test_phase204_paper_data_quality_gate.py
