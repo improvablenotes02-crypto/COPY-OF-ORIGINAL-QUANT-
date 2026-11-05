@@ -18,8 +18,8 @@ A process restart must not erase unresolved order-risk reservations. If an order
 2. Reconcile each reservation against authenticated exchange order/fill/position history.
 3. Keep unresolved or ambiguous outcomes pending. Do not infer rejection from a timeout.
 4. Release only after authoritative evidence that no live order remains (or a confirmed rejection/cancellation).
-5. Settle only with an authoritative reconciled account-risk state and the current expected revision.
-6. Record the reconciliation evidence and outcome in the surrounding execution journal.
+5. Settle only with an authoritative reconciled account-risk state, the current expected revision, and a complete `AccountRiskReconciliationEvidence` record bound to the reservation.
+6. Retain the persisted reconciliation evidence and record the outcome in the surrounding execution journal.
 
 ## Limits
 
