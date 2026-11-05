@@ -64,6 +64,7 @@ jobs:
           tests/test_candle_sequence_integrity_phase292.py
           tests/test_scoped_backtest_execution_evidence_phase293.py
           tests/test_scoped_backtest_fingerprint_phase294.py
+          tests/test_scoped_backtest_evidence_integrity_phase295.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
