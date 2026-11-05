@@ -325,7 +325,9 @@ class DeltaReadOnlySession:
             raise AccountScopeError("authenticated Delta identity does not match the registered account")
 
         balances = self._exchange.get_balance()
+        balances_observed_at_ns = time.time_ns()
         positions = self._exchange.get_positions()
+        positions_observed_at_ns = time.time_ns()
         if not isinstance(balances, dict) or balances.get("success") is not True:
             raise AccountScopeError("Delta balance observation is unsuccessful or malformed")
         if not isinstance(positions, dict) or positions.get("success") is not True:
@@ -375,6 +377,8 @@ class DeltaReadOnlySession:
                 "fill_cursor_exhausted": True,
             },
             "component_observed_at_ns": {
+                "balances": balances_observed_at_ns,
+                "positions": positions_observed_at_ns,
                 "orders": orders.get("snapshot_as_of_ns"),
                 "fills": fills.get("snapshot_as_of_ns"),
             },
