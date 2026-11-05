@@ -4,7 +4,7 @@
 
 Adds `SQLiteOrderSubmissionJournal`, a stdlib SQLite write-ahead reservation
 store for client order IDs. Reservations are unique across executor instances
-and process restarts. SQLite uses WAL mode and FULL synchronous commits. The
+and process restarts. SQLite uses rollback-journal mode and FULL synchronous commits. The
 journal stores a canonical payload SHA-256 digest rather than credentials or
 the complete order payload.
 
