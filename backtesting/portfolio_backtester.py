@@ -258,7 +258,12 @@ class PortfolioBacktester:
 
         # Cross-symbol compatibility is checked as one portfolio evidence set.
         validate_backtest_inputs(all_records)
-        return self.run(verified_history, journal=journal)
+        # Canonical order prevents dict insertion order from changing shared-capital
+        # allocation decisions between otherwise identical scoped portfolio runs.
+        canonical_history = {
+            symbol: verified_history[symbol] for symbol in sorted(verified_history)
+        }
+        return self.run(canonical_history, journal=journal)
 
 
 
@@ -319,5 +324,8 @@ class PortfolioBacktester:
             strategy_fingerprint=strategy_fingerprint,
             configuration_fingerprint=configuration_fingerprint,
         )
-        result = self.run(verified_history, journal=journal)
+        canonical_history = {
+            symbol: verified_history[symbol] for symbol in sorted(verified_history)
+        }
+        result = self.run(canonical_history, journal=journal)
         return ScopedBacktestOutcome(result=result, evidence=evidence)
