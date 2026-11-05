@@ -118,7 +118,7 @@ class SQLiteOrderSubmissionJournal:
                 raise SubmissionJournalError("submission journal SQLite integrity_check failed")
             columns = db.execute("PRAGMA table_info(order_submissions)").fetchall()
             expected = [
-                ("client_order_id", "TEXT", 1, 1),
+                ("client_order_id", "TEXT", 0, 1),
                 ("payload_sha256", "TEXT", 1, 0),
                 ("state", "TEXT", 1, 0),
                 ("detail", "TEXT", 1, 0),
