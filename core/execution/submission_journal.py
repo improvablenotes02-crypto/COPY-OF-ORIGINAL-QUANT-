@@ -372,16 +372,28 @@ class SQLiteOrderSubmissionJournal:
             raise SubmissionJournalError("submission journal restore failed") from exc
 
     def unresolved(self):
-        """Return immutable dictionaries for rows requiring venue reconciliation."""
+        """Return validated, immutable dictionaries requiring venue reconciliation.
+
+        Integrity validation and selection share one SQLite write transaction,
+        so a caller never receives a partial or unvalidated journal snapshot.
+        """
         placeholders = ",".join("?" for _ in _UNRESOLVED)
-        with self._connection() as db:
-            rows = db.execute(
-                f"""SELECT client_order_id, payload_sha256, state, detail,
-                    created_at_ns, updated_at_ns, schema_version
-                    FROM order_submissions WHERE state IN ({placeholders})
-                    ORDER BY created_at_ns, client_order_id""",
-                _UNRESOLVED,
-            ).fetchall()
+        with self._lock, self._connection() as db:
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                self._validate_integrity(db)
+                rows = db.execute(
+                    f"""SELECT client_order_id, payload_sha256, state, detail,
+                        created_at_ns, updated_at_ns, schema_version
+                        FROM order_submissions WHERE state IN ({placeholders})
+                        ORDER BY created_at_ns, client_order_id""",
+                    _UNRESOLVED,
+                ).fetchall()
+                db.execute("COMMIT")
+            except Exception:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise
         fields = (
             "client_order_id", "payload_sha256", "state", "detail",
             "created_at_ns", "updated_at_ns", "schema_version",
@@ -389,13 +401,22 @@ class SQLiteOrderSubmissionJournal:
         return [dict(zip(fields, row)) for row in rows]
 
     def get(self, client_order_id: str):
-        with self._connection() as db:
-            row = db.execute(
-                """SELECT client_order_id, payload_sha256, state, detail,
-                   created_at_ns, updated_at_ns, schema_version
-                   FROM order_submissions WHERE client_order_id = ?""",
-                (str(client_order_id),),
-            ).fetchone()
+        """Return one validated journal record, or None when the ID is absent."""
+        with self._lock, self._connection() as db:
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                self._validate_integrity(db)
+                row = db.execute(
+                    """SELECT client_order_id, payload_sha256, state, detail,
+                       created_at_ns, updated_at_ns, schema_version
+                       FROM order_submissions WHERE client_order_id = ?""",
+                    (str(client_order_id),),
+                ).fetchone()
+                db.execute("COMMIT")
+            except Exception:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise
         if row is None:
             return None
         return dict(zip((
