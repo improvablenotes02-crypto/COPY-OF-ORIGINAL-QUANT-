@@ -130,7 +130,7 @@ def test_settlement_replaces_pending_reservation_with_authoritative_account_snap
     assert coordinator.settle_reservation(
         scope=scope, reservation_id="order-001",
         expected_revision=current.revision, reconciled_state=reconciled,
-        evidence=_evidence(scope, "order-001"),
+        evidence=_evidence(scope, "order-001", reconciled),
     ) is False
     settled = coordinator.get_state(scope)[1]
     assert settled.current_exposure == 500.0
