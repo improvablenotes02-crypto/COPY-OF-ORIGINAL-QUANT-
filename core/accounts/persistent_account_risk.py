@@ -143,6 +143,50 @@ class SQLiteAccountRiskRepository:
     def _key(scope: AccountRiskScope) -> tuple[str, str]:
         return scope.tenant_id, scope.account_id
 
+    @staticmethod
+    def _validate_state(state: AccountRiskState, scope: AccountRiskScope) -> None:
+        """Reject unsafe persisted risk state before any transaction commits."""
+        if not isinstance(state, AccountRiskState) or state.scope != scope:
+            raise AccountRiskError("risk state must match the requested account scope")
+        if (
+            isinstance(state.revision, bool)
+            or not isinstance(state.revision, int)
+            or state.revision < 0
+        ):
+            raise AccountRiskError("risk state revision must be a non-negative integer")
+        for name in ("risk_basis", "equity"):
+            value = getattr(state, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) <= 0
+            ):
+                raise AccountRiskError(f"risk state {name} must be finite and positive")
+        for name in ("daily_pnl", "weekly_pnl", "monthly_pnl"):
+            value = getattr(state, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+            ):
+                raise AccountRiskError(f"risk state {name} must be finite")
+        for name in ("current_exposure", "pending_exposure"):
+            value = getattr(state, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) < 0
+            ):
+                raise AccountRiskError(f"risk state {name} must be finite and non-negative")
+        for name in ("open_positions", "pending_orders"):
+            value = getattr(state, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise AccountRiskError(f"risk state {name} must be a non-negative integer")
+        if not isinstance(state.kill_switch, bool) or not isinstance(state.trading_enabled, bool):
+            raise AccountRiskError("risk state trading controls must be boolean")
+
     def register(
         self, *, scope: AccountRiskScope, profile: AccountRiskProfile,
         initial_state: AccountRiskState,
@@ -151,8 +195,7 @@ class SQLiteAccountRiskRepository:
             raise AccountRiskError("valid account risk scope is required")
         if not isinstance(profile, AccountRiskProfile):
             raise AccountRiskError("explicit account risk profile is required")
-        if not isinstance(initial_state, AccountRiskState) or initial_state.scope != scope:
-            raise AccountRiskError("initial risk state must match account scope")
+        self._validate_state(initial_state, scope)
         if initial_state.revision != 0:
             raise AccountRiskError("initial risk state revision must be zero")
         scope_json = self._dump(asdict(scope))
@@ -205,6 +248,7 @@ class SQLiteAccountRiskRepository:
         if state_values.get("revision") != revision:
             raise AccountRiskError("persisted risk state revision is inconsistent")
         state = AccountRiskState(scope=stored_scope, **state_values)
+        self._validate_state(state, stored_scope)
         return profile, state
 
     def compare_and_swap_state(
@@ -213,8 +257,7 @@ class SQLiteAccountRiskRepository:
     ) -> AccountRiskState | None:
         if not isinstance(scope, AccountRiskScope) or not isinstance(state, AccountRiskState):
             raise AccountRiskError("valid account scope and risk state are required")
-        if state.scope != scope:
-            raise AccountRiskError("risk state scope does not match account")
+        self._validate_state(state, scope)
         if state.revision != expected_revision:
             raise AccountRiskError("risk state revision does not match expected_revision")
         if isinstance(expected_revision, bool) or not isinstance(expected_revision, int) or expected_revision < 0:
@@ -442,11 +485,11 @@ class SQLiteAccountRiskRepository:
     ) -> bool:
         if not isinstance(scope, AccountRiskScope) or not isinstance(reconciled_state, AccountRiskState):
             raise AccountRiskError("valid account scope and reconciled risk state are required")
+        self._validate_state(reconciled_state, scope)
         if (
             isinstance(expected_revision, bool)
             or not isinstance(expected_revision, int)
             or expected_revision < 0
-            or reconciled_state.scope != scope
             or reconciled_state.revision != expected_revision
         ):
             raise AccountRiskError("reconciled state scope/revision mismatch")
