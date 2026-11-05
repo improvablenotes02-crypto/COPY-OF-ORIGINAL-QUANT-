@@ -94,6 +94,11 @@ class DeltaAccountRepository(Protocol):
     def delete(self, tenant_id: str, account_id: str) -> bool:
         ...
 
+    def bind_provider_identity(
+        self, tenant_id: str, account_id: str, provider_account_id: str
+    ) -> None:
+        ...
+
 
 class SQLiteDeltaAccountRepository:
     """SQLite ciphertext repository for local development and tests.
@@ -197,6 +202,36 @@ class SQLiteDeltaAccountRepository:
             )
         return cursor.rowcount == 1
 
+    def bind_provider_identity(
+        self, tenant_id: str, account_id: str, provider_account_id: str
+    ) -> None:
+        """Atomically bind an account to one authenticated Delta user ID."""
+        with self._lock:
+            cursor = self._connection.execute(
+                """
+                UPDATE delta_accounts
+                SET provider_account_id = ?, updated_at_ns = ?
+                WHERE tenant_id = ? AND account_id = ?
+                  AND (provider_account_id IS NULL OR provider_account_id = ?)
+                """,
+                (
+                    provider_account_id, time.time_ns(), tenant_id,
+                    account_id, provider_account_id,
+                ),
+            )
+            if cursor.rowcount == 1:
+                return
+            row = self._connection.execute(
+                "SELECT provider_account_id FROM delta_accounts "
+                "WHERE tenant_id = ? AND account_id = ?",
+                (tenant_id, account_id),
+            ).fetchone()
+        if row is None:
+            raise AccountNotFoundError("Delta account not found for tenant")
+        raise AccountScopeError(
+            "registered Delta account is already bound to a different provider identity"
+        )
+
     def close(self) -> None:
         with self._lock:
             self._connection.close()
@@ -282,11 +317,14 @@ class DeltaAccountRegistry:
         self,
         repository: DeltaAccountRepository,
         encryption_provider: EncryptionProvider,
+        *,
+        exchange_factory=None,
     ):
         if repository is None or encryption_provider is None:
             raise ValueError("repository and encryption_provider are required")
         self._repository = repository
         self._encryption_provider = encryption_provider
+        self._exchange_factory = exchange_factory
 
     def register_account(
         self,
@@ -406,13 +444,46 @@ class DeltaAccountRegistry:
         endpoint = delta_environments.resolve_rest_endpoint(
             record.environment, record.region
         )
-        from core.exchanges.delta.delta_exchange import DeltaExchange
-        exchange = DeltaExchange(
-            api_key=payload["api_key"],
-            api_secret=payload["api_secret"],
-            base_url=endpoint,
-        )
+        if self._exchange_factory is None:
+            from core.exchanges.delta.delta_exchange import DeltaExchange
+            exchange = DeltaExchange(
+                api_key=payload["api_key"],
+                api_secret=payload["api_secret"],
+                base_url=endpoint,
+            )
+        else:
+            exchange = self._exchange_factory(
+                api_key=payload["api_key"],
+                api_secret=payload["api_secret"],
+                base_url=endpoint,
+            )
         return DeltaReadOnlySession(exchange, record)
+
+    def verify_and_bind_identity(
+        self, *, tenant_id: str, account_id: str
+    ) -> DeltaAccountMetadata:
+        """Authenticate read-only, then bind the venue-reported user ID once."""
+        tenant = _require_text(tenant_id, "tenant_id")
+        account = _require_text(account_id, "account_id")
+        session = self.open_read_only_session(
+            tenant_id=tenant, account_id=account
+        )
+        provider_id = session.verify_provider_identity()
+        if (
+            not isinstance(provider_id, str)
+            or not provider_id.isdigit()
+            or int(provider_id) <= 0
+        ):
+            raise AccountScopeError(
+                "authenticated Delta provider identity is missing or invalid"
+            )
+        self._repository.bind_provider_identity(
+            tenant, account, provider_id
+        )
+        bound = self._repository.get(tenant, account)
+        if bound is None:
+            raise AccountNotFoundError("Delta account not found for tenant")
+        return self._metadata(bound)
 
     @staticmethod
     def _metadata(record: EncryptedDeltaAccount) -> DeltaAccountMetadata:
