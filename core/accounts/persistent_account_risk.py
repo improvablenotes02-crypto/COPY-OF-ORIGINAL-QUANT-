@@ -6,6 +6,7 @@ deployments must inject a shared transactional implementation of the protocol.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+import hashlib
 import json
 import math
 import re
@@ -66,6 +67,20 @@ class AccountRiskRepository(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+def hash_account_risk_state(state: AccountRiskState) -> str:
+    """Canonical SHA-256 identity for one validated normalized risk state."""
+    if not isinstance(state, AccountRiskState):
+        raise AccountRiskError("AccountRiskState is required for state hashing")
+    try:
+        payload = json.dumps(
+            asdict(state), sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise AccountRiskError("risk state cannot be canonically hashed") from exc
+    return hashlib.sha256(payload).hexdigest()
+
+
 class AccountRiskReservation:
     reservation_id: str
     scope: AccountRiskScope
@@ -104,6 +119,7 @@ class AccountRiskReconciliationEvidence:
     terminal_status: str
     observed_at: str
     snapshot_hash: str
+    risk_state_hash: str
     identity_verified: bool
     orders_complete: bool
     fills_complete: bool
@@ -135,6 +151,8 @@ class AccountRiskReconciliationEvidence:
             raise AccountRiskError("reconciliation evidence observed_at must be UTC-aware")
         if not isinstance(self.snapshot_hash, str) or re.fullmatch(r"[0-9a-f]{64}", self.snapshot_hash) is None:
             raise AccountRiskError("reconciliation evidence snapshot_hash must be SHA-256 hex")
+        if not isinstance(self.risk_state_hash, str) or re.fullmatch(r"[0-9a-f]{64}", self.risk_state_hash) is None:
+            raise AccountRiskError("reconciliation evidence risk_state_hash must be SHA-256 hex")
         for name in ("identity_verified", "orders_complete", "fills_complete", "positions_complete", "open_order_absent"):
             if getattr(self, name) is not True:
                 raise AccountRiskError(f"reconciliation evidence {name} must be true")
@@ -558,6 +576,8 @@ class SQLiteAccountRiskRepository:
             raise AccountRiskError("complete authenticated reconciliation evidence is required")
         if evidence.scope != scope or evidence.reservation_id != reservation_id:
             raise AccountRiskError("reconciliation evidence does not match reservation scope and ID")
+        if evidence.risk_state_hash != hash_account_risk_state(reconciled_state):
+            raise AccountRiskError("reconciliation evidence does not bind the committed risk state")
         if (
             isinstance(expected_revision, bool)
             or not isinstance(expected_revision, int)
@@ -615,6 +635,7 @@ class SQLiteAccountRiskRepository:
                     "terminal_status": evidence.terminal_status,
                     "observed_at": evidence.observed_at,
                     "snapshot_hash": evidence.snapshot_hash,
+                    "risk_state_hash": evidence.risk_state_hash,
                     "identity_verified": evidence.identity_verified,
                     "orders_complete": evidence.orders_complete,
                     "fills_complete": evidence.fills_complete,
