@@ -114,7 +114,7 @@ class SQLiteOrderSubmissionJournal:
             raise ValueError("client_order_id is required")
         digest = self._digest(payload)
         now = time.time_ns()
-        with self._lock, self._connect() as db:
+        with self._lock, self._connection() as db:
             try:
                 db.execute("BEGIN IMMEDIATE")
                 db.execute(
