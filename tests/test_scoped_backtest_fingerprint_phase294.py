@@ -46,6 +46,7 @@ def test_strategy_and_configuration_fingerprints_bind_execution_identity():
         candles, [provenance],
         strategy_fingerprint="a" * 64,
         configuration_fingerprint="b" * 64,
+        engine_fingerprint="d" * 64,
     )
     assert outcome.evidence.strategy_fingerprint == "a" * 64
     assert outcome.evidence.configuration_fingerprint == "b" * 64
@@ -59,21 +60,24 @@ def test_strategy_change_changes_execution_fingerprint_not_payload_hash():
     one = _Harness().run_scoped_with_evidence(
         candles, [provenance], strategy_fingerprint="a" * 64,
         configuration_fingerprint="b" * 64,
+        engine_fingerprint="d" * 64,
     )
     two = _Harness().run_scoped_with_evidence(
         candles, [provenance], strategy_fingerprint="c" * 64,
         configuration_fingerprint="b" * 64,
+        engine_fingerprint="d" * 64,
     )
     assert one.evidence.payload_hash == two.evidence.payload_hash
     assert one.evidence.execution_fingerprint != two.evidence.execution_fingerprint
 
 
-@pytest.mark.parametrize("strategy,configuration", [
-    ("a" * 64, None),
-    (None, "b" * 64),
-    ("not-a-sha256", "b" * 64),
+@pytest.mark.parametrize("strategy,configuration,engine", [
+    ("a" * 64, None, None),
+    (None, "b" * 64, None),
+    ("a" * 64, "b" * 64, None),
+    ("not-a-sha256", "b" * 64, "c" * 64),
 ])
-def test_incomplete_or_malformed_fingerprints_fail_before_replay(strategy, configuration):
+def test_incomplete_or_malformed_fingerprints_fail_before_replay(strategy, configuration, engine):
     candles, provenance = _inputs()
     engine = _Harness()
     with pytest.raises(ScopeProvenanceError, match="fingerprint"):
@@ -81,6 +85,7 @@ def test_incomplete_or_malformed_fingerprints_fail_before_replay(strategy, confi
             candles, [provenance],
             strategy_fingerprint=strategy,
             configuration_fingerprint=configuration,
+            engine_fingerprint=engine,
         )
     assert engine.calls == 0
 
