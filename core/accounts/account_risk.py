@@ -32,6 +32,8 @@ class AccountRiskScope:
             raise ValueError("tenant_id is required")
         if not isinstance(self.account_id, str) or not self.account_id.strip():
             raise ValueError("account_id is required")
+        object.__setattr__(self, "tenant_id", self.tenant_id.strip())
+        object.__setattr__(self, "account_id", self.account_id.strip())
         if (
             not isinstance(self.provider_account_id, str)
             or not self.provider_account_id.isdigit()
@@ -56,6 +58,7 @@ class AccountRiskProfile:
     max_daily_loss_fraction: float
     max_weekly_loss_fraction: float
     max_monthly_loss_fraction: float
+    max_total_exposure_fraction: float
     max_open_positions: int
     max_pending_orders: int
 
@@ -74,6 +77,7 @@ class AccountRiskProfile:
         for name, value in (
             ("max_order_notional", self.max_order_notional),
             ("max_leverage", self.max_leverage),
+            ("max_total_exposure_fraction", self.max_total_exposure_fraction),
         ):
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError(f"{name} must be numeric")
@@ -97,7 +101,10 @@ class AccountRiskState:
     monthly_pnl: float = 0.0
     open_positions: int = 0
     pending_orders: int = 0
+    current_exposure: float = 0.0
+    pending_exposure: float = 0.0
     kill_switch: bool = False
+    trading_enabled: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,14 +151,18 @@ class AccountRiskGate:
 
         if not isinstance(profile, AccountRiskProfile):
             return deny("RISK_PROFILE_INVALID")
+        if not isinstance(scope, AccountRiskScope):
+            raise ValueError("proposal must contain a valid AccountRiskScope")
         if not isinstance(state, AccountRiskState):
             return deny("RISK_STATE_INVALID")
-        if state.scope != scope:
+        if not isinstance(state.scope, AccountRiskScope) or state.scope != scope:
             return deny("ACCOUNT_SCOPE_MISMATCH")
-        if not isinstance(state.kill_switch, bool):
-            return deny("KILL_SWITCH_STATE_INVALID")
+        if not isinstance(state.kill_switch, bool) or not isinstance(state.trading_enabled, bool):
+            return deny("ACCOUNT_TRADING_CONTROL_INVALID")
         if state.kill_switch:
             return deny("ACCOUNT_KILL_SWITCH_ACTIVE")
+        if not state.trading_enabled:
+            return deny("ACCOUNT_TRADING_DISABLED")
 
         for value in (state.risk_basis, state.equity):
             if not _finite_positive(value):
@@ -159,6 +170,9 @@ class AccountRiskGate:
         for value in (state.daily_pnl, state.weekly_pnl, state.monthly_pnl):
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
                 return deny("ACCOUNT_PNL_INVALID")
+        for value in (state.current_exposure, state.pending_exposure):
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or float(value) < 0:
+                return deny("ACCOUNT_EXPOSURE_INVALID")
         for value in (state.open_positions, state.pending_orders):
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 return deny("ACCOUNT_POSITION_COUNT_INVALID")
@@ -182,6 +196,9 @@ class AccountRiskGate:
             return deny("MAX_OPEN_POSITIONS")
         if state.pending_orders >= profile.max_pending_orders:
             return deny("MAX_PENDING_ORDERS")
+        max_total_exposure = float(state.equity) * float(profile.max_total_exposure_fraction)
+        if float(state.current_exposure) + float(state.pending_exposure) >= max_total_exposure:
+            return deny("MAX_TOTAL_EXPOSURE")
 
         for value in (proposal.risk_amount, proposal.notional, proposal.leverage):
             if not _finite_positive(value):
@@ -190,6 +207,10 @@ class AccountRiskGate:
             return deny("RISK_PER_TRADE_EXCEEDED")
         if float(proposal.notional) > maximum_notional:
             return deny("MAX_ORDER_NOTIONAL_EXCEEDED")
+        if float(state.current_exposure) + float(state.pending_exposure) + float(proposal.notional) > max_total_exposure:
+            return deny("MAX_TOTAL_EXPOSURE")
+        if float(proposal.notional) / float(state.equity) > float(proposal.leverage):
+            return deny("DECLARED_LEVERAGE_UNDERSTATES_EXPOSURE")
         if float(proposal.leverage) > float(profile.max_leverage):
             return deny("MAX_LEVERAGE_EXCEEDED")
         if float(proposal.notional) / float(state.equity) > float(profile.max_leverage):
@@ -240,6 +261,8 @@ class AccountRiskCoordinator:
     def evaluate(self, proposal: OrderRiskProposal) -> AccountRiskDecision:
         if not isinstance(proposal, OrderRiskProposal):
             raise ValueError("OrderRiskProposal is required")
+        if not isinstance(proposal.scope, AccountRiskScope):
+            raise ValueError("proposal must contain a valid AccountRiskScope")
         key = self._key(proposal.scope)
         with self._lock:
             entry = self._entries.get(key)
