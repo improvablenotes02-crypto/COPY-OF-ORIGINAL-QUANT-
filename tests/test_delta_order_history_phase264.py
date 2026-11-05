@@ -93,7 +93,7 @@ class TestDeltaOrderHistoryPhase264(unittest.TestCase):
         self.assertFalse(snapshot["observation_is_exchange_atomic"])
         self.assertEqual([row["id"] for row in snapshot["fills"]], ["f1", "f2"])
         self.assertEqual(snapshot["pagination"], {"pages": 2, "page_size": 50})
-        self.assertIn("page_size=50", rest.calls[0])
+        self.assertIn("page_size=50", rest.calls[1])
         self.assertIn("after=fills-next", rest.calls[2])
 
     def test_authentication_required_before_any_history_read(self):
