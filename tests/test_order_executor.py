@@ -407,5 +407,22 @@ class TestExecute(unittest.TestCase):
             self.assertEqual(len(SQLiteOrderSubmissionJournal(path).unresolved()), 1)
 
 
+    def test_production_live_token_requires_durable_journal(self):
+        from core.execution.live_safety_gate import LiveBlockedError, LiveSafetyGate
+
+        executor, exchange = self._executor()
+        production_safety = LiveSafetyGate.require(
+            mode="LIVE",
+            allow_live=True,
+            live_execute=True,
+            has_credentials=True,
+            component="phase262-test",
+        )
+        self.assertFalse(production_safety.test_only)
+        with self.assertRaisesRegex(LiveBlockedError, "durable submission journal"):
+            executor.execute(intent(), safety=production_safety)
+        self.assertEqual(exchange.placed, [])
+
+
 if __name__ == "__main__":
     unittest.main()
