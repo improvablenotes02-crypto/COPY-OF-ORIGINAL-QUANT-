@@ -155,6 +155,8 @@ class SQLiteAccountRiskRepository:
             raise AccountRiskError("valid account scope and risk state are required")
         if state.scope != scope:
             raise AccountRiskError("risk state scope does not match account")
+        if state.revision != expected_revision:
+            raise AccountRiskError("risk state revision does not match expected_revision")
         if isinstance(expected_revision, bool) or not isinstance(expected_revision, int) or expected_revision < 0:
             raise AccountRiskError("expected_revision must be a non-negative integer")
         next_state = replace(state, revision=expected_revision + 1)
@@ -190,7 +192,8 @@ class PersistentAccountRiskCoordinator:
     """Risk coordinator using an injected transactional repository."""
 
     def __init__(self, repository: AccountRiskRepository):
-        if not isinstance(repository, AccountRiskRepository):
+        required = ("register", "get", "compare_and_swap_state")
+        if any(not callable(getattr(repository, name, None)) for name in required):
             raise AccountRiskError("an AccountRiskRepository implementation is required")
         self._repository = repository
 
