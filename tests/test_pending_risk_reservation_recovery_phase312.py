@@ -7,6 +7,7 @@ from core.accounts.account_risk import (
     OrderRiskProposal,
 )
 from core.accounts.persistent_account_risk import (
+    AccountRiskReconciliationEvidence,
     PersistentAccountRiskCoordinator,
     SQLiteAccountRiskRepository,
 )
@@ -35,6 +36,17 @@ def _register(coordinator, scope):
         initial_state=AccountRiskState(
             scope=scope, risk_basis=10000.0, equity=10000.0, revision=0,
         ),
+    )
+
+
+def _evidence(scope, reservation_id):
+    return AccountRiskReconciliationEvidence(
+        scope=scope, reservation_id=reservation_id,
+        source="DELTA_AUTHENTICATED_READ", exchange_order_id="delta-order-123",
+        terminal_status="FILLED", observed_at="2026-11-06T00:00:00+00:00",
+        snapshot_hash="a" * 64, identity_verified=True,
+        orders_complete=True, fills_complete=True, positions_complete=True,
+        open_order_absent=True,
     )
 
 
@@ -108,6 +120,7 @@ def test_released_and_settled_reservations_are_not_recovered_as_pending(tmp_path
     assert coordinator.settle_reservation(
         scope=scope, reservation_id="settle-me",
         expected_revision=current.revision, reconciled_state=reconciled,
+        evidence=_evidence(scope, "settle-me"),
     )
     assert coordinator.list_pending_reservations(scope) == ()
     repo.close()
