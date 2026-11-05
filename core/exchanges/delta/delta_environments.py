@@ -109,11 +109,11 @@ def assert_endpoint_for_environment(
             f"{reg} {env} refuses endpoint {canonical!r}; expected {expected!r}")
     return canonical
 
-def credentials_for(environment: object, region: object = GLOBAL) -> tuple[str, str]:
+def credentials_for(environment: object, region: object | None = None) -> tuple[str, str]:
     """Return only credentials explicitly provisioned for this venue and region."""
     from config.settings import settings
     env = resolve_environment(environment)
-    reg = resolve_region(region)
+    reg = resolve_region(settings.DELTA_REGION if region is None else region)
     if env == UNKNOWN or reg == UNKNOWN_REGION:
         raise EnvironmentError("UNKNOWN Delta environment or region refuses credential resolution")
     names = {
@@ -129,18 +129,24 @@ def credentials_for(environment: object, region: object = GLOBAL) -> tuple[str, 
             f"{reg} {env} credentials are unavailable; no cross-region or cross-environment fallback is permitted")
     return key, secret
 
-def client_for(environment: object, region: object = GLOBAL) -> object:
+def client_for(environment: object, region: object | None = None) -> object:
     """Construct a Delta client with region/environment-pinned credentials and REST host."""
+    from config.settings import settings
     from core.exchanges.delta.delta_exchange import DeltaExchange
     env = resolve_environment(environment)
-    reg = resolve_region(region)
+    reg = resolve_region(settings.DELTA_REGION if region is None else region)
     endpoint = assert_endpoint_for_environment(env, resolve_rest_endpoint(env, reg), reg)
     key, secret = credentials_for(env, reg)
     return DeltaExchange(api_key=key, api_secret=secret, base_url=endpoint)
 
-def sandbox_client(region: object = GLOBAL) -> object:
+def sandbox_client(region: object | None = None) -> object:
     """Backward-compatible explicit sandbox factory; region defaults to legacy GLOBAL."""
     return client_for(SANDBOX, region)
+
+def configured_client() -> object:
+    """Construct from explicit DELTA_ENVIRONMENT and DELTA_REGION settings."""
+    from config.settings import settings
+    return client_for(settings.DELTA_ENVIRONMENT, settings.DELTA_REGION)
 
 def india_sandbox_client() -> object:
     return client_for(SANDBOX, INDIA)
