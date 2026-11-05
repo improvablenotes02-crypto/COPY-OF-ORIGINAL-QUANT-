@@ -1,0 +1,43 @@
+name: Runtime data-gate certification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paper-runtime-data-gate:
+    name: Paper runtime data gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned runtime and test dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Verify strict source manifest
+        run: python scripts/generate_manifest.py --root . --verify --strict
+      - name: Run market-data and paper-runtime gate certification
+        run: >-
+          python -m pytest
+          tests/test_phase203_market_data_validation.py
+          tests/test_phase204_paper_data_quality_gate.py
+          tests/test_phase205_paper_runtime_quality_gate.py
+          tests/test_phase208_canonical_realtime_gate.py
+          tests/test_phase211_central_paper_gate_policy.py
+          tests/test_phase213_paper_gate_deployment_profile.py
+          -q
