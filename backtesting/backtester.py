@@ -1492,3 +1492,21 @@ class Backtester:
     def pending_orders_max_directions(self):
 
         return dict(self._pending_max_directions)
+
+    # ==================================================
+    # Phase 289 — provenance-gated research entry point
+    # ==================================================
+
+    def run_scoped(self, candles, provenance_records, journal=None):
+        """Run a backtest only after validating every input dataset scope.
+
+        Existing run() remains available for legacy research workflows.
+        New venue/account-aware integrations should use this method so
+        incomplete or cross-environment data is rejected before replay.
+        """
+        from core.research.acquisition.scope_provenance import (
+            validate_backtest_inputs,
+        )
+
+        validate_backtest_inputs(provenance_records)
+        return self.run(candles, journal=journal)
