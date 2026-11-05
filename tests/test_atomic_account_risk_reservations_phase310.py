@@ -11,6 +11,7 @@ from core.accounts.account_risk import (
     OrderRiskProposal,
 )
 from core.accounts.persistent_account_risk import (
+    AccountRiskReconciliationEvidence,
     PersistentAccountRiskCoordinator,
     SQLiteAccountRiskRepository,
 )
@@ -36,6 +37,17 @@ def _profile(max_exposure=1.5):
 def _proposal(scope, notional=500.0):
     return OrderRiskProposal(
         scope=scope, risk_amount=50.0, notional=notional, leverage=1.0,
+    )
+
+
+def _evidence(scope, reservation_id):
+    return AccountRiskReconciliationEvidence(
+        scope=scope, reservation_id=reservation_id,
+        source="DELTA_AUTHENTICATED_READ", exchange_order_id="delta-order-123",
+        terminal_status="FILLED", observed_at="2026-11-06T00:00:00+00:00",
+        snapshot_hash="a" * 64, identity_verified=True,
+        orders_complete=True, fills_complete=True, positions_complete=True,
+        open_order_absent=True,
     )
 
 
@@ -112,10 +124,12 @@ def test_settlement_replaces_pending_reservation_with_authoritative_account_snap
     assert coordinator.settle_reservation(
         scope=scope, reservation_id="order-001",
         expected_revision=current.revision, reconciled_state=reconciled,
+        evidence=_evidence(scope, "order-001"),
     ) is True
     assert coordinator.settle_reservation(
         scope=scope, reservation_id="order-001",
         expected_revision=current.revision, reconciled_state=reconciled,
+        evidence=_evidence(scope, "order-001"),
     ) is False
     settled = coordinator.get_state(scope)[1]
     assert settled.current_exposure == 500.0
