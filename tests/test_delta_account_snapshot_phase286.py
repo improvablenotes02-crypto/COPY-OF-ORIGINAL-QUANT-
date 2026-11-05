@@ -115,7 +115,10 @@ def test_account_snapshot_collects_all_components_under_bound_identity():
         "order_cursor_exhausted": True,
         "fill_cursor_exhausted": True,
     }
-    assert snapshot["component_observed_at_ns"] == {"orders": 101, "fills": 102}
+    assert snapshot["component_observed_at_ns"]["balances"] > 0
+    assert snapshot["component_observed_at_ns"]["positions"] > 0
+    assert snapshot["component_observed_at_ns"]["orders"] == 101
+    assert snapshot["component_observed_at_ns"]["fills"] == 102
     assert snapshot["observation_is_exchange_atomic"] is False
     assert not hasattr(session, "place_order")
     assert not hasattr(session, "cancel_order")
