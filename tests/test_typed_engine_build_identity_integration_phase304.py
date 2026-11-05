@@ -88,3 +88,41 @@ def test_wrong_engine_build_identity_type_fails_closed():
             engine_build_identity={"release_version": "1.0.0"},
         )
     assert engine.calls == 0
+
+
+def test_portfolio_scoped_api_accepts_typed_build_identity():
+    from backtesting.portfolio_backtester import PortfolioBacktester
+
+    btc = _inputs()[0]
+    eth = [
+        SimpleNamespace(timestamp=1, open=20.0, high=22.0, low=19.0,
+                        close=21.0, volume=200.0, closed=True, symbol="ETHUSD"),
+    ]
+    eth_digest, eth_count = hash_backtest_candles(eth)
+    eth_scope = DatasetScopeProvenance(
+        venue="delta", region="INDIA", environment="SANDBOX",
+        instrument="perpetual", symbol="ETHUSD", timeframe="1m",
+        data_class="PUBLIC_MARKET", source="official-rest",
+        source_timestamp="2026-11-05T10:00:00Z", schema_version="1",
+        normalization_version="1", dataset_hash=eth_digest, row_count=eth_count,
+        completeness="COMPLETE", pagination_exhausted=True,
+    )
+    btc_scope = _inputs()[1]
+
+    class Engine:
+        def run(self, bars, journal=None):
+            return len(bars)
+
+    portfolio = PortfolioBacktester(lambda symbol: (None, None))
+    portfolio.engines = {"BTCUSD": Engine(), "ETHUSD": Engine()}
+    build = _build()
+    outcome = portfolio.run_scoped_with_evidence(
+        {"ETHUSD": eth, "BTCUSD": btc},
+        {"ETHUSD": [eth_scope], "BTCUSD": [btc_scope]},
+        strategy_fingerprint="d" * 64,
+        configuration_fingerprint="e" * 64,
+        engine_build_identity=build,
+    )
+    assert outcome.evidence.engine_fingerprint == build.fingerprint
+    assert outcome.evidence.symbols == ("BTCUSD", "ETHUSD")
+    assert outcome.evidence.verify() is True
