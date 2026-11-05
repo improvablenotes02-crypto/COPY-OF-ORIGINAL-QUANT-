@@ -13,6 +13,8 @@ class FakeHistoryREST:
 
     def get(self, path):
         self.calls.append(path)
+        if urlsplit(path).path == "/v2/users/trading_preferences":
+            return {"success": True, "result": {"user_id": 987654}}
         parsed = urlsplit(path)
         key = parsed.path
         query = parse_qs(parsed.query)

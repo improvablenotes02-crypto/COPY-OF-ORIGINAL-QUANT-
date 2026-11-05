@@ -90,6 +90,19 @@ class DeltaExchange(BaseExchange):
                 "(config/.env)"
             )
 
+    def _get_authenticated_account_id(self):
+        """Resolve the principal behind this signed API key from Delta."""
+        response = self.rest.get("/v2/users/trading_preferences")
+        if not isinstance(response, dict) or response.get("success") is not True:
+            raise RuntimeError("Delta authenticated account identity response is unsuccessful")
+        result = response.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError("Delta authenticated account identity result is malformed")
+        user_id = result.get("user_id")
+        if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
+            raise RuntimeError("Delta authenticated account identity user_id is missing or invalid")
+        return str(user_id)
+
     # -------------------------------------------------
     # Public market data
     # -------------------------------------------------
@@ -255,6 +268,7 @@ class DeltaExchange(BaseExchange):
         snapshot timestamp; callers must account for concurrent order updates.
         """
         self._require_auth()
+        account_id = self._get_authenticated_account_id()
         active, active_pages, active_pagination = self._read_paginated_order_records(
             "/v2/orders", params={"state": "open"}, max_pages=max_pages
         )
@@ -264,6 +278,8 @@ class DeltaExchange(BaseExchange):
         observed_at_ns = time.time_ns()
         return {
             "venue": "delta",
+            "account_id": account_id,
+            "account_id_source": "/v2/users/trading_preferences",
             "source": "delta-v2-active-and-order-history",
             "orders": active + historical,
             "complete": True,
@@ -292,11 +308,14 @@ class DeltaExchange(BaseExchange):
         scope and must not infer rejection from an order having no fills.
         """
         self._require_auth()
+        account_id = self._get_authenticated_account_id()
         fills, pages, pagination = self._read_paginated_order_records(
             "/v2/fills", params={}, max_pages=max_pages
         )
         return {
             "venue": "delta",
+            "account_id": account_id,
+            "account_id_source": "/v2/users/trading_preferences",
             "source": "delta-v2-fills",
             "fills": fills,
             "complete": True,
