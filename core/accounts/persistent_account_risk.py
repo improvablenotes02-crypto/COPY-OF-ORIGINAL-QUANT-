@@ -66,7 +66,6 @@ class AccountRiskRepository(Protocol):
     ) -> "AccountRiskReconciliationEvidence | None": ...
 
 
-@dataclass(frozen=True, slots=True)
 def hash_account_risk_state(state: AccountRiskState) -> str:
     """Canonical SHA-256 identity for one validated normalized risk state."""
     if not isinstance(state, AccountRiskState):
@@ -81,6 +80,7 @@ def hash_account_risk_state(state: AccountRiskState) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+@dataclass(frozen=True, slots=True)
 class AccountRiskReservation:
     reservation_id: str
     scope: AccountRiskScope
