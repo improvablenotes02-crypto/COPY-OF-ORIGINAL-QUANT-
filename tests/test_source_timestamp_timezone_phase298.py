@@ -31,7 +31,7 @@ def test_timezone_aware_iso8601_source_timestamps_are_accepted(timestamp):
     "2026-11-05T10:00:00",
     "2026-11-05 10:00:00",
     "not-a-timestamp",
-    "",
+    "2026-99-99T99:99:99Z",
 ])
 def test_ambiguous_or_malformed_source_timestamps_are_rejected(timestamp):
     with pytest.raises(ScopeProvenanceError, match="timezone-aware ISO-8601"):
