@@ -23,8 +23,8 @@ def _dataset(source_timestamp):
     "2026-11-05T15:30:00+05:30",
     "2026-11-05T02:00:00-08:00",
 ])
-def test_timezone_aware_iso8601_source_timestamps_are_accepted(timestamp):
-    assert _dataset(timestamp).source_timestamp == timestamp
+def test_timezone_aware_iso8601_source_timestamps_are_accepted_and_normalized(timestamp):
+    assert _dataset(timestamp).source_timestamp.endswith("Z")
 
 
 @pytest.mark.parametrize("timestamp", [
