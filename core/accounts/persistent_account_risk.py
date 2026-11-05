@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 import json
+import math
 import sqlite3
 import threading
 from typing import Protocol
@@ -64,11 +65,17 @@ class AccountRiskReservation:
     def __post_init__(self):
         if not isinstance(self.reservation_id, str) or not self.reservation_id.strip():
             raise AccountRiskError("reservation_id is required")
-        if self.status not in {"PENDING", "RELEASED", "SETTLED"}:
+        object.__setattr__(self, "reservation_id", self.reservation_id.strip())
+        if not isinstance(self.status, str) or self.status not in {"PENDING", "RELEASED", "SETTLED"}:
             raise AccountRiskError("invalid account risk reservation status")
         if not isinstance(self.scope, AccountRiskScope):
             raise AccountRiskError("reservation scope is invalid")
-        if isinstance(self.notional, bool) or not isinstance(self.notional, (int, float)) or self.notional <= 0:
+        if (
+            isinstance(self.notional, bool)
+            or not isinstance(self.notional, (int, float))
+            or not math.isfinite(float(self.notional))
+            or self.notional <= 0
+        ):
             raise AccountRiskError("reservation notional must be positive")
         if isinstance(self.created_revision, bool) or not isinstance(self.created_revision, int) or self.created_revision < 1:
             raise AccountRiskError("reservation revision must be positive")
@@ -237,6 +244,7 @@ class SQLiteAccountRiskRepository:
     ) -> tuple[AccountRiskDecision, AccountRiskReservation | None]:
         if not isinstance(reservation_id, str) or not reservation_id.strip():
             raise AccountRiskError("reservation_id is required")
+        reservation_id = reservation_id.strip()
         if not isinstance(proposal, OrderRiskProposal) or not isinstance(proposal.scope, AccountRiskScope):
             raise AccountRiskError("valid order risk proposal is required")
         scope = proposal.scope
@@ -404,7 +412,13 @@ class SQLiteAccountRiskRepository:
     ) -> bool:
         if not isinstance(scope, AccountRiskScope) or not isinstance(reconciled_state, AccountRiskState):
             raise AccountRiskError("valid account scope and reconciled risk state are required")
-        if reconciled_state.scope != scope or reconciled_state.revision != expected_revision:
+        if (
+            isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+            or expected_revision < 0
+            or reconciled_state.scope != scope
+            or reconciled_state.revision != expected_revision
+        ):
             raise AccountRiskError("reconciled state scope/revision mismatch")
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
