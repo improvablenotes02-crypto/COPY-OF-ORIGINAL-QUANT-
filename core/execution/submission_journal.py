@@ -113,7 +113,7 @@ class SQLiteOrderSubmissionJournal:
     def _validate_integrity(self, db) -> None:
         """Validate SQLite pages, schema, and all persisted journal records.
 
-        Caller holds a write transaction to prevent concurrent mutation.
+        Caller holds a SQLite transaction to keep validation and reads consistent.
         """
         try:
             result = db.execute("PRAGMA integrity_check").fetchall()
@@ -159,7 +159,7 @@ class SQLiteOrderSubmissionJournal:
         """Run a fail-closed integrity/schema/record certification pass."""
         with self._lock, self._connection() as db:
             try:
-                db.execute("BEGIN IMMEDIATE")
+                db.execute("BEGIN")
                 self._validate_integrity(db)
                 db.execute("COMMIT")
                 return True
@@ -229,7 +229,7 @@ class SQLiteOrderSubmissionJournal:
         probe = object.__new__(cls)
         db = sqlite3.connect(str(path), timeout=10.0, isolation_level=None)
         try:
-            db.execute("BEGIN IMMEDIATE")
+            db.execute("BEGIN")
             try:
                 probe._validate_integrity(db)
                 total = db.execute("SELECT COUNT(*) FROM order_submissions").fetchone()[0]
@@ -380,7 +380,7 @@ class SQLiteOrderSubmissionJournal:
         """
         with self._lock, self._connection() as db:
             try:
-                db.execute("BEGIN IMMEDIATE")
+                db.execute("BEGIN")
                 self._validate_integrity(db)
                 total = db.execute(
                     "SELECT COUNT(*) FROM order_submissions"
@@ -415,7 +415,7 @@ class SQLiteOrderSubmissionJournal:
         placeholders = ",".join("?" for _ in _UNRESOLVED)
         with self._lock, self._connection() as db:
             try:
-                db.execute("BEGIN IMMEDIATE")
+                db.execute("BEGIN")
                 self._validate_integrity(db)
                 rows = db.execute(
                     f"""SELECT client_order_id, payload_sha256, state, detail,
@@ -439,7 +439,7 @@ class SQLiteOrderSubmissionJournal:
         """Return one validated journal record, or None when the ID is absent."""
         with self._lock, self._connection() as db:
             try:
-                db.execute("BEGIN IMMEDIATE")
+                db.execute("BEGIN")
                 self._validate_integrity(db)
                 row = db.execute(
                     """SELECT client_order_id, payload_sha256, state, detail,
