@@ -99,3 +99,14 @@ def test_india_client_factory_pins_host_and_region_specific_credentials():
     assert client.api_key == "india-demo"
     assert client.api_secret == "india-demo-secret"
     assert client.rest.base_url == "https://cdn-ind.testnet.deltaex.org"
+
+
+def test_configured_client_uses_both_explicit_settings():
+    from config import settings as settings_mod
+    with mock.patch.object(settings_mod.settings, "DELTA_REGION", "INDIA"), \
+         mock.patch.object(settings_mod.settings, "DELTA_ENVIRONMENT", "SANDBOX"), \
+         mock.patch.object(settings_mod.settings, "INDIA_SANDBOX_API_KEY", "india-demo"), \
+         mock.patch.object(settings_mod.settings, "INDIA_SANDBOX_API_SECRET", "india-demo-secret"):
+        client = env.configured_client()
+    assert client.rest.base_url == "https://cdn-ind.testnet.deltaex.org"
+    assert client.api_key == "india-demo"
