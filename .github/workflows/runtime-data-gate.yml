@@ -82,6 +82,7 @@ jobs:
           tests/test_pending_risk_reservation_recovery_phase312.py
           tests/test_persistent_account_risk_state_invariants_phase313.py
           tests/test_evidence_gated_account_risk_settlement_phase314.py
+          tests/test_delta_account_risk_reconciliation_phase315.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
