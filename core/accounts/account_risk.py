@@ -83,6 +83,8 @@ class AccountRiskProfile:
                 raise ValueError(f"{name} must be numeric")
             if not math.isfinite(float(value)) or float(value) <= 0:
                 raise ValueError(f"{name} must be finite and positive")
+        if float(self.max_total_exposure_fraction) > float(self.max_leverage):
+            raise ValueError("max_total_exposure_fraction cannot exceed max_leverage")
         for name, value in (
             ("max_open_positions", self.max_open_positions),
             ("max_pending_orders", self.max_pending_orders),
@@ -143,6 +145,8 @@ class AccountRiskGate:
         proposal: OrderRiskProposal,
     ) -> AccountRiskDecision:
         scope = proposal.scope
+        if not isinstance(scope, AccountRiskScope):
+            raise ValueError("proposal must contain a valid AccountRiskScope")
         maximum_risk = 0.0
         maximum_notional = 0.0
 
@@ -151,8 +155,6 @@ class AccountRiskGate:
 
         if not isinstance(profile, AccountRiskProfile):
             return deny("RISK_PROFILE_INVALID")
-        if not isinstance(scope, AccountRiskScope):
-            raise ValueError("proposal must contain a valid AccountRiskScope")
         if not isinstance(state, AccountRiskState):
             return deny("RISK_STATE_INVALID")
         if not isinstance(state.scope, AccountRiskScope) or state.scope != scope:
