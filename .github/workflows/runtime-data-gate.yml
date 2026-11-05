@@ -69,6 +69,7 @@ jobs:
           tests/test_dataset_contract_compatibility_phase297.py
           tests/test_source_timestamp_timezone_phase298.py
           tests/test_source_timestamp_utc_canonicalization_phase299.py
+          tests/test_empty_dataset_backtest_rejection_phase300.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
