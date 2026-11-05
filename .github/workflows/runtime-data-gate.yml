@@ -36,6 +36,7 @@ jobs:
           python -m pytest
           tests/test_realtime.py
           tests/test_order_executor.py
+          tests/test_safety_guards_11a.py
           tests/test_submission_journal_phase261.py
           tests/test_phase203_market_data_validation.py
           tests/test_phase204_paper_data_quality_gate.py
