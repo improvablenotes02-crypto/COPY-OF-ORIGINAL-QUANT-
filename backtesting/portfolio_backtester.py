@@ -274,7 +274,7 @@ class PortfolioBacktester:
     def run_scoped_with_evidence(
         self, history, provenance_by_symbol, journal=None,
         strategy_fingerprint=None, configuration_fingerprint=None,
-        engine_fingerprint=None,
+        engine_fingerprint=None, engine_build_identity=None,
     ):
         """Run a fully validated portfolio replay and return dataset evidence.
 
@@ -325,6 +325,7 @@ class PortfolioBacktester:
             strategy_fingerprint=strategy_fingerprint,
             configuration_fingerprint=configuration_fingerprint,
             engine_fingerprint=engine_fingerprint,
+            engine_build_identity=engine_build_identity,
         )
         canonical_history = {
             symbol: verified_history[symbol] for symbol in sorted(verified_history)
