@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from core.execution.submission_journal import (
-    ACKNOWLEDGED, PREPARED, REJECTED, UNKNOWN,
+    ACKNOWLEDGED, DISPATCHING, PREPARED, REJECTED, UNKNOWN,
     SQLiteOrderSubmissionJournal, SubmissionJournalError,
 )
 
@@ -16,6 +16,7 @@ class TestSubmissionJournalHealthReportPhase273(unittest.TestCase):
             journal = SQLiteOrderSubmissionJournal(path)
             journal.reserve("QE-health-prepared", {"symbol": "BTC"})
             journal.reserve("QE-health-ack", {"symbol": "ETH"})
+            journal.transition("QE-health-ack", DISPATCHING)
             journal.transition("QE-health-ack", ACKNOWLEDGED)
             journal.reserve("QE-health-rejected", {"symbol": "SOL"})
             journal.transition("QE-health-rejected", UNKNOWN)
