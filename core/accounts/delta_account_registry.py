@@ -337,6 +337,16 @@ class DeltaReadOnlySession:
             raise AccountScopeError("Delta order history is incomplete or malformed")
         if fills.get("complete") is not True or not isinstance(fills.get("fills"), list):
             raise AccountScopeError("Delta fill history is incomplete or malformed")
+        order_evidence = orders.get("pagination_evidence")
+        fill_evidence = fills.get("pagination_evidence")
+        if (
+            not isinstance(order_evidence, dict)
+            or order_evidence.get("active_cursor_exhausted") is not True
+            or order_evidence.get("history_cursor_exhausted") is not True
+            or not isinstance(fill_evidence, dict)
+            or fill_evidence.get("cursor_exhausted") is not True
+        ):
+            raise AccountScopeError("Delta account snapshot pagination evidence is incomplete")
 
         identity_after = self.verify_provider_identity()
         if identity_after != identity_before:
@@ -361,9 +371,8 @@ class DeltaReadOnlySession:
                 "positions": True,
                 "orders": True,
                 "fills": True,
-                "order_cursor_exhausted": orders.get("pagination_evidence", {}).get("active_cursor_exhausted") is True
-                    and orders.get("pagination_evidence", {}).get("history_cursor_exhausted") is True,
-                "fill_cursor_exhausted": fills.get("pagination_evidence", {}).get("cursor_exhausted") is True,
+                "order_cursor_exhausted": True,
+                "fill_cursor_exhausted": True,
             },
             "component_observed_at_ns": {
                 "orders": orders.get("snapshot_as_of_ns"),
