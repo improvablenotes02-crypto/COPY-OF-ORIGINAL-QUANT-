@@ -44,6 +44,7 @@ class BacktestExecutionEvidence:
     symbols: tuple[str, ...]
     row_counts: tuple[int, ...]
     payload_hash: str
+    provenance_fingerprint: str
     strategy_fingerprint: str | None = None
     configuration_fingerprint: str | None = None
     execution_fingerprint: str | None = None
@@ -55,6 +56,8 @@ class BacktestExecutionEvidence:
             raise ScopeProvenanceError("execution evidence dimensions do not match")
         if not isinstance(self.payload_hash, str) or not _HASH.fullmatch(self.payload_hash):
             raise ScopeProvenanceError("execution evidence payload_hash must be SHA-256")
+        if not isinstance(self.provenance_fingerprint, str) or not _HASH.fullmatch(self.provenance_fingerprint):
+            raise ScopeProvenanceError("execution evidence provenance_fingerprint must be SHA-256")
         supplied = (self.strategy_fingerprint, self.configuration_fingerprint)
         if (supplied[0] is None) != (supplied[1] is None):
             raise ScopeProvenanceError(
@@ -99,6 +102,9 @@ class BacktestExecutionEvidence:
         ).hexdigest()
         if expected_payload_hash != self.payload_hash:
             raise ScopeProvenanceError("execution evidence payload hash is inconsistent")
+        expected_provenance_fingerprint = hash_dataset_provenance(self.dataset_provenance)
+        if expected_provenance_fingerprint != self.provenance_fingerprint:
+            raise ScopeProvenanceError("execution evidence provenance fingerprint is inconsistent")
         if self.strategy_fingerprint is None:
             if self.configuration_fingerprint is not None or self.execution_fingerprint is not None:
                 raise ScopeProvenanceError("partial execution fingerprint evidence")
@@ -106,6 +112,7 @@ class BacktestExecutionEvidence:
             expected_execution = hashlib.sha256(
                 json.dumps({
                     "payload_hash": self.payload_hash,
+                    "provenance_fingerprint": self.provenance_fingerprint,
                     "strategy_fingerprint": self.strategy_fingerprint,
                     "configuration_fingerprint": self.configuration_fingerprint,
                 }, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -203,6 +210,45 @@ def validate_backtest_inputs(datasets: Iterable[DatasetScopeProvenance]) -> tupl
         if item.data_class == "PRIVATE_ACCOUNT" and item.account != first.account:
             raise ScopeProvenanceError("private account identity mismatch")
     return items
+
+# Phase 296 — canonicalize complete venue/account/data provenance.
+def hash_dataset_provenance(datasets: Iterable[DatasetScopeProvenance]) -> str:
+    """Hash all scope metadata in a stable, symbol-sorted representation."""
+    import hashlib
+    import json
+
+    records = validate_backtest_inputs(datasets)
+    rows = []
+    for record in sorted(records, key=lambda item: item.symbol):
+        account = None
+        if record.account is not None:
+            account = {
+                "tenant_id": record.account.tenant_id,
+                "internal_account_id": record.account.internal_account_id,
+                "provider_account_id": record.account.provider_account_id,
+            }
+        rows.append({
+            "venue": record.venue,
+            "region": record.region,
+            "environment": record.environment,
+            "instrument": record.instrument,
+            "symbol": record.symbol,
+            "timeframe": record.timeframe,
+            "data_class": record.data_class,
+            "source": record.source,
+            "source_timestamp": record.source_timestamp,
+            "schema_version": record.schema_version,
+            "normalization_version": record.normalization_version,
+            "dataset_hash": record.dataset_hash,
+            "row_count": record.row_count,
+            "completeness": record.completeness,
+            "pagination_exhausted": record.pagination_exhausted,
+            "account": account,
+        })
+    return hashlib.sha256(
+        json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
 
 # Phase 291 — bind the replay payload to the declared dataset digest.
 def hash_backtest_candles(candles: Iterable[object]) -> tuple[str, int]:
@@ -328,6 +374,7 @@ def build_backtest_execution_evidence(
     payload_hash = hashlib.sha256(
         json.dumps(canonical_rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+    provenance_fingerprint = hash_dataset_provenance(records)
     supplied = (strategy_fingerprint, configuration_fingerprint)
     if (supplied[0] is None) != (supplied[1] is None):
         raise ScopeProvenanceError(
@@ -342,6 +389,7 @@ def build_backtest_execution_evidence(
         execution_fingerprint = hashlib.sha256(
             json.dumps({
                 "payload_hash": payload_hash,
+                "provenance_fingerprint": provenance_fingerprint,
                 "strategy_fingerprint": strategy_fingerprint,
                 "configuration_fingerprint": configuration_fingerprint,
             }, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -352,6 +400,7 @@ def build_backtest_execution_evidence(
         symbols=symbols,
         row_counts=tuple(row_counts),
         payload_hash=payload_hash,
+        provenance_fingerprint=provenance_fingerprint,
         strategy_fingerprint=strategy_fingerprint,
         configuration_fingerprint=configuration_fingerprint,
         execution_fingerprint=execution_fingerprint,
