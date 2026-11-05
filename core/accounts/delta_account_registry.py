@@ -279,6 +279,10 @@ class DeltaReadOnlySession:
     def environment(self) -> str:
         return self._record.environment
 
+    @property
+    def provider_account_id(self) -> str | None:
+        return self._record.provider_account_id
+
     def verify_provider_identity(self) -> str:
         observed = self._exchange._get_authenticated_account_id()
         expected = self._record.provider_account_id
