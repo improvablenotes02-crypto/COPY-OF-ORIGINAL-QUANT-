@@ -44,12 +44,16 @@ class TestSubmissionJournalHealthReportPhase273(unittest.TestCase):
             journal = SQLiteOrderSubmissionJournal(path)
             journal.reserve("QE-health-good", {"symbol": "BTC"})
             journal.reserve("QE-health-corrupt", {"symbol": "ETH"})
-            with sqlite3.connect(path) as db:
+            db = sqlite3.connect(path)
+            try:
                 db.execute(
                     "UPDATE order_submissions SET payload_sha256 = ? "
                     "WHERE client_order_id = ?",
                     ("bad-digest", "QE-health-corrupt"),
                 )
+                db.commit()
+            finally:
+                db.close()
             with self.assertRaises(SubmissionJournalError):
                 journal.health_report()
 
