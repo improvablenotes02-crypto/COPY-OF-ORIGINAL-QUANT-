@@ -1,15 +1,15 @@
-"Read-only verification and inventory for SQLite submission-journal backups.
+"""Read-only verification and inventory for SQLite submission-journal backups.
 
 This module never mutates, restores, deletes, or resubmits anything. It reports
 whether each supplied backup is present, byte-integrity checked, and readable
 under the currently supported journal schema.
-"
+"""
 from __future__ import annotations
 
 import hashlib
+import time
 from pathlib import Path
 from typing import Iterable, Mapping
-import time
 
 from core.execution.submission_journal import (
     SCHEMA_VERSION,
@@ -24,12 +24,12 @@ def verify_backup_inventory(
     expected_sha256: Mapping[str, str] | None = None,
     now_ns: int | None = None,
 ) -> dict:
-    "Return a deterministic, read-only health report for supplied backups.
+    """Return a deterministic, read-only health report for supplied backups.
 
     expected_sha256 keys are the exact string form of each supplied path.
     A missing expected digest does not fail verification; it is reported as
     unanchored because a locally computed hash alone is not authenticity.
-    "
+    """
     reference_now = int(now_ns if now_ns is not None else time.time_ns())
     expected = dict(expected_sha256 or {})
     entries = []
