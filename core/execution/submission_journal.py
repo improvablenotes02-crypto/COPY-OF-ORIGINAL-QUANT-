@@ -107,6 +107,64 @@ class SQLiteOrderSubmissionJournal:
             raise SubmissionJournalError("payload is not canonical JSON") from exc
         return hashlib.sha256(encoded).hexdigest()
 
+    def _validate_integrity(self, db) -> None:
+        """Validate SQLite pages, schema, and all persisted journal records.
+
+        Caller holds a write transaction to prevent concurrent mutation.
+        """
+        try:
+            result = db.execute("PRAGMA integrity_check").fetchall()
+            if result != [("ok",)]:
+                raise SubmissionJournalError("submission journal SQLite integrity_check failed")
+            columns = db.execute("PRAGMA table_info(order_submissions)").fetchall()
+            expected = [
+                ("client_order_id", "TEXT", 1, 1),
+                ("payload_sha256", "TEXT", 1, 0),
+                ("state", "TEXT", 1, 0),
+                ("detail", "TEXT", 1, 0),
+                ("created_at_ns", "INTEGER", 1, 0),
+                ("updated_at_ns", "INTEGER", 1, 0),
+                ("schema_version", "INTEGER", 1, 0),
+            ]
+            actual = [(row[1], str(row[2]).upper(), row[3], row[5]) for row in columns]
+            if actual != expected:
+                raise SubmissionJournalError("submission journal schema does not match supported version")
+            rows = db.execute(
+                """SELECT client_order_id, payload_sha256, state, detail,
+                   created_at_ns, updated_at_ns, schema_version
+                   FROM order_submissions"""
+            ).fetchall()
+            for key, digest, state, detail, created, updated, version in rows:
+                if not isinstance(key, str) or not key.strip():
+                    raise SubmissionJournalError("journal contains an invalid client order ID")
+                if (not isinstance(digest, str) or len(digest) != 64
+                        or any(ch not in "0123456789abcdef" for ch in digest)):
+                    raise SubmissionJournalError("journal contains an invalid payload digest")
+                if state not in _ALLOWED:
+                    raise SubmissionJournalError("journal contains an unsupported state")
+                if not isinstance(detail, str):
+                    raise SubmissionJournalError("journal contains invalid detail data")
+                if (type(created) is not int or type(updated) is not int
+                        or created <= 0 or updated < created):
+                    raise SubmissionJournalError("journal contains invalid timestamps")
+                if version != SCHEMA_VERSION:
+                    raise SubmissionJournalError("journal contains an unsupported schema version")
+        except sqlite3.DatabaseError as exc:
+            raise SubmissionJournalError("submission journal integrity validation failed") from exc
+
+    def validate_integrity(self) -> bool:
+        """Run a fail-closed integrity/schema/record certification pass."""
+        with self._lock, self._connection() as db:
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                self._validate_integrity(db)
+                db.execute("COMMIT")
+                return True
+            except Exception:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise
+
     def reserve(self, client_order_id: str, payload) -> bool:
         """Durably reserve an ID. False means it already exists, in any state."""
         key = str(client_order_id or "").strip()
@@ -117,6 +175,7 @@ class SQLiteOrderSubmissionJournal:
         with self._lock, self._connection() as db:
             try:
                 db.execute("BEGIN IMMEDIATE")
+                self._validate_integrity(db)
                 db.execute(
                     """INSERT INTO order_submissions
                     (client_order_id, payload_sha256, state, detail,
@@ -140,6 +199,7 @@ class SQLiteOrderSubmissionJournal:
             raise ValueError(f"unsupported submission state: {target}")
         with self._lock, self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            self._validate_integrity(db)
             row = db.execute(
                 "SELECT state FROM order_submissions WHERE client_order_id = ?",
                 (str(client_order_id),),
