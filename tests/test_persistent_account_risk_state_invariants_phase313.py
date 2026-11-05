@@ -12,6 +12,7 @@ from core.accounts.account_risk import (
     OrderRiskProposal,
 )
 from core.accounts.persistent_account_risk import (
+    hash_account_risk_state,
     AccountRiskReconciliationEvidence,
     PersistentAccountRiskCoordinator,
     SQLiteAccountRiskRepository,
@@ -41,12 +42,12 @@ def _state(scope, **changes):
     return AccountRiskState(**values)
 
 
-def _evidence(scope, reservation_id):
+def _evidence(scope, reservation_id, state):
     return AccountRiskReconciliationEvidence(
         scope=scope, reservation_id=reservation_id,
         client_order_id=reservation_id, source="DELTA_AUTHENTICATED_READ", exchange_order_id="delta-order-313",
         terminal_status="FILLED", observed_at="2026-11-06T00:00:00+00:00",
-        snapshot_hash="c" * 64, identity_verified=True,
+        snapshot_hash="c" * 64, risk_state_hash=hash_account_risk_state(state), identity_verified=True,
         orders_complete=True, fills_complete=True, positions_complete=True,
         open_order_absent=True,
     )
@@ -110,7 +111,7 @@ def test_settlement_rejects_invalid_reconciled_state_and_keeps_reservation_pendi
         coordinator.settle_reservation(
             scope=scope, reservation_id="invalid-settlement",
             expected_revision=current.revision, reconciled_state=invalid,
-            evidence=_evidence(scope, "invalid-settlement"),
+            evidence=_evidence(scope, "invalid-settlement", invalid),
         )
     assert len(coordinator.list_pending_reservations(scope)) == 1
     assert coordinator.get_state(scope)[1].pending_exposure == 250.0
