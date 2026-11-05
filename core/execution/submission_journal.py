@@ -227,7 +227,8 @@ class SQLiteOrderSubmissionJournal:
     def _validate_database_file(cls, path: str | Path) -> dict:
         """Validate a standalone journal database without initializing or mutating it."""
         probe = object.__new__(cls)
-        with sqlite3.connect(str(path), timeout=10.0, isolation_level=None) as db:
+        db = sqlite3.connect(str(path), timeout=10.0, isolation_level=None)
+        try:
             db.execute("BEGIN IMMEDIATE")
             try:
                 probe._validate_integrity(db)
@@ -243,6 +244,8 @@ class SQLiteOrderSubmissionJournal:
                 if db.in_transaction:
                     db.execute("ROLLBACK")
                 raise
+        finally:
+            db.close()
 
     @staticmethod
     def _fsync_file(path: Path) -> None:
@@ -287,8 +290,11 @@ class SQLiteOrderSubmissionJournal:
         try:
             with self._lock, self._connection() as source_db:
                 self._validate_integrity(source_db)
-                with sqlite3.connect(str(temporary), isolation_level=None) as backup_db:
+                backup_db = sqlite3.connect(str(temporary), isolation_level=None)
+                try:
                     source_db.backup(backup_db)
+                finally:
+                    backup_db.close()
             self._fsync_file(temporary)
             counts = self._validate_database_file(temporary)
             digest = self._file_sha256(temporary)
