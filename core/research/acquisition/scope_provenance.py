@@ -47,6 +47,7 @@ class BacktestExecutionEvidence:
     provenance_fingerprint: str
     strategy_fingerprint: str | None = None
     configuration_fingerprint: str | None = None
+    engine_fingerprint: str | None = None
     execution_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
@@ -58,18 +59,26 @@ class BacktestExecutionEvidence:
             raise ScopeProvenanceError("execution evidence payload_hash must be SHA-256")
         if not isinstance(self.provenance_fingerprint, str) or not _HASH.fullmatch(self.provenance_fingerprint):
             raise ScopeProvenanceError("execution evidence provenance_fingerprint must be SHA-256")
-        supplied = (self.strategy_fingerprint, self.configuration_fingerprint)
-        if (supplied[0] is None) != (supplied[1] is None):
+        supplied = (
+            self.strategy_fingerprint,
+            self.configuration_fingerprint,
+            self.engine_fingerprint,
+        )
+        if any(value is None for value in supplied) and any(value is not None for value in supplied):
             raise ScopeProvenanceError(
-                "strategy and configuration fingerprints must be supplied together"
+                "strategy, configuration, and engine fingerprints must be supplied together"
             )
         if supplied[0] is not None and any(
             not isinstance(value, str) or not _HASH.fullmatch(value) for value in supplied
         ):
-            raise ScopeProvenanceError("strategy/configuration fingerprints must be SHA-256")
+            raise ScopeProvenanceError(
+                "strategy/configuration/engine fingerprints must be SHA-256"
+            )
         if supplied[0] is None:
             if self.execution_fingerprint is not None:
-                raise ScopeProvenanceError("execution fingerprint requires strategy/configuration")
+                raise ScopeProvenanceError(
+                    "execution fingerprint requires strategy/configuration/engine"
+                )
         elif not isinstance(self.execution_fingerprint, str) or not _HASH.fullmatch(self.execution_fingerprint):
             raise ScopeProvenanceError("execution_fingerprint must be SHA-256")
         self.verify()
@@ -106,7 +115,11 @@ class BacktestExecutionEvidence:
         if expected_provenance_fingerprint != self.provenance_fingerprint:
             raise ScopeProvenanceError("execution evidence provenance fingerprint is inconsistent")
         if self.strategy_fingerprint is None:
-            if self.configuration_fingerprint is not None or self.execution_fingerprint is not None:
+            if (
+                self.configuration_fingerprint is not None
+                or self.engine_fingerprint is not None
+                or self.execution_fingerprint is not None
+            ):
                 raise ScopeProvenanceError("partial execution fingerprint evidence")
         else:
             expected_execution = hashlib.sha256(
@@ -115,6 +128,7 @@ class BacktestExecutionEvidence:
                     "provenance_fingerprint": self.provenance_fingerprint,
                     "strategy_fingerprint": self.strategy_fingerprint,
                     "configuration_fingerprint": self.configuration_fingerprint,
+                    "engine_fingerprint": self.engine_fingerprint,
                 }, sort_keys=True, separators=(",", ":")).encode("utf-8")
             ).hexdigest()
             if expected_execution != self.execution_fingerprint:
@@ -370,6 +384,7 @@ def build_backtest_execution_evidence(
     candles_by_symbol: dict[str, Iterable[object]],
     strategy_fingerprint: str | None = None,
     configuration_fingerprint: str | None = None,
+    engine_fingerprint: str | None = None,
 ) -> BacktestExecutionEvidence:
     """Validate every input leg and produce a deterministic replay evidence ID."""
     import hashlib
@@ -402,15 +417,17 @@ def build_backtest_execution_evidence(
         json.dumps(canonical_rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     provenance_fingerprint = hash_dataset_provenance(records)
-    supplied = (strategy_fingerprint, configuration_fingerprint)
-    if (supplied[0] is None) != (supplied[1] is None):
+    supplied = (strategy_fingerprint, configuration_fingerprint, engine_fingerprint)
+    if any(value is None for value in supplied) and any(value is not None for value in supplied):
         raise ScopeProvenanceError(
-            "strategy and configuration fingerprints must be supplied together"
+            "strategy, configuration, and engine fingerprints must be supplied together"
         )
     if supplied[0] is not None and any(
         not isinstance(value, str) or not _HASH.fullmatch(value) for value in supplied
     ):
-        raise ScopeProvenanceError("strategy/configuration fingerprints must be SHA-256")
+        raise ScopeProvenanceError(
+            "strategy/configuration/engine fingerprints must be SHA-256"
+        )
     execution_fingerprint = None
     if supplied[0] is not None:
         execution_fingerprint = hashlib.sha256(
@@ -419,6 +436,7 @@ def build_backtest_execution_evidence(
                 "provenance_fingerprint": provenance_fingerprint,
                 "strategy_fingerprint": strategy_fingerprint,
                 "configuration_fingerprint": configuration_fingerprint,
+                "engine_fingerprint": engine_fingerprint,
             }, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
     ordered_records = tuple(records_by_symbol[symbol] for symbol in symbols)
@@ -430,5 +448,6 @@ def build_backtest_execution_evidence(
         provenance_fingerprint=provenance_fingerprint,
         strategy_fingerprint=strategy_fingerprint,
         configuration_fingerprint=configuration_fingerprint,
+        engine_fingerprint=engine_fingerprint,
         execution_fingerprint=execution_fingerprint,
     )
