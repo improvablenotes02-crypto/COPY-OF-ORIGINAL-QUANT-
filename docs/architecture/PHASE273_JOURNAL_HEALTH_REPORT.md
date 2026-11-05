@@ -5,7 +5,7 @@
 Adds `SQLiteOrderSubmissionJournal.health_report()`, a read-only operational
 snapshot for local diagnostics and deployment health checks.
 
-The method acquires the journal lock, opens a SQLite write transaction,
+The method acquires the journal lock, opens a deferred SQLite read transaction,
 validates the complete database/schema/record set, and computes total and
 per-state counts from the same transaction. It reports unresolved submissions
 as the sum of PREPARED, DISPATCHING, and UNKNOWN records.

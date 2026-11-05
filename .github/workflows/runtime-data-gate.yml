@@ -46,6 +46,7 @@ jobs:
           tests/test_submission_journal_phase272.py
           tests/test_submission_journal_phase273.py
           tests/test_submission_journal_phase274.py
+          tests/test_submission_journal_phase275.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
           tests/test_delta_fill_reconciliation_phase265.py

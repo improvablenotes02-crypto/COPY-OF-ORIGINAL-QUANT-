@@ -374,7 +374,7 @@ class SQLiteOrderSubmissionJournal:
     def health_report(self) -> dict:
         """Return a validated, read-only operational snapshot of journal state.
 
-        Integrity validation and aggregate counts share one SQLite write
+        Integrity validation and aggregate counts share one SQLite read
         transaction. The report is diagnostic only: it never authorizes live
         execution, changes records, or performs venue/network I/O.
         """
