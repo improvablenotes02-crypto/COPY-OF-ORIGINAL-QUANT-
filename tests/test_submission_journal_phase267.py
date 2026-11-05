@@ -1,5 +1,6 @@
 import sqlite3
 import tempfile
+from contextlib import closing
 import unittest
 from pathlib import Path
 
@@ -23,8 +24,9 @@ class TestSubmissionJournalIntegrityPhase267(unittest.TestCase):
             path = Path(tmp) / "journal.sqlite3"
             journal = SQLiteOrderSubmissionJournal(path)
             journal.reserve("QE-1", {"symbol": "BTC"})
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db:
                 db.execute("UPDATE order_submissions SET state='CORRUPT' WHERE client_order_id='QE-1'")
+                db.commit()
             with self.assertRaises(SubmissionJournalError):
                 journal.validate_integrity()
             with self.assertRaises(SubmissionJournalError):
@@ -35,8 +37,9 @@ class TestSubmissionJournalIntegrityPhase267(unittest.TestCase):
             path = Path(tmp) / "journal.sqlite3"
             journal = SQLiteOrderSubmissionJournal(path)
             journal.reserve("QE-1", {"symbol": "BTC"})
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db:
                 db.execute("UPDATE order_submissions SET payload_sha256='bad' WHERE client_order_id='QE-1'")
+                db.commit()
             with self.assertRaises(SubmissionJournalError):
                 journal.transition("QE-1", DISPATCHING)
 
@@ -44,8 +47,9 @@ class TestSubmissionJournalIntegrityPhase267(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "journal.sqlite3"
             journal = SQLiteOrderSubmissionJournal(path)
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db:
                 db.execute("ALTER TABLE order_submissions ADD COLUMN unexpected TEXT")
+                db.commit()
             with self.assertRaises(SubmissionJournalError):
                 journal.validate_integrity()
 
