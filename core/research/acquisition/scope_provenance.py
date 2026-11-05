@@ -69,6 +69,50 @@ class BacktestExecutionEvidence:
                 raise ScopeProvenanceError("execution fingerprint requires strategy/configuration")
         elif not isinstance(self.execution_fingerprint, str) or not _HASH.fullmatch(self.execution_fingerprint):
             raise ScopeProvenanceError("execution_fingerprint must be SHA-256")
+        self.verify()
+
+    def verify(self) -> bool:
+        """Recompute envelope consistency without needing the original candle bytes."""
+        import hashlib
+        import json
+
+        if not isinstance(self.dataset_provenance, tuple):
+            raise ScopeProvenanceError("execution evidence provenance must be immutable")
+        if not isinstance(self.symbols, tuple) or not isinstance(self.row_counts, tuple):
+            raise ScopeProvenanceError("execution evidence dimensions must be immutable tuples")
+        if tuple(sorted(self.symbols)) != self.symbols or len(set(self.symbols)) != len(self.symbols):
+            raise ScopeProvenanceError("execution evidence symbols must be unique and sorted")
+        if any(not isinstance(record, DatasetScopeProvenance) for record in self.dataset_provenance):
+            raise ScopeProvenanceError("execution evidence contains invalid provenance")
+        validate_backtest_inputs(self.dataset_provenance)
+        if tuple(record.symbol for record in self.dataset_provenance) != self.symbols:
+            raise ScopeProvenanceError("execution evidence symbol/provenance mismatch")
+        if tuple(record.row_count for record in self.dataset_provenance) != self.row_counts:
+            raise ScopeProvenanceError("execution evidence row-count mismatch")
+        canonical_rows = [
+            {"symbol": record.symbol, "dataset_hash": record.dataset_hash,
+             "row_count": record.row_count}
+            for record in self.dataset_provenance
+        ]
+        expected_payload_hash = hashlib.sha256(
+            json.dumps(canonical_rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        if expected_payload_hash != self.payload_hash:
+            raise ScopeProvenanceError("execution evidence payload hash is inconsistent")
+        if self.strategy_fingerprint is None:
+            if self.configuration_fingerprint is not None or self.execution_fingerprint is not None:
+                raise ScopeProvenanceError("partial execution fingerprint evidence")
+        else:
+            expected_execution = hashlib.sha256(
+                json.dumps({
+                    "payload_hash": self.payload_hash,
+                    "strategy_fingerprint": self.strategy_fingerprint,
+                    "configuration_fingerprint": self.configuration_fingerprint,
+                }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            if expected_execution != self.execution_fingerprint:
+                raise ScopeProvenanceError("execution fingerprint is inconsistent")
+        return True
 
 
 @dataclass(frozen=True, slots=True)
