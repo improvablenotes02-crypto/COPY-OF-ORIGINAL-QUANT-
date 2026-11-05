@@ -249,7 +249,8 @@ class SQLiteOrderSubmissionJournal:
 
     @staticmethod
     def _fsync_file(path: Path) -> None:
-        with path.open("rb") as stream:
+        with path.open("r+b") as stream:
+            stream.flush()
             os.fsync(stream.fileno())
 
     @staticmethod
