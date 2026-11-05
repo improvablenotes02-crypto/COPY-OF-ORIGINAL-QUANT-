@@ -371,6 +371,41 @@ class SQLiteOrderSubmissionJournal:
                 raise
             raise SubmissionJournalError("submission journal restore failed") from exc
 
+    def health_report(self) -> dict:
+        """Return a validated, read-only operational snapshot of journal state.
+
+        Integrity validation and aggregate counts share one SQLite write
+        transaction. The report is diagnostic only: it never authorizes live
+        execution, changes records, or performs venue/network I/O.
+        """
+        with self._lock, self._connection() as db:
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                self._validate_integrity(db)
+                total = db.execute(
+                    "SELECT COUNT(*) FROM order_submissions"
+                ).fetchone()[0]
+                state_rows = db.execute(
+                    "SELECT state, COUNT(*) FROM order_submissions GROUP BY state"
+                ).fetchall()
+                db.execute("COMMIT")
+            except Exception:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise
+        counts = {state: 0 for state in _ALLOWED}
+        counts.update({state: count for state, count in state_rows})
+        unresolved_count = sum(counts[state] for state in _UNRESOLVED)
+        return {
+            "integrity_valid": True,
+            "schema_version": SCHEMA_VERSION,
+            "record_count": total,
+            "unresolved_count": unresolved_count,
+            "state_counts": counts,
+            "live_execution_authorized": False,
+            "generated_at_ns": time.time_ns(),
+        }
+
     def unresolved(self):
         """Return validated, immutable dictionaries requiring venue reconciliation.
 
