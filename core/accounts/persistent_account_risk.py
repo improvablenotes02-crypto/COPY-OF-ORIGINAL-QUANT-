@@ -44,6 +44,10 @@ class AccountRiskRepository(Protocol):
         self, *, reservation_id: str, proposal: OrderRiskProposal,
     ) -> tuple[AccountRiskDecision, "AccountRiskReservation | None"]: ...
 
+    def list_pending_reservations(
+        self, scope: AccountRiskScope,
+    ) -> tuple["AccountRiskReservation", ...]: ...
+
     def release_reservation(
         self, *, scope: AccountRiskScope, reservation_id: str,
     ) -> bool: ...
@@ -348,6 +352,32 @@ class SQLiteAccountRiskRepository:
                     self._connection.execute("ROLLBACK")
                 raise
 
+    def list_pending_reservations(
+        self, scope: AccountRiskScope,
+    ) -> tuple[AccountRiskReservation, ...]:
+        if not isinstance(scope, AccountRiskScope):
+            raise AccountRiskError("valid account risk scope is required")
+        stored = self.get(scope)
+        if stored is None:
+            return ()
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT reservation_id, notional, status, created_revision
+                FROM account_risk_reservations
+                WHERE tenant_id = ? AND account_id = ? AND status = 'PENDING'
+                ORDER BY created_revision, reservation_id
+                """,
+                self._key(scope),
+            ).fetchall()
+        return tuple(
+            AccountRiskReservation(
+                reservation_id=row[0], scope=scope, notional=float(row[1]),
+                status=row[2], created_revision=int(row[3]),
+            )
+            for row in rows
+        )
+
     def release_reservation(
         self, *, scope: AccountRiskScope, reservation_id: str,
     ) -> bool:
@@ -513,6 +543,14 @@ class PersistentAccountRiskCoordinator:
         if not callable(reserve):
             raise AccountRiskError("repository does not support atomic order reservations")
         return reserve(reservation_id=reservation_id, proposal=proposal)
+
+    def list_pending_reservations(
+        self, scope: AccountRiskScope,
+    ) -> tuple[AccountRiskReservation, ...]:
+        list_pending = getattr(self._repository, "list_pending_reservations", None)
+        if not callable(list_pending):
+            raise AccountRiskError("repository does not support pending reservation recovery")
+        return list_pending(scope)
 
     def release_reservation(
         self, *, scope: AccountRiskScope, reservation_id: str,
