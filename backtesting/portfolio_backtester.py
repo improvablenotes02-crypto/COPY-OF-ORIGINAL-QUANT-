@@ -229,6 +229,7 @@ class PortfolioBacktester:
         from core.research.acquisition.scope_provenance import (
             ScopeProvenanceError,
             validate_backtest_inputs,
+            validate_candle_payload,
         )
 
         if not isinstance(history, dict) or not history:
@@ -241,6 +242,7 @@ class PortfolioBacktester:
             )
 
         all_records = []
+        verified_history = {}
         for symbol, records in provenance_by_symbol.items():
             if not isinstance(symbol, str) or not symbol.strip():
                 raise ScopeProvenanceError("portfolio symbols must be non-empty strings")
@@ -249,9 +251,12 @@ class PortfolioBacktester:
                 raise ScopeProvenanceError(
                     f"dataset symbol does not match portfolio key: {symbol}"
                 )
+            verified_history[symbol] = validate_candle_payload(
+                history[symbol], validated
+            )
             all_records.extend(validated)
 
         # Cross-symbol compatibility is checked as one portfolio evidence set.
         validate_backtest_inputs(all_records)
-        return self.run(history, journal=journal)
+        return self.run(verified_history, journal=journal)
 
