@@ -39,6 +39,8 @@ jobs:
           tests/test_safety_guards_11a.py
           tests/test_submission_journal_phase261.py
           tests/test_venue_history_reconciliation_phase263.py
+          tests/test_delta_order_history_phase264.py
+          tests/test_delta_exchange.py
           tests/test_phase203_market_data_validation.py
           tests/test_phase204_paper_data_quality_gate.py
           tests/test_phase205_paper_runtime_quality_gate.py
