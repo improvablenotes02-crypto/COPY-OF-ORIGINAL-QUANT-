@@ -61,6 +61,7 @@ jobs:
           tests/test_dataset_scope_provenance_phase288.py
           tests/test_backtester_scoped_provenance_phase289.py
           tests/test_portfolio_backtester_scoped_provenance_phase290.py
+          tests/test_candle_sequence_integrity_phase292.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
