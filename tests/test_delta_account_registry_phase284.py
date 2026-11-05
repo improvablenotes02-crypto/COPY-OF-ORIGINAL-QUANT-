@@ -124,14 +124,12 @@ def test_authenticated_encryption_context_prevents_tenant_ciphertext_swapping():
     registry, repository = _registry()
     metadata = _register(registry, tenant="tenant-a")
     record = repository.get("tenant-a", metadata.account_id)
-    swapped = type(record)(
-        account_id=record.account_id, tenant_id="tenant-b", venue=record.venue,
-        region=record.region, environment=record.environment, label=record.label,
-        provider_account_id=None, key_id=record.key_id, algorithm=record.algorithm,
-        ciphertext=record.ciphertext, created_at_ns=record.created_at_ns,
-        updated_at_ns=record.updated_at_ns,
+    # Simulate an operator/database-level row swap. The AEAD context
+    # still binds the ciphertext to tenant-a, so tenant-b cannot decrypt it.
+    repository._connection.execute(
+        "UPDATE delta_accounts SET tenant_id = ? WHERE account_id = ?",
+        ("tenant-b", metadata.account_id),
     )
-    repository.save(swapped)
     with pytest.raises(CredentialVaultError):
         registry.open_read_only_session(tenant_id="tenant-b", account_id=metadata.account_id)
     repository.close()
