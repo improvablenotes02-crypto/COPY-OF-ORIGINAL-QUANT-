@@ -42,7 +42,7 @@ def _register(coordinator, scope):
 def _evidence(scope, reservation_id):
     return AccountRiskReconciliationEvidence(
         scope=scope, reservation_id=reservation_id,
-        source="DELTA_AUTHENTICATED_READ", exchange_order_id="delta-order-123",
+        client_order_id=reservation_id, source="DELTA_AUTHENTICATED_READ", exchange_order_id="delta-order-123",
         terminal_status="FILLED", observed_at="2026-11-06T00:00:00+00:00",
         snapshot_hash="a" * 64, identity_verified=True,
         orders_complete=True, fills_complete=True, positions_complete=True,
