@@ -50,8 +50,11 @@ def run_backup_restore_drill(
     source_digest = SQLiteOrderSubmissionJournal._file_sha256(source)
     if source_digest != expected_sha256.lower():
         raise SubmissionJournalError("restore drill backup SHA-256 mismatch")
-    source_counts = SQLiteOrderSubmissionJournal._validate_database_file(source)
-    source_rows = _read_rows(source)
+    try:
+        source_counts = SQLiteOrderSubmissionJournal._validate_database_file(source)
+        source_rows = _read_rows(source)
+    except sqlite3.DatabaseError as exc:
+        raise SubmissionJournalError("restore drill source is not a valid journal database") from exc
     with tempfile.TemporaryDirectory(prefix="quantengine-restore-drill-") as tmp:
         target = Path(tmp) / "drill-restore.sqlite3"
         restored = SQLiteOrderSubmissionJournal.restore_from(
