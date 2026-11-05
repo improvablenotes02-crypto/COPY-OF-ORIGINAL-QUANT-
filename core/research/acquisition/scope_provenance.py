@@ -187,12 +187,12 @@ def validate_candle_payload(candles: Iterable[object],
     record = items[0]
     if count != record.row_count:
         raise ScopeProvenanceError("candle row count does not match provenance")
-    if digest != record.dataset_hash:
-        raise ScopeProvenanceError("candle payload hash does not match provenance")
     for index, candle in enumerate(payload):
         symbol = getattr(candle, "symbol", "")
         if symbol and symbol != record.symbol:
             raise ScopeProvenanceError(
                 f"candle {index} symbol does not match dataset provenance"
             )
+    if digest != record.dataset_hash:
+        raise ScopeProvenanceError("candle payload hash does not match provenance")
     return payload
