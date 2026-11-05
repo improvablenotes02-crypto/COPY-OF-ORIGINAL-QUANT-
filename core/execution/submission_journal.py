@@ -63,7 +63,7 @@ class SQLiteOrderSubmissionJournal:
             raise ValueError("timeout_seconds must be positive")
         self._lock = threading.RLock()
         with self._connection() as db:
-            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA journal_mode=DELETE")
             db.execute("PRAGMA synchronous=FULL")
             db.execute(
                 """CREATE TABLE IF NOT EXISTS order_submissions (
