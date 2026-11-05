@@ -78,8 +78,8 @@ def _reconciled_state(coordinator, scope):
 
 def test_settlement_requires_complete_authenticated_terminal_evidence(tmp_path):
     coordinator, repo, scope = _setup(tmp_path / "evidence-required.sqlite")
-    evidence = _evidence(scope, "settle-evidence-314", hash_account_risk_state(state))
     state = _reconciled_state(coordinator, scope)
+    evidence = _evidence(scope, "settle-evidence-314", hash_account_risk_state(state))
     assert coordinator.settle_reservation(
         scope=scope, reservation_id=evidence.reservation_id,
         expected_revision=state.revision, reconciled_state=state,
