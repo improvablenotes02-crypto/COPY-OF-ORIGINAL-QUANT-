@@ -260,12 +260,18 @@ def _associated_data(record: EncryptedDeltaAccount) -> bytes:
 class DeltaReadOnlySession:
     """Narrow account-bound facade; deliberately exposes no order-write methods."""
 
-    __slots__ = ("_exchange", "_record", "_closed")
+    __slots__ = ("_exchange", "_record", "_closed", "_authorization_check")
 
-    def __init__(self, exchange: object, record: EncryptedDeltaAccount):
+    def __init__(
+        self,
+        exchange: object,
+        record: EncryptedDeltaAccount,
+        authorization_check=None,
+    ):
         self._exchange = exchange
         self._record = record
         self._closed = False
+        self._authorization_check = authorization_check
 
     @property
     def closed(self) -> bool:
@@ -274,6 +280,17 @@ class DeltaReadOnlySession:
     def _require_open(self) -> None:
         if self._closed or self._exchange is None:
             raise CredentialVaultError("Delta read-only session is closed")
+        if self._authorization_check is not None:
+            try:
+                authorized = self._authorization_check()
+            except Exception:
+                raise CredentialVaultError(
+                    "Delta read-only session authorization could not be verified"
+                ) from None
+            if authorized is not True:
+                raise CredentialVaultError(
+                    "Delta read-only session is no longer authorized"
+                )
 
     def close(self) -> None:
         """Close this local client session; venue-side API-key revocation is separate."""
@@ -370,8 +387,10 @@ class DeltaReadOnlySession:
         if identity_before != expected:
             raise AccountScopeError("authenticated Delta identity does not match the registered account")
 
+        self._require_open()
         balances = self._exchange.get_balance()
         balances_observed_at_ns = time.time_ns()
+        self._require_open()
         positions = self._exchange.get_positions()
         positions_observed_at_ns = time.time_ns()
         if not isinstance(balances, dict) or balances.get("success") is not True:
@@ -618,7 +637,26 @@ class DeltaAccountRegistry:
             raise CredentialVaultError(
                 "Delta read-only client initialization failed"
             ) from None
-        return DeltaReadOnlySession(exchange, record)
+        def authorization_check() -> bool:
+            current = self._repository.get(tenant, account)
+            if current is None:
+                return False
+            # Any credential, scope, or metadata generation change invalidates
+            # clients created from the prior record. Shared repositories make
+            # this effective across processes; local SQLite remains single-node.
+            return (
+                current.tenant_id == record.tenant_id
+                and current.account_id == record.account_id
+                and current.venue == record.venue
+                and current.region == record.region
+                and current.environment == record.environment
+                and current.key_id == record.key_id
+                and current.algorithm == record.algorithm
+                and current.ciphertext == record.ciphertext
+                and current.updated_at_ns == record.updated_at_ns
+            )
+
+        return DeltaReadOnlySession(exchange, record, authorization_check)
 
     def verify_and_bind_identity(
         self, *, tenant_id: str, account_id: str
@@ -629,22 +667,25 @@ class DeltaAccountRegistry:
         session = self.open_read_only_session(
             tenant_id=tenant, account_id=account
         )
-        provider_id = session.verify_provider_identity()
-        if (
-            not isinstance(provider_id, str)
-            or not provider_id.isdigit()
-            or int(provider_id) <= 0
-        ):
-            raise AccountScopeError(
-                "authenticated Delta provider identity is missing or invalid"
+        try:
+            provider_id = session.verify_provider_identity()
+            if (
+                not isinstance(provider_id, str)
+                or not provider_id.isdigit()
+                or int(provider_id) <= 0
+            ):
+                raise AccountScopeError(
+                    "authenticated Delta provider identity is missing or invalid"
+                )
+            self._repository.bind_provider_identity(
+                tenant, account, provider_id
             )
-        self._repository.bind_provider_identity(
-            tenant, account, provider_id
-        )
-        bound = self._repository.get(tenant, account)
-        if bound is None:
-            raise AccountNotFoundError("Delta account not found for tenant")
-        return self._metadata(bound)
+            bound = self._repository.get(tenant, account)
+            if bound is None:
+                raise AccountNotFoundError("Delta account not found for tenant")
+            return self._metadata(bound)
+        finally:
+            session.close()
 
     @staticmethod
     def _metadata(record: EncryptedDeltaAccount) -> DeltaAccountMetadata:
