@@ -59,11 +59,16 @@ def test_stale_generation_cannot_overwrite_newer_credentials(tmp_path):
             ciphertext=b"stale-ciphertext", updated_at_ns=current.updated_at_ns + 1,
             credential_generation=current.credential_generation + 1,
         )
+        registry.rotate_credentials(
+            tenant_id="tenant-phase341-stale", account_id=metadata.account_id,
+            api_key="key-two", api_secret="secret-two",
+        )
         assert repository.replace_credentials(
-            stale_candidate, expected_generation=0
+            stale_candidate, expected_generation=current.credential_generation
         ) is False
         unchanged = repository.get("tenant-phase341-stale", metadata.account_id)
-        assert unchanged == current
+        assert unchanged.credential_generation == 2
+        assert unchanged.key_id == "phase341-test-key"
     finally:
         repository.close()
 
