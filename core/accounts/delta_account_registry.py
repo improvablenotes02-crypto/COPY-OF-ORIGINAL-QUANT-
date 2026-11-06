@@ -966,6 +966,104 @@ class DeltaAccountRegistry:
             )
         return self._metadata(updated)
 
+    def rewrap_credentials(
+        self, *, tenant_id: str, account_id: str
+    ) -> DeltaAccountMetadata:
+        """Re-encrypt stored API credentials under the provider's active key.
+
+        This changes the encryption envelope, not the Delta API key/secret.
+        It advances the credential generation and atomically records the key
+        transition, invalidating sessions created from the previous envelope.
+        """
+        tenant = _require_text(tenant_id, "tenant_id")
+        account = _require_text(account_id, "account_id")
+        current = self._repository.get(tenant, account)
+        if current is None:
+            raise AccountNotFoundError("Delta account not found for tenant")
+        replace_credentials = getattr(self._repository, "replace_credentials", None)
+        if not callable(replace_credentials):
+            raise CredentialVaultError(
+                "account repository does not support atomic credential rotation"
+            )
+
+        envelope = CiphertextEnvelope(
+            key_id=current.key_id,
+            algorithm=current.algorithm,
+            ciphertext=current.ciphertext,
+        )
+        try:
+            expected_algorithm = (
+                self._assert_production_security_contract()
+                if self._require_production_security else None
+            )
+            if expected_algorithm is not None and current.algorithm != expected_algorithm:
+                raise ValueError("stored credential algorithm does not match production policy")
+            plaintext = self._encryption_provider.decrypt(
+                envelope, associated_data=_associated_data(current)
+            )
+            payload = json.loads(plaintext.decode("utf-8"))
+            if (
+                not isinstance(payload, dict)
+                or set(payload) != {"api_key", "api_secret"}
+                or not isinstance(payload["api_key"], str)
+                or not payload["api_key"]
+                or not isinstance(payload["api_secret"], str)
+                or not payload["api_secret"]
+            ):
+                raise ValueError("invalid credential payload")
+            new_envelope = self._encryption_provider.encrypt(
+                plaintext, associated_data=_associated_data(current)
+            )
+        except Exception:
+            raise CredentialVaultError("Delta credential key rewrapping failed") from None
+        if (
+            not isinstance(new_envelope, CiphertextEnvelope)
+            or not isinstance(new_envelope.key_id, str)
+            or not new_envelope.key_id
+            or not isinstance(new_envelope.algorithm, str)
+            or not new_envelope.algorithm
+            or not isinstance(new_envelope.ciphertext, bytes)
+            or not new_envelope.ciphertext
+            or (expected_algorithm is not None and new_envelope.algorithm != expected_algorithm)
+        ):
+            raise CredentialVaultError("encryption provider returned an invalid ciphertext envelope")
+        if new_envelope.key_id == current.key_id:
+            raise CredentialVaultError(
+                "credential rewrapping did not select a new encryption key identifier"
+            )
+
+        updated = EncryptedDeltaAccount(
+            account_id=current.account_id,
+            tenant_id=current.tenant_id,
+            venue=current.venue,
+            region=current.region,
+            environment=current.environment,
+            label=current.label,
+            provider_account_id=current.provider_account_id,
+            key_id=new_envelope.key_id,
+            algorithm=new_envelope.algorithm,
+            ciphertext=new_envelope.ciphertext,
+            created_at_ns=current.created_at_ns,
+            updated_at_ns=max(time.time_ns(), current.updated_at_ns + 1),
+            credential_generation=current.credential_generation + 1,
+        )
+        try:
+            committed = replace_credentials(
+                updated,
+                expected_generation=current.credential_generation,
+                expected_updated_at_ns=current.updated_at_ns,
+            )
+        except Exception:
+            raise CredentialVaultError("Delta credential rewrapping could not be committed") from None
+        if committed is not True:
+            latest = self._repository.get(tenant, account)
+            if latest is None:
+                raise AccountNotFoundError("Delta account not found for tenant")
+            raise CredentialRotationConflictError(
+                "Delta credentials changed concurrently; reload the account before rewrapping"
+            )
+        return self._metadata(updated)
+
     def list_accounts(self, tenant_id: str) -> list[DeltaAccountMetadata]:
         tenant = _require_text(tenant_id, "tenant_id")
         return [self._metadata(record) for record in self._repository.list_for_tenant(tenant)]
