@@ -100,6 +100,7 @@ jobs:
           tests/test_delta_credential_ciphertext_integrity_phase330.py
           tests/test_delta_credential_production_admission_phase331.py
           tests/test_delta_credential_client_error_redaction_phase332.py
+          tests/test_delta_read_only_session_lifecycle_phase333.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
