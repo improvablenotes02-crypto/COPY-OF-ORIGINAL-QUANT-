@@ -16,6 +16,8 @@ class _ProductionDeclaredTestRepository(SQLiteDeltaAccountRepository):
     """Test-only repository declaration; not a production storage backend."""
 
     production_ready = True
+    durable_shared_storage = True
+    tenant_isolation_enforced = True
 
 
 def test_production_admission_requires_behavioral_provider_conformance(tmp_path):

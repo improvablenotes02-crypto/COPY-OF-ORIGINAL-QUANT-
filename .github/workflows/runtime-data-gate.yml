@@ -122,6 +122,7 @@ jobs:
           tests/test_credential_provider_conformance_phase354.py
           tests/test_credential_provider_conformance_phase355.py
           tests/test_delta_credential_provider_admission_phase356.py
+          tests/test_delta_repository_admission_phase357.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py

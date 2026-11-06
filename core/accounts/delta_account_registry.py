@@ -744,14 +744,27 @@ class DeltaAccountRegistry:
         provider_ready = getattr(self._encryption_provider, "production_ready", False)
         provider_algorithm = getattr(self._encryption_provider, "algorithm", None)
         repository_ready = getattr(self._repository, "production_ready", False)
+        durable_shared = getattr(self._repository, "durable_shared_storage", False)
+        tenant_isolation = getattr(self._repository, "tenant_isolation_enforced", False)
+        required_repository_methods = (
+            "save", "get", "list_for_tenant", "delete", "bind_provider_identity",
+            "replace_credentials", "list_credential_rotation_events",
+        )
+        repository_surface = all(
+            callable(getattr(self._repository, name, None))
+            for name in required_repository_methods
+        )
         if (
             provider_ready is not True
             or provider_algorithm != "AES-256-GCM"
             or repository_ready is not True
+            or durable_shared is not True
+            or tenant_isolation is not True
+            or not repository_surface
         ):
             raise CredentialVaultError(
                 "production credential security requires an approved AES-256-GCM provider "
-                "and production-grade repository"
+                "and a durable shared tenant-isolated repository"
             )
         if (
             not self._provider_conformance_verified
