@@ -67,7 +67,7 @@ def test_repository_tenant_scope_rotation_atomicity_and_hash_chain(repository):
     current = repository.get("tenant-a", "acct-a")
     candidate = _record("acct-a", "tenant-a", generation=2, updated=11,
                         key_id="key-v2", ciphertext=b"cipher-v2")
-    replacement = replace(\n        candidate, provider_account_id="delta-user-a",\n        updated_at_ns=current.updated_at_ns + 1,\n    )
+    replacement = replace(candidate, provider_account_id="delta-user-a", updated_at_ns=current.updated_at_ns + 1)
     assert repository.replace_credentials(
         replacement, expected_generation=current.credential_generation,
         expected_updated_at_ns=current.updated_at_ns,
