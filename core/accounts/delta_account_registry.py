@@ -105,7 +105,8 @@ class DeltaAccountRepository(Protocol):
         ...
 
     def replace_credentials(
-        self, record: EncryptedDeltaAccount, *, expected_updated_at_ns: int
+        self, record: EncryptedDeltaAccount, *, expected_generation: int,
+        expected_updated_at_ns: int,
     ) -> bool:
         ...
 
