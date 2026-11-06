@@ -34,13 +34,6 @@ from core.accounts.persistent_account_risk import (
 database, reservation_id, ready, gate = sys.argv[1:]
 ready_path, gate_path = Path(ready), Path(gate)
 repository = SQLiteAccountRiskRepository(database)
-ready_path.write_text("ready", encoding="utf-8")
-deadline = time.monotonic() + 15.0
-while not gate_path.exists():
-    if time.monotonic() >= deadline:
-        raise SystemExit("settlement gate timed out")
-    time.sleep(0.01)
-
 scope = AccountRiskScope(
     tenant_id="tenant-phase320", account_id="account-phase320",
     provider_account_id="99140", region="INDIA", environment="SANDBOX",
@@ -59,6 +52,13 @@ evidence = AccountRiskReconciliationEvidence(
     identity_verified=True, orders_complete=True, fills_complete=True,
     positions_complete=True, open_order_absent=True,
 )
+ready_path.write_text("ready", encoding="utf-8")
+deadline = time.monotonic() + 15.0
+while not gate_path.exists():
+    if time.monotonic() >= deadline:
+        raise SystemExit("settlement gate timed out")
+    time.sleep(0.01)
+
 settled = repository.settle_reservation(
     scope=scope, reservation_id=reservation_id,
     expected_revision=current.revision, reconciled_state=projected,
