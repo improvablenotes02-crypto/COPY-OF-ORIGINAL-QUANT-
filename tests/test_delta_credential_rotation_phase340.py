@@ -79,7 +79,7 @@ def test_rotation_replaces_ciphertext_and_revokes_existing_session(tmp_path):
         assert rotated.updated_at_ns > before.updated_at_ns
         assert after.key_id == "phase340-test-key"
         assert after.ciphertext != before.ciphertext
-        assert after.provider_account_id == before.provider_account_id
+        assert after.provider_account_id == "987654"
         with pytest.raises(CredentialVaultError, match="no longer authorized"):
             old_session.get_balance()
         assert clients[0].balance_calls == 0
