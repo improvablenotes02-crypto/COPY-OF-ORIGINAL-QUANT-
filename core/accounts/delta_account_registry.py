@@ -423,11 +423,17 @@ class DeltaAccountRegistry:
         provider_ready = getattr(self._encryption_provider, "production_ready", False)
         provider_algorithm = getattr(self._encryption_provider, "algorithm", None)
         repository_ready = getattr(self._repository, "production_ready", False)
-        if provider_ready is not True or provider_algorithm != "AES-256-GCM" or repository_ready is not True:
+        if (
+            provider_ready is not True
+            or provider_algorithm != "AES-256-GCM"
+            or repository_ready is not True
+        ):
             raise CredentialVaultError(
-                "production credential security requires an approved AES-256-GCM provider and production-grade repository"
+                "production credential security requires an approved AES-256-GCM provider "
+                "and production-grade repository"
             )
         return provider_algorithm
+
     def register_account(
         self,
         *,
@@ -473,7 +479,10 @@ class DeltaAccountRegistry:
             separators=(",", ":"),
         ).encode("utf-8")
         try:
-            expected_algorithm = self._assert_production_security_contract() if self._require_production_security else None
+            expected_algorithm = (
+                self._assert_production_security_contract()
+                if self._require_production_security else None
+            )
             envelope = self._encryption_provider.encrypt(
                 plaintext, associated_data=_associated_data(provisional)
             )
