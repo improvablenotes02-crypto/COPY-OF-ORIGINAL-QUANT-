@@ -107,6 +107,7 @@ jobs:
           tests/test_delta_identity_binding_session_cleanup_phase337.py
           tests/test_delta_cross_connection_revocation_phase338.py
           tests/test_delta_provider_identity_revocation_phase339.py
+          tests/test_delta_credential_rotation_phase340.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py

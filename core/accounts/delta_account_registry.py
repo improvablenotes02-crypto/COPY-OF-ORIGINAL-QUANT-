@@ -32,6 +32,10 @@ class CredentialVaultError(AccountRegistryError):
     """Credential encryption/decryption failed or returned invalid data."""
 
 
+class CredentialRotationConflictError(AccountRegistryError):
+    """A concurrent account change won the credential-rotation compare-and-swap."""
+
+
 class AccountScopeError(AccountRegistryError):
     """A provider identity does not match the registered account scope."""
 
@@ -97,6 +101,11 @@ class DeltaAccountRepository(Protocol):
     def bind_provider_identity(
         self, tenant_id: str, account_id: str, provider_account_id: str
     ) -> None:
+        ...
+
+    def replace_credentials(
+        self, record: EncryptedDeltaAccount, *, expected_updated_at_ns: int
+    ) -> bool:
         ...
 
 
@@ -234,6 +243,25 @@ class SQLiteDeltaAccountRepository:
         raise AccountScopeError(
             "registered Delta account is already bound to a different provider identity"
         )
+
+    def replace_credentials(
+        self, record: EncryptedDeltaAccount, *, expected_updated_at_ns: int
+    ) -> bool:
+        """Atomically replace ciphertext only if the account generation is unchanged."""
+        with self._lock:
+            cursor = self._connection.execute(
+                """
+                UPDATE delta_accounts
+                SET key_id = ?, algorithm = ?, ciphertext = ?, updated_at_ns = ?
+                WHERE tenant_id = ? AND account_id = ? AND updated_at_ns = ?
+                """,
+                (
+                    record.key_id, record.algorithm, sqlite3.Binary(record.ciphertext),
+                    record.updated_at_ns, record.tenant_id, record.account_id,
+                    expected_updated_at_ns,
+                ),
+            )
+        return cursor.rowcount == 1
 
     def close(self) -> None:
         with self._lock:
@@ -572,6 +600,86 @@ class DeltaAccountRegistry:
         )
         self._repository.save(record)
         return self._metadata(record)
+
+    def rotate_credentials(
+        self, *, tenant_id: str, account_id: str, api_key: str, api_secret: str
+    ) -> DeltaAccountMetadata:
+        """Re-encrypt credentials and atomically revoke sessions from older generations.
+
+        A compare-and-swap on updated_at_ns prevents concurrent rotations or
+        account changes from silently overwriting one another. The venue identity
+        binding and account scope are preserved.
+        """
+        tenant = _require_text(tenant_id, "tenant_id")
+        account = _require_text(account_id, "account_id")
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise ValueError("api_key must be non-empty")
+        if not isinstance(api_secret, str) or not api_secret.strip():
+            raise ValueError("api_secret must be non-empty")
+        current = self._repository.get(tenant, account)
+        if current is None:
+            raise AccountNotFoundError("Delta account not found for tenant")
+
+        plaintext = json.dumps(
+            {"api_key": api_key, "api_secret": api_secret},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        try:
+            expected_algorithm = (
+                self._assert_production_security_contract()
+                if self._require_production_security else None
+            )
+            envelope = self._encryption_provider.encrypt(
+                plaintext, associated_data=_associated_data(current)
+            )
+        except Exception:
+            raise CredentialVaultError("Delta credential encryption failed") from None
+        if (
+            not isinstance(envelope, CiphertextEnvelope)
+            or not isinstance(envelope.key_id, str)
+            or not envelope.key_id
+            or not isinstance(envelope.algorithm, str)
+            or not envelope.algorithm
+            or not isinstance(envelope.ciphertext, bytes)
+            or not envelope.ciphertext
+            or (expected_algorithm is not None and envelope.algorithm != expected_algorithm)
+        ):
+            raise CredentialVaultError("encryption provider returned an invalid ciphertext envelope")
+
+        updated = EncryptedDeltaAccount(
+            account_id=current.account_id,
+            tenant_id=current.tenant_id,
+            venue=current.venue,
+            region=current.region,
+            environment=current.environment,
+            label=current.label,
+            provider_account_id=current.provider_account_id,
+            key_id=envelope.key_id,
+            algorithm=envelope.algorithm,
+            ciphertext=envelope.ciphertext,
+            created_at_ns=current.created_at_ns,
+            updated_at_ns=max(time.time_ns(), current.updated_at_ns + 1),
+        )
+        replace_credentials = getattr(self._repository, "replace_credentials", None)
+        if not callable(replace_credentials):
+            raise CredentialVaultError(
+                "account repository does not support atomic credential rotation"
+            )
+        try:
+            committed = replace_credentials(
+                updated, expected_updated_at_ns=current.updated_at_ns
+            )
+        except Exception:
+            raise CredentialVaultError("Delta credential rotation could not be committed") from None
+        if committed is not True:
+            latest = self._repository.get(tenant, account)
+            if latest is None:
+                raise AccountNotFoundError("Delta account not found for tenant")
+            raise CredentialRotationConflictError(
+                "Delta credentials changed concurrently; reload the account before rotating again"
+            )
+        return self._metadata(updated)
 
     def list_accounts(self, tenant_id: str) -> list[DeltaAccountMetadata]:
         tenant = _require_text(tenant_id, "tenant_id")
