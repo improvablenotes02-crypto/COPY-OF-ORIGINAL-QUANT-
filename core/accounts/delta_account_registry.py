@@ -355,12 +355,12 @@ class DeltaReadOnlySession:
         )
 
     def get_account_snapshot(self, *, max_pages: int = 100) -> dict:
-        self._require_open()
         """Collect complete read-only account views under one verified identity.
 
         This is a sequence of observations, not an exchange-atomic snapshot.
         Any unsuccessful or incomplete component refuses the whole result.
         """
+        self._require_open()
         expected = self._record.provider_account_id
         if expected is None:
             raise AccountScopeError(
