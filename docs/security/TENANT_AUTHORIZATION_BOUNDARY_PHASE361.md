@@ -1,4 +1,4 @@
-# Phase 361 — Trusted tenant authorization boundary
+# Phase 361 - Trusted tenant authorization boundary
 
 ## Scope
 Production-mode Delta account registry operations now require an injected tenant authorization provider. The provider must be explicitly declared production-ready and expose `authorize_tenant(tenant_id)`. The implementation contract requires it to compare the requested tenant against the authenticated server-side principal established by trusted middleware; a caller-supplied tenant string alone is not proof of identity.
