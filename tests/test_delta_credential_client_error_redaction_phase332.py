@@ -13,7 +13,7 @@ class _TestProvider:
         return CiphertextEnvelope("test-key", "TEST-ONLY", b"opaque")
 
     def decrypt(self, envelope: CiphertextEnvelope, *, associated_data: bytes) -> bytes:
-        return b\'{"api_key":"phase332-key","api_secret":"phase332-secret"}\'
+        return b'{"api_key":"phase332-key","api_secret":"phase332-secret"}'
 
 
 def test_exchange_factory_exception_is_sanitized_before_leaving_registry():
