@@ -87,6 +87,7 @@ jobs:
           tests/test_account_risk_settlement_projection_phase317.py
           tests/test_account_risk_cross_process_concurrency_phase318.py
           tests/test_account_risk_cross_process_release_phase319.py
+          tests/test_account_risk_cross_process_settlement_phase320.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
