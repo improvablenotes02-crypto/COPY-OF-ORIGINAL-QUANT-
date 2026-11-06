@@ -13,7 +13,7 @@ class _TestOnlyProvider:
         return CiphertextEnvelope("test-key", "TEST-ONLY", b"opaque-ciphertext")
 
     def decrypt(self, envelope: CiphertextEnvelope, *, associated_data: bytes) -> bytes:
-        return b\'{"api_key":"key","api_secret":"secret"}\'
+        return b'{"api_key":"key","api_secret":"secret"}'
 
 
 class _DeclaredProductionProvider(_TestOnlyProvider):
