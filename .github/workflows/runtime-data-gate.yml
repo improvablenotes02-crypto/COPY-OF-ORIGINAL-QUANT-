@@ -103,6 +103,7 @@ jobs:
           tests/test_delta_read_only_session_lifecycle_phase333.py
           tests/test_delta_read_only_session_closed_surface_phase334.py
           tests/test_delta_account_session_revocation_phase335.py
+          tests/test_delta_inflight_revocation_boundary_phase336.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
