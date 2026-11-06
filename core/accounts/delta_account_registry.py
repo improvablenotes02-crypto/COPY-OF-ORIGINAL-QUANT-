@@ -58,6 +58,19 @@ class EncryptionProvider(Protocol):
         ...
 
 
+class TenantAuthorizationProvider(Protocol):
+    """Server-side tenant authorization bound to the authenticated request principal.
+
+    Implementations must obtain identity from trusted authentication middleware,
+    never from a caller-controlled tenant_id value alone.
+    """
+
+    production_ready: bool
+
+    def authorize_tenant(self, tenant_id: str) -> bool:
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class EncryptedDeltaAccount:
     account_id: str
@@ -721,6 +734,7 @@ class DeltaAccountRegistry:
         *,
         exchange_factory=None,
         require_production_security: bool = False,
+        tenant_authorizer: TenantAuthorizationProvider | None = None,
     ):
         if repository is None or encryption_provider is None:
             raise ValueError("repository and encryption_provider are required")
@@ -729,6 +743,7 @@ class DeltaAccountRegistry:
         self._repository = repository
         self._encryption_provider = encryption_provider
         self._exchange_factory = exchange_factory
+        self._tenant_authorizer = tenant_authorizer
         self._require_production_security = require_production_security
         self._provider_conformance_verified = False
         self._provider_conformance_provider_id: int | None = None
@@ -754,6 +769,10 @@ class DeltaAccountRegistry:
             callable(getattr(self._repository, name, None))
             for name in required_repository_methods
         )
+        tenant_authorizer_ready = (
+            getattr(self._tenant_authorizer, "production_ready", False) is True
+            and callable(getattr(self._tenant_authorizer, "authorize_tenant", None))
+        )
         if (
             provider_ready is not True
             or provider_algorithm != "AES-256-GCM"
@@ -761,10 +780,11 @@ class DeltaAccountRegistry:
             or durable_shared is not True
             or tenant_isolation is not True
             or not repository_surface
+            or not tenant_authorizer_ready
         ):
             raise CredentialVaultError(
-                "production credential security requires an approved AES-256-GCM provider "
-                "and a durable shared tenant-isolated repository"
+                "production credential security requires an approved AES-256-GCM provider, "
+                "a durable shared tenant-isolated repository, and a trusted tenant authorization provider"
             )
         if (
             not self._provider_conformance_verified
@@ -785,6 +805,20 @@ class DeltaAccountRegistry:
             self._provider_conformance_provider_id = id(self._encryption_provider)
         return provider_algorithm
 
+    def _authorize_tenant(self, tenant_id: str) -> None:
+        """Fail closed unless trusted server-side identity authorizes this tenant."""
+        authorizer = self._tenant_authorizer
+        if authorizer is None:
+            if self._require_production_security:
+                raise AccountScopeError("authenticated tenant authorization is required")
+            return
+        try:
+            allowed = authorizer.authorize_tenant(tenant_id)
+        except Exception:
+            raise AccountScopeError("tenant authorization could not be verified") from None
+        if allowed is not True:
+            raise AccountScopeError("tenant is not authorized for this operation")
+
     def register_account(
         self,
         *,
@@ -796,6 +830,7 @@ class DeltaAccountRegistry:
         api_secret: str,
     ) -> DeltaAccountMetadata:
         tenant = _require_text(tenant_id, "tenant_id")
+        self._authorize_tenant(tenant)
         account_label = _require_text(label, "label", max_length=80)
         normalized_region = delta_environments.resolve_region(region)
         normalized_environment = delta_environments.resolve_environment(environment)
@@ -877,6 +912,7 @@ class DeltaAccountRegistry:
         """
         tenant = _require_text(tenant_id, "tenant_id")
         account = _require_text(account_id, "account_id")
+        self._authorize_tenant(tenant)
         if not isinstance(api_key, str) or not api_key.strip():
             raise ValueError("api_key must be non-empty")
         if not isinstance(api_secret, str) or not api_secret.strip():
@@ -1007,6 +1043,7 @@ class DeltaAccountRegistry:
         """
         tenant = _require_text(tenant_id, "tenant_id")
         account = _require_text(account_id, "account_id")
+        self._authorize_tenant(tenant)
         current = self._repository.get(tenant, account)
         if current is None:
             raise AccountNotFoundError("Delta account not found for tenant")
@@ -1096,11 +1133,13 @@ class DeltaAccountRegistry:
 
     def list_accounts(self, tenant_id: str) -> list[DeltaAccountMetadata]:
         tenant = _require_text(tenant_id, "tenant_id")
+        self._authorize_tenant(tenant)
         return [self._metadata(record) for record in self._repository.list_for_tenant(tenant)]
 
     def delete_account(self, *, tenant_id: str, account_id: str) -> bool:
         tenant = _require_text(tenant_id, "tenant_id")
         account = _require_text(account_id, "account_id")
+        self._authorize_tenant(tenant)
         return self._repository.delete(tenant, account)
 
     def open_read_only_session(
@@ -1108,6 +1147,7 @@ class DeltaAccountRegistry:
     ) -> DeltaReadOnlySession:
         tenant = _require_text(tenant_id, "tenant_id")
         account = _require_text(account_id, "account_id")
+        self._authorize_tenant(tenant)
         record = self._repository.get(tenant, account)
         if record is None:
             raise AccountNotFoundError("Delta account not found for tenant")
@@ -1159,6 +1199,10 @@ class DeltaAccountRegistry:
                 "Delta read-only client initialization failed"
             ) from None
         def authorization_check() -> bool:
+            try:
+                self._authorize_tenant(tenant)
+            except AccountScopeError:
+                return False
             current = self._repository.get(tenant, account)
             if current is None:
                 return False
@@ -1187,6 +1231,7 @@ class DeltaAccountRegistry:
         """Authenticate read-only, then bind the venue-reported user ID once."""
         tenant = _require_text(tenant_id, "tenant_id")
         account = _require_text(account_id, "account_id")
+        self._authorize_tenant(tenant)
         session = self.open_read_only_session(
             tenant_id=tenant, account_id=account
         )

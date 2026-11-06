@@ -20,6 +20,13 @@ class _ProductionDeclaredTestRepository(SQLiteDeltaAccountRepository):
     tenant_isolation_enforced = True
 
 
+class _AllowTenantAuthorizer:
+    production_ready = True
+
+    def authorize_tenant(self, tenant_id):
+        return True
+
+
 def test_production_admission_requires_behavioral_provider_conformance(tmp_path):
     repository = _ProductionDeclaredTestRepository(tmp_path / "provider-admission.sqlite3")
     try:
@@ -28,6 +35,7 @@ def test_production_admission_requires_behavioral_provider_conformance(tmp_path)
                 repository,
                 _BrokenProvider(),
                 require_production_security=True,
+                tenant_authorizer=_AllowTenantAuthorizer(),
             )
         assert repository.list_for_tenant("tenant-phase356") == []
     finally:
@@ -39,6 +47,7 @@ def test_conforming_provider_is_assessed_once_and_not_per_account_write(tmp_path
     provider = _TestOnlyConformingProvider()
     registry = DeltaAccountRegistry(
         repository, provider, require_production_security=True,
+                tenant_authorizer=_AllowTenantAuthorizer(),
     )
     try:
         # Two encryptions are the fixed conformance assessment vector.
@@ -60,6 +69,7 @@ def test_replacing_provider_object_invalidates_cached_conformance(tmp_path):
     registry = DeltaAccountRegistry(
         repository, _TestOnlyConformingProvider(),
         require_production_security=True,
+                tenant_authorizer=_AllowTenantAuthorizer(),
     )
     try:
         registry._encryption_provider = _BrokenProvider()
