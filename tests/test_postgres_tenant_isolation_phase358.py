@@ -14,8 +14,9 @@ def test_tenant_rls_and_audit_immutability():
         db.execute("DROP TABLE IF EXISTS public.delta_credential_rotation_events CASCADE")
         db.execute("DROP TABLE IF EXISTS public.delta_accounts CASCADE")
         db.execute("DROP FUNCTION IF EXISTS public.reject_delta_rotation_mutation() CASCADE")
-        db.execute("DROP OWNED BY qe_runtime_phase358")
-        db.execute("DROP ROLE IF EXISTS qe_runtime_phase358")
+        if db.execute("SELECT 1 FROM pg_roles WHERE rolname='qe_runtime_phase358'").fetchone():
+            db.execute("DROP OWNED BY qe_runtime_phase358")
+            db.execute("DROP ROLE qe_runtime_phase358")
         db.execute("CREATE ROLE qe_runtime_phase358 LOGIN PASSWORD 'qe_runtime_phase358_test' NOSUPERUSER NOBYPASSRLS")
         db.execute(sql); db.execute(sql)
         db.execute("GRANT USAGE ON SCHEMA public TO qe_runtime_phase358")
@@ -42,5 +43,6 @@ def test_tenant_rls_and_audit_immutability():
                         db.execute("UPDATE public.delta_credential_rotation_events SET new_key_id='tampered' WHERE event_id='evt'")
     finally:
         with psycopg.connect(ADMIN,autocommit=True) as db:
-            db.execute("DROP OWNED BY qe_runtime_phase358")
-        db.execute("DROP ROLE IF EXISTS qe_runtime_phase358")
+            if db.execute("SELECT 1 FROM pg_roles WHERE rolname='qe_runtime_phase358'").fetchone():
+                db.execute("DROP OWNED BY qe_runtime_phase358")
+                db.execute("DROP ROLE qe_runtime_phase358")
