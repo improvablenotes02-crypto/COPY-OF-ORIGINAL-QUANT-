@@ -730,6 +730,8 @@ class DeltaAccountRegistry:
         self._encryption_provider = encryption_provider
         self._exchange_factory = exchange_factory
         self._require_production_security = require_production_security
+        self._provider_conformance_verified = False
+        self._provider_conformance_provider_id: int | None = None
         if self._require_production_security:
             self._assert_production_security_contract()
 
@@ -751,6 +753,23 @@ class DeltaAccountRegistry:
                 "production credential security requires an approved AES-256-GCM provider "
                 "and production-grade repository"
             )
+        if (
+            not self._provider_conformance_verified
+            or self._provider_conformance_provider_id != id(self._encryption_provider)
+        ):
+            # Import lazily to avoid the provider-conformance module's envelope
+            # type dependency creating an import cycle at module initialization.
+            from core.accounts.credential_provider_conformance import (
+                assess_encryption_provider,
+            )
+
+            report = assess_encryption_provider(self._encryption_provider)
+            if not report.passed:
+                raise CredentialVaultError(
+                    "production credential provider behavioral conformance failed"
+                )
+            self._provider_conformance_verified = True
+            self._provider_conformance_provider_id = id(self._encryption_provider)
         return provider_algorithm
 
     def register_account(
