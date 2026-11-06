@@ -1,5 +1,6 @@
 """Phase 330: modified persisted credential ciphertext fails closed before client creation."""
 import hashlib
+import hmac
 
 import pytest
 
@@ -25,7 +26,7 @@ class _AuthenticatedTestProvider:
             raise ValueError("truncated envelope")
         tag, plaintext = envelope.ciphertext[:16], envelope.ciphertext[16:]
         expected = hashlib.sha256(associated_data + plaintext).digest()[:16]
-        if not hashlib.compare_digest(tag, expected):
+        if not hmac.compare_digest(tag, expected):
             raise ValueError("ciphertext authentication failed")
         return plaintext
 
