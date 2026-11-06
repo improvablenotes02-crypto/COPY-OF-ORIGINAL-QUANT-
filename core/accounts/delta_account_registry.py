@@ -71,6 +71,7 @@ class EncryptedDeltaAccount:
     ciphertext: bytes = field(repr=False)
     created_at_ns: int
     updated_at_ns: int
+    credential_generation: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,10 +145,21 @@ class SQLiteDeltaAccountRepository:
                     ciphertext BLOB NOT NULL,
                     created_at_ns INTEGER NOT NULL,
                     updated_at_ns INTEGER NOT NULL,
+                    credential_generation INTEGER NOT NULL DEFAULT 1
+                        CHECK (credential_generation >= 1),
                     UNIQUE (tenant_id, account_id)
                 )
                 """
             )
+            columns = {
+                row["name"]
+                for row in self._connection.execute("PRAGMA table_info(delta_accounts)")
+            }
+            if "credential_generation" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE delta_accounts ADD COLUMN credential_generation "
+                    "INTEGER NOT NULL DEFAULT 1 CHECK (credential_generation >= 1)"
+                )
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_delta_accounts_tenant "
                 "ON delta_accounts (tenant_id, created_at_ns, account_id)"
@@ -160,15 +172,15 @@ class SQLiteDeltaAccountRepository:
                 INSERT INTO delta_accounts (
                     account_id, tenant_id, venue, region, environment, label,
                     provider_account_id, key_id, algorithm, ciphertext,
-                    created_at_ns, updated_at_ns
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at_ns, updated_at_ns, credential_generation
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.account_id, record.tenant_id, record.venue,
                     record.region, record.environment, record.label,
                     record.provider_account_id, record.key_id, record.algorithm,
                     sqlite3.Binary(record.ciphertext), record.created_at_ns,
-                    record.updated_at_ns,
+                    record.updated_at_ns, record.credential_generation,
                 ),
             )
 
@@ -187,6 +199,7 @@ class SQLiteDeltaAccountRepository:
             ciphertext=bytes(row["ciphertext"]),
             created_at_ns=row["created_at_ns"],
             updated_at_ns=row["updated_at_ns"],
+            credential_generation=row["credential_generation"],
         )
 
     def get(self, tenant_id: str, account_id: str) -> EncryptedDeltaAccount | None:
@@ -245,20 +258,23 @@ class SQLiteDeltaAccountRepository:
         )
 
     def replace_credentials(
-        self, record: EncryptedDeltaAccount, *, expected_updated_at_ns: int
+        self, record: EncryptedDeltaAccount, *, expected_generation: int
     ) -> bool:
-        """Atomically replace ciphertext only if the account generation is unchanged."""
+        """Atomically replace ciphertext only at the expected credential generation."""
+        if record.credential_generation != expected_generation + 1:
+            return False
         with self._lock:
             cursor = self._connection.execute(
                 """
                 UPDATE delta_accounts
-                SET key_id = ?, algorithm = ?, ciphertext = ?, updated_at_ns = ?
-                WHERE tenant_id = ? AND account_id = ? AND updated_at_ns = ?
+                SET key_id = ?, algorithm = ?, ciphertext = ?, updated_at_ns = ?,
+                    credential_generation = ?
+                WHERE tenant_id = ? AND account_id = ? AND credential_generation = ?
                 """,
                 (
                     record.key_id, record.algorithm, sqlite3.Binary(record.ciphertext),
-                    record.updated_at_ns, record.tenant_id, record.account_id,
-                    expected_updated_at_ns,
+                    record.updated_at_ns, record.credential_generation,
+                    record.tenant_id, record.account_id, expected_generation,
                 ),
             )
         return cursor.rowcount == 1
@@ -660,6 +676,7 @@ class DeltaAccountRegistry:
             ciphertext=envelope.ciphertext,
             created_at_ns=current.created_at_ns,
             updated_at_ns=max(time.time_ns(), current.updated_at_ns + 1),
+            credential_generation=current.credential_generation + 1,
         )
         replace_credentials = getattr(self._repository, "replace_credentials", None)
         if not callable(replace_credentials):
@@ -668,7 +685,7 @@ class DeltaAccountRegistry:
             )
         try:
             committed = replace_credentials(
-                updated, expected_updated_at_ns=current.updated_at_ns
+                updated, expected_generation=current.credential_generation
             )
         except Exception:
             raise CredentialVaultError("Delta credential rotation could not be committed") from None
@@ -761,6 +778,7 @@ class DeltaAccountRegistry:
                 and current.key_id == record.key_id
                 and current.algorithm == record.algorithm
                 and current.provider_account_id == record.provider_account_id
+                and current.credential_generation == record.credential_generation
                 and current.ciphertext == record.ciphertext
                 and current.updated_at_ns == record.updated_at_ns
             )
