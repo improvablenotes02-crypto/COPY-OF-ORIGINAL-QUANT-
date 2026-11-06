@@ -97,6 +97,7 @@ jobs:
           tests/test_account_risk_reservation_restart_replay_phase327.py
           tests/test_account_risk_provider_identity_scope_phase328.py
           tests/test_delta_credential_envelope_validation_phase329.py
+          tests/test_delta_credential_ciphertext_integrity_phase330.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
