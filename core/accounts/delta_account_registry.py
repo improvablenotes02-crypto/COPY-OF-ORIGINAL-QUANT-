@@ -260,11 +260,43 @@ def _associated_data(record: EncryptedDeltaAccount) -> bytes:
 class DeltaReadOnlySession:
     """Narrow account-bound facade; deliberately exposes no order-write methods."""
 
-    __slots__ = ("_exchange", "_record")
+    __slots__ = ("_exchange", "_record", "_closed")
 
     def __init__(self, exchange: object, record: EncryptedDeltaAccount):
         self._exchange = exchange
         self._record = record
+        self._closed = False
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def _require_open(self) -> None:
+        if self._closed or self._exchange is None:
+            raise CredentialVaultError("Delta read-only session is closed")
+
+    def close(self) -> None:
+        """Close this local client session; venue-side API-key revocation is separate."""
+        if self._closed:
+            return
+        exchange = self._exchange
+        self._closed = True
+        self._exchange = None
+        close = getattr(exchange, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                # A failed cleanup must never reopen this session or leak client details.
+                pass
+
+    def __enter__(self):
+        self._require_open()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.close()
+        return False
 
     @property
     def account_id(self) -> str:
@@ -287,6 +319,7 @@ class DeltaReadOnlySession:
         return self._record.provider_account_id
 
     def verify_provider_identity(self) -> str:
+        self._require_open()
         observed = self._exchange._get_authenticated_account_id()
         expected = self._record.provider_account_id
         if expected is not None and observed != expected:
@@ -294,6 +327,7 @@ class DeltaReadOnlySession:
         return observed
 
     def _verify_snapshot_scope(self, snapshot: dict) -> dict:
+        self._require_open()
         observed = snapshot.get("account_id")
         expected = self._record.provider_account_id
         if expected is not None and observed != expected:
@@ -301,22 +335,27 @@ class DeltaReadOnlySession:
         return snapshot
 
     def get_balance(self):
+        self._require_open()
         return self._exchange.get_balance()
 
     def get_positions(self):
+        self._require_open()
         return self._exchange.get_positions()
 
     def get_order_history_snapshot(self, *, max_pages: int = 100):
+        self._require_open()
         return self._verify_snapshot_scope(
             self._exchange.get_order_history_snapshot(max_pages=max_pages)
         )
 
     def get_fill_history_snapshot(self, *, max_pages: int = 100):
+        self._require_open()
         return self._verify_snapshot_scope(
             self._exchange.get_fill_history_snapshot(max_pages=max_pages)
         )
 
     def get_account_snapshot(self, *, max_pages: int = 100) -> dict:
+        self._require_open()
         """Collect complete read-only account views under one verified identity.
 
         This is a sequence of observations, not an exchange-atomic snapshot.
