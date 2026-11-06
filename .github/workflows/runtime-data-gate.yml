@@ -109,6 +109,7 @@ jobs:
           tests/test_delta_provider_identity_revocation_phase339.py
           tests/test_delta_credential_rotation_phase340.py
           tests/test_delta_credential_generation_phase341.py
+          tests/test_delta_credential_metadata_cas_phase342.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py

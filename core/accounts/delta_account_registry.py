@@ -258,9 +258,10 @@ class SQLiteDeltaAccountRepository:
         )
 
     def replace_credentials(
-        self, record: EncryptedDeltaAccount, *, expected_generation: int
+        self, record: EncryptedDeltaAccount, *, expected_generation: int,
+        expected_updated_at_ns: int,
     ) -> bool:
-        """Atomically replace ciphertext only at the expected credential generation."""
+        """Atomically replace ciphertext only if credential and account versions match."""
         if record.credential_generation != expected_generation + 1:
             return False
         with self._lock:
@@ -270,11 +271,13 @@ class SQLiteDeltaAccountRepository:
                 SET key_id = ?, algorithm = ?, ciphertext = ?, updated_at_ns = ?,
                     credential_generation = ?
                 WHERE tenant_id = ? AND account_id = ? AND credential_generation = ?
+                  AND updated_at_ns = ?
                 """,
                 (
                     record.key_id, record.algorithm, sqlite3.Binary(record.ciphertext),
                     record.updated_at_ns, record.credential_generation,
                     record.tenant_id, record.account_id, expected_generation,
+                    expected_updated_at_ns,
                 ),
             )
         return cursor.rowcount == 1
@@ -685,7 +688,9 @@ class DeltaAccountRegistry:
             )
         try:
             committed = replace_credentials(
-                updated, expected_generation=current.credential_generation
+                updated,
+                expected_generation=current.credential_generation,
+                expected_updated_at_ns=current.updated_at_ns,
             )
         except Exception:
             raise CredentialVaultError("Delta credential rotation could not be committed") from None

@@ -64,7 +64,9 @@ def test_stale_generation_cannot_overwrite_newer_credentials(tmp_path):
             api_key="key-two", api_secret="secret-two",
         )
         assert repository.replace_credentials(
-            stale_candidate, expected_generation=current.credential_generation
+            stale_candidate,
+            expected_generation=current.credential_generation,
+            expected_updated_at_ns=current.updated_at_ns,
         ) is False
         unchanged = repository.get("tenant-phase341-stale", metadata.account_id)
         assert unchanged.credential_generation == 2
