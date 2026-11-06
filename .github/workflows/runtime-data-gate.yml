@@ -90,6 +90,7 @@ jobs:
           tests/test_account_risk_cross_process_settlement_phase320.py
           tests/test_account_risk_settlement_atomic_rollback_phase321.py
           tests/test_account_risk_concurrent_account_isolation_phase322.py
+          tests/test_account_risk_process_crash_recovery_phase323.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
