@@ -11,7 +11,7 @@ from core.accounts.delta_account_registry import (
 )
 
 
-class TestOnlyProvider:
+class _TestOnlyProvider:
     def encrypt(self, plaintext: bytes, *, associated_data: bytes) -> CiphertextEnvelope:
         tag = hashlib.sha256(associated_data).digest()[:16]
         return CiphertextEnvelope("phase341-test-key", "TEST-ONLY", tag + plaintext)
@@ -25,7 +25,7 @@ class TestOnlyProvider:
 
 def test_credential_generation_increments_once_per_successful_rotation(tmp_path):
     repository = SQLiteDeltaAccountRepository(tmp_path / "generation.sqlite3")
-    registry = DeltaAccountRegistry(repository, TestOnlyProvider())
+    registry = DeltaAccountRegistry(repository, _TestOnlyProvider())
     metadata = registry.register_account(
         tenant_id="tenant-phase341", label="generation", region="INDIA",
         environment="SANDBOX", api_key="key-one", api_secret="secret-one",
@@ -47,7 +47,7 @@ def test_credential_generation_increments_once_per_successful_rotation(tmp_path)
 
 def test_stale_generation_cannot_overwrite_newer_credentials(tmp_path):
     repository = SQLiteDeltaAccountRepository(tmp_path / "stale-generation.sqlite3")
-    registry = DeltaAccountRegistry(repository, TestOnlyProvider())
+    registry = DeltaAccountRegistry(repository, _TestOnlyProvider())
     metadata = registry.register_account(
         tenant_id="tenant-phase341-stale", label="stale", region="INDIA",
         environment="SANDBOX", api_key="key-one", api_secret="secret-one",

@@ -15,7 +15,7 @@ from core.accounts.delta_account_registry import (
 )
 
 
-class TestOnlyProvider:
+class _TestOnlyProvider:
     def __init__(self):
         self.rotation_barrier = None
 
@@ -56,7 +56,7 @@ def make_registry(repository, provider, clients):
 
 def test_rotation_replaces_ciphertext_and_revokes_existing_session(tmp_path):
     repository = SQLiteDeltaAccountRepository(tmp_path / "rotation.sqlite3")
-    provider = TestOnlyProvider()
+    provider = _TestOnlyProvider()
     clients = []
     registry = make_registry(repository, provider, clients)
     metadata = registry.register_account(
@@ -99,7 +99,7 @@ def test_two_concurrent_rotations_use_compare_and_swap_and_only_one_wins(tmp_pat
     database = tmp_path / "concurrent-rotation.sqlite3"
     repository_a = SQLiteDeltaAccountRepository(database)
     repository_b = SQLiteDeltaAccountRepository(database)
-    provider = TestOnlyProvider()
+    provider = _TestOnlyProvider()
     registry_a = make_registry(repository_a, provider, [])
     metadata = registry_a.register_account(
         tenant_id="tenant-phase340-race", label="race", region="INDIA",
@@ -136,7 +136,7 @@ def test_two_concurrent_rotations_use_compare_and_swap_and_only_one_wins(tmp_pat
 
 def test_rotation_rejects_invalid_credentials_without_mutating_account(tmp_path):
     repository = SQLiteDeltaAccountRepository(tmp_path / "invalid-rotation.sqlite3")
-    provider = TestOnlyProvider()
+    provider = _TestOnlyProvider()
     registry = make_registry(repository, provider, [])
     metadata = registry.register_account(
         tenant_id="tenant-phase340-invalid", label="invalid", region="INDIA",
@@ -163,7 +163,7 @@ def test_rotation_fails_closed_when_repository_has_no_atomic_rotation_support():
         def get(self, tenant_id, account_id):
             return self.record if (tenant_id, account_id) == (self.record.tenant_id, self.record.account_id) else None
 
-    provider = TestOnlyProvider()
+    provider = _TestOnlyProvider()
     backing = SQLiteDeltaAccountRepository()
     registry = make_registry(backing, provider, [])
     metadata = registry.register_account(

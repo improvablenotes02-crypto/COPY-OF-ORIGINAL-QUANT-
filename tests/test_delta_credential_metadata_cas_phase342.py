@@ -12,7 +12,7 @@ from core.accounts.delta_account_registry import (
 )
 
 
-class TestOnlyProvider:
+class _TestOnlyProvider:
     def __init__(self):
         self.on_encrypt = None
 
@@ -32,7 +32,7 @@ class TestOnlyProvider:
 
 def test_rotation_refuses_to_overwrite_identity_bound_after_its_initial_read(tmp_path):
     repository = SQLiteDeltaAccountRepository(tmp_path / "metadata-cas.sqlite3")
-    provider = TestOnlyProvider()
+    provider = _TestOnlyProvider()
     registry = DeltaAccountRegistry(repository, provider)
     metadata = registry.register_account(
         tenant_id="tenant-phase342", label="metadata-cas", region="INDIA",
