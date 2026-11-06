@@ -378,40 +378,38 @@ class SQLiteDeltaAccountRepository:
                 if cursor.rowcount != 1:
                     self._connection.execute("ROLLBACK")
                     return False
+                previous_events = self.list_credential_rotation_events(
+                    record.tenant_id, record.account_id
+                )
+                previous_hash = (
+                    previous_events[-1].event_hash if previous_events else "0" * 64
+                )
+                event_id = str(uuid.uuid4())
+                event_hash = _credential_rotation_event_hash(
+                    event_id=event_id,
+                    tenant_id=record.tenant_id,
+                    account_id=record.account_id,
+                    previous_generation=previous["credential_generation"],
+                    new_generation=record.credential_generation,
+                    previous_key_id=previous["key_id"],
+                    new_key_id=record.key_id,
+                    occurred_at_ns=record.updated_at_ns,
+                    previous_event_hash=previous_hash,
+                )
                 self._connection.execute(
                     """
-                    previous_events = self.list_credential_rotation_events(
-                        record.tenant_id, record.account_id
-                    )
-                    previous_hash = (
-                        previous_events[-1].event_hash if previous_events else "0" * 64
-                    )
-                    event_id = str(uuid.uuid4())
-                    event_hash = _credential_rotation_event_hash(
-                        event_id=event_id,
-                        tenant_id=record.tenant_id,
-                        account_id=record.account_id,
-                        previous_generation=previous["credential_generation"],
-                        new_generation=record.credential_generation,
-                        previous_key_id=previous["key_id"],
-                        new_key_id=record.key_id,
-                        occurred_at_ns=record.updated_at_ns,
-                        previous_event_hash=previous_hash,
-                    )
-                    self._connection.execute(
-                        """
-                        INSERT INTO delta_credential_rotation_events (
-                            event_id, tenant_id, account_id, previous_generation,
-                            new_generation, previous_key_id, new_key_id, occurred_at_ns,
-                            previous_event_hash, event_hash
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            event_id, record.tenant_id, record.account_id,
-                            previous["credential_generation"], record.credential_generation,
-                            previous["key_id"], record.key_id, record.updated_at_ns,
-                            previous_hash, event_hash,
-                        ),
+                    INSERT INTO delta_credential_rotation_events (
+                        event_id, tenant_id, account_id, previous_generation,
+                        new_generation, previous_key_id, new_key_id, occurred_at_ns,
+                        previous_event_hash, event_hash
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id, record.tenant_id, record.account_id,
+                        previous["credential_generation"], record.credential_generation,
+                        previous["key_id"], record.key_id, record.updated_at_ns,
+                        previous_hash, event_hash,
+                    ),
                 )
                 self._connection.execute("COMMIT")
                 return True
