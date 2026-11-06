@@ -24,8 +24,6 @@ class _TestOnlyConformingProvider:
         return CiphertextEnvelope("test-kms-key-version-1", self.algorithm, nonce + body + tag)
 
     def decrypt(self, envelope: CiphertextEnvelope, *, associated_data: bytes) -> bytes:
-        if envelope.key_id != "test-kms-key-version-1":
-            raise ValueError("unknown test key version")
         nonce, body, tag = envelope.ciphertext[:8], envelope.ciphertext[8:-32], envelope.ciphertext[-32:]
         expected = hmac.new(self._test_key, associated_data + nonce + body, hashlib.sha256).digest()
         if not hmac.compare_digest(tag, expected):

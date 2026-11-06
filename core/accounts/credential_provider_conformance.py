@@ -93,6 +93,14 @@ def assess_encryption_provider(
         failures.append("repeat_encrypt_operation")
         second = None
     if isinstance(second, CiphertextEnvelope):
+        if (
+            isinstance(second.key_id, str) and bool(second.key_id.strip())
+            and second.algorithm == first.algorithm
+            and isinstance(second.ciphertext, bytes) and bool(second.ciphertext)
+        ):
+            checks.append("repeat_envelope_fields")
+        else:
+            failures.append("repeat_envelope_fields")
         if second.ciphertext != first.ciphertext:
             checks.append("ciphertext_uniqueness")
         else:
