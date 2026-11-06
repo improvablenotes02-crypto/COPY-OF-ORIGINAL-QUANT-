@@ -199,6 +199,24 @@ class SQLiteDeltaAccountRepository:
                 "(tenant_id, account_id, occurred_at_ns, event_id)"
             )
             self._connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS prevent_delta_credential_event_update
+                BEFORE UPDATE ON delta_credential_rotation_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'credential rotation audit events are immutable');
+                END
+                """
+            )
+            self._connection.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS prevent_delta_credential_event_delete
+                BEFORE DELETE ON delta_credential_rotation_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'credential rotation audit events are immutable');
+                END
+                """
+            )
+            self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_delta_accounts_tenant "
                 "ON delta_accounts (tenant_id, created_at_ns, account_id)"
             )
