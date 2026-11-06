@@ -38,6 +38,9 @@ class FakeExchange:
         self.api_secret = kwargs["api_secret"]
         self.balance_calls = 0
 
+    def _get_authenticated_account_id(self):
+        return "987654"
+
     def get_balance(self):
         self.balance_calls += 1
         return {"success": True}

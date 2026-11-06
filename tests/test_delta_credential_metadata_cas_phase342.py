@@ -5,11 +5,23 @@ import hashlib
 import pytest
 
 from core.accounts.delta_account_registry import (
+    AccountScopeError,
     CiphertextEnvelope,
     CredentialRotationConflictError,
     DeltaAccountRegistry,
     SQLiteDeltaAccountRepository,
 )
+
+
+class _IdentityExchange:
+    def __init__(self, **kwargs):
+        pass
+
+    def _get_authenticated_account_id(self):
+        return "987654"
+
+    def close(self):
+        pass
 
 
 class _TestOnlyProvider:
@@ -33,7 +45,7 @@ class _TestOnlyProvider:
 def test_rotation_refuses_to_overwrite_identity_bound_after_its_initial_read(tmp_path):
     repository = SQLiteDeltaAccountRepository(tmp_path / "metadata-cas.sqlite3")
     provider = _TestOnlyProvider()
-    registry = DeltaAccountRegistry(repository, provider)
+    registry = DeltaAccountRegistry(repository, provider, exchange_factory=_IdentityExchange)
     metadata = registry.register_account(
         tenant_id="tenant-phase342", label="metadata-cas", region="INDIA",
         environment="SANDBOX", api_key="original-key", api_secret="original-secret",

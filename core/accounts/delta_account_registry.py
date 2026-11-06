@@ -270,15 +270,15 @@ class SQLiteDeltaAccountRepository:
                 """
                 UPDATE delta_accounts
                 SET key_id = ?, algorithm = ?, ciphertext = ?, updated_at_ns = ?,
-                    credential_generation = ?
+                    credential_generation = ?, provider_account_id = ?
                 WHERE tenant_id = ? AND account_id = ? AND credential_generation = ?
                   AND updated_at_ns = ?
                 """,
                 (
                     record.key_id, record.algorithm, sqlite3.Binary(record.ciphertext),
                     record.updated_at_ns, record.credential_generation,
-                    record.tenant_id, record.account_id, expected_generation,
-                    expected_updated_at_ns,
+                    record.provider_account_id, record.tenant_id, record.account_id,
+                    expected_generation, expected_updated_at_ns,
                 ),
             )
         return cursor.rowcount == 1
@@ -640,6 +640,53 @@ class DeltaAccountRegistry:
         if current is None:
             raise AccountNotFoundError("Delta account not found for tenant")
 
+        endpoint = delta_environments.resolve_rest_endpoint(
+            current.environment, current.region
+        )
+        probe = None
+        try:
+            if self._exchange_factory is None:
+                from core.exchanges.delta.delta_exchange import DeltaExchange
+                probe = DeltaExchange(
+                    api_key=api_key, api_secret=api_secret, base_url=endpoint
+                )
+            else:
+                probe = self._exchange_factory(
+                    api_key=api_key, api_secret=api_secret, base_url=endpoint
+                )
+            verify_identity = getattr(probe, "_get_authenticated_account_id", None)
+            if not callable(verify_identity):
+                raise RuntimeError("Delta client does not expose authenticated identity verification")
+            observed_provider_id = verify_identity()
+            if (
+                not isinstance(observed_provider_id, str)
+                or not observed_provider_id.isdigit()
+                or int(observed_provider_id) <= 0
+            ):
+                raise AccountScopeError(
+                    "replacement credentials returned an invalid Delta provider identity"
+                )
+            if (
+                current.provider_account_id is not None
+                and observed_provider_id != current.provider_account_id
+            ):
+                raise AccountScopeError(
+                    "replacement credentials belong to a different Delta provider identity"
+                )
+        except AccountScopeError:
+            raise
+        except Exception:
+            raise CredentialVaultError(
+                "replacement Delta credentials could not be authenticated"
+            ) from None
+        finally:
+            close_probe = getattr(probe, "close", None)
+            if callable(close_probe):
+                try:
+                    close_probe()
+                except Exception:
+                    pass
+
         plaintext = json.dumps(
             {"api_key": api_key, "api_secret": api_secret},
             sort_keys=True,
@@ -674,7 +721,7 @@ class DeltaAccountRegistry:
             region=current.region,
             environment=current.environment,
             label=current.label,
-            provider_account_id=current.provider_account_id,
+            provider_account_id=observed_provider_id,
             key_id=envelope.key_id,
             algorithm=envelope.algorithm,
             ciphertext=envelope.ciphertext,
