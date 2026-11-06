@@ -560,19 +560,25 @@ class DeltaAccountRegistry:
         endpoint = delta_environments.resolve_rest_endpoint(
             record.environment, record.region
         )
-        if self._exchange_factory is None:
-            from core.exchanges.delta.delta_exchange import DeltaExchange
-            exchange = DeltaExchange(
-                api_key=payload["api_key"],
-                api_secret=payload["api_secret"],
-                base_url=endpoint,
-            )
-        else:
-            exchange = self._exchange_factory(
-                api_key=payload["api_key"],
-                api_secret=payload["api_secret"],
-                base_url=endpoint,
-            )
+        try:
+            if self._exchange_factory is None:
+                from core.exchanges.delta.delta_exchange import DeltaExchange
+                exchange = DeltaExchange(
+                    api_key=payload["api_key"],
+                    api_secret=payload["api_secret"],
+                    base_url=endpoint,
+                )
+            else:
+                exchange = self._exchange_factory(
+                    api_key=payload["api_key"],
+                    api_secret=payload["api_secret"],
+                    base_url=endpoint,
+                )
+        except Exception:
+            # Third-party constructors may echo credentials in exception text.
+            raise CredentialVaultError(
+                "Delta read-only client initialization failed"
+            ) from None
         return DeltaReadOnlySession(exchange, record)
 
     def verify_and_bind_identity(
