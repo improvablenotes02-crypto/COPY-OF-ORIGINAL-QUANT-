@@ -92,6 +92,7 @@ jobs:
           tests/test_account_risk_concurrent_account_isolation_phase322.py
           tests/test_account_risk_process_crash_recovery_phase323.py
           tests/test_account_risk_semantic_corruption_phase324.py
+          tests/test_account_risk_reservation_account_scope_phase325.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
