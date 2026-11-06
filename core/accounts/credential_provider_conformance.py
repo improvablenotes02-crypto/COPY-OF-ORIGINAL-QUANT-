@@ -97,8 +97,13 @@ def assess_encryption_provider(
             checks.append("ciphertext_uniqueness")
         else:
             failures.append("ciphertext_uniqueness")
+        if second.key_id == first.key_id:
+            checks.append("key_version_stability")
+        else:
+            failures.append("key_version_stability")
     else:
         failures.append("repeat_encrypt_envelope")
+        failures.append("key_version_stability")
 
     try:
         recovered = decrypt(first, associated_data=associated_data)
@@ -117,6 +122,18 @@ def assess_encryption_provider(
         checks.append("associated_data_authentication")
     else:
         failures.append("associated_data_authentication")
+
+    unknown_key_envelope = CiphertextEnvelope(
+        key_id=first.key_id + "-unknown",
+        algorithm=first.algorithm,
+        ciphertext=first.ciphertext,
+    )
+    try:
+        decrypt(unknown_key_envelope, associated_data=associated_data)
+    except Exception:
+        checks.append("key_version_binding")
+    else:
+        failures.append("key_version_binding")
 
     tampered = first.ciphertext[:-1] + bytes([first.ciphertext[-1] ^ 1])
     tampered_envelope = CiphertextEnvelope(
