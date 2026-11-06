@@ -183,7 +183,7 @@ def determine(availability):
     }
     result["code_hash"] = hashlib.sha256(Path(__file__).read_bytes()
                                          ).hexdigest()
-    OUT.write_text(json.dumps(result, indent=1, sort_keys=True))
+    OUT.write_text(json.dumps(result, indent=1, sort_keys=True), newline="\n")
     return result
 
 

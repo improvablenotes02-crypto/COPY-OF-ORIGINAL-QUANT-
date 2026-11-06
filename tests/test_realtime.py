@@ -366,6 +366,41 @@ class TestSubscriptionWorker(unittest.TestCase):
         self.assertEqual(worker.state.reconnect_attempts, 0)
         self.assertEqual(transport.subscribe_calls["BTC"], 2)
 
+    def test_reconnecting_worker_drops_callbacks_from_disconnected_stream(self):
+        """A late transport callback cannot deliver while reconnecting."""
+        delivered = []
+        worker, transport, clock = self._worker(callback=delivered.append)
+        worker.start()
+        late_callback = transport._routes["BTC"][0]
+
+        transport.down("BTC")
+        self.assertEqual(worker.state.status, SubscriptionStatus.RECONNECTING)
+        late_callback(candle(timestamp=99))
+
+        self.assertEqual(delivered, [])
+        self.assertEqual(worker.state.received, 0)
+        self.assertEqual(worker.state.delivered, 0)
+
+        clock.advance(1.0)
+        worker.poll()
+        transport.push("BTC", candle(timestamp=100))
+        self.assertEqual([item.timestamp for item in delivered], [100])
+
+    def test_stopped_worker_drops_already_queued_callback(self):
+        """A callback queued before unsubscribe cannot mutate a retired worker."""
+        delivered = []
+        worker, transport, clock = self._worker(callback=delivered.append)
+        worker.start()
+        late_callback = transport._routes["BTC"][0]
+        worker.stop()
+
+        late_callback(candle(timestamp=101))
+
+        self.assertEqual(worker.state.status, SubscriptionStatus.STOPPED)
+        self.assertEqual(worker.state.received, 0)
+        self.assertEqual(worker.state.delivered, 0)
+        self.assertEqual(delivered, [])
+
     def test_forming_candle_keeps_live_but_not_delivered(self):
 
         delivered = []

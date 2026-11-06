@@ -1,4 +1,4 @@
-﻿"""
+"""
 ====================================================
 
 Delta Exchange Adapter
@@ -16,6 +16,9 @@ real.
 """
 
 from core.exchanges.base_exchange import BaseExchange
+
+import time
+from urllib.parse import urlencode
 
 from core.exchanges.delta.delta_auth import DeltaSignedREST
 from core.exchanges.delta.delta_products import DeltaProducts
@@ -86,6 +89,19 @@ class DeltaExchange(BaseExchange):
                 "DELTA_API_KEY and DELTA_API_SECRET "
                 "(config/.env)"
             )
+
+    def _get_authenticated_account_id(self):
+        """Resolve the principal behind this signed API key from Delta."""
+        response = self.rest.get("/v2/users/trading_preferences")
+        if not isinstance(response, dict) or response.get("success") is not True:
+            raise RuntimeError("Delta authenticated account identity response is unsuccessful")
+        result = response.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError("Delta authenticated account identity result is malformed")
+        user_id = result.get("user_id")
+        if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
+            raise RuntimeError("Delta authenticated account identity user_id is missing or invalid")
+        return str(user_id)
 
     # -------------------------------------------------
     # Public market data
@@ -194,6 +210,124 @@ class DeltaExchange(BaseExchange):
         return self.rest.get(
             f"/v2/orders/{order_id}"
         )
+
+    # -------------------------------------------------
+    # Order-history reconciliation (read-only)
+    # -------------------------------------------------
+
+    def _read_paginated_order_records(self, endpoint, *, params, max_pages):
+        """Read every cursor page; refuse to call a truncated result complete."""
+        if not isinstance(max_pages, int) or isinstance(max_pages, bool) or max_pages < 1:
+            raise ValueError("max_pages must be a positive integer")
+        query = dict(params)
+        query["page_size"] = 50  # Delta documents a maximum of 50 for history APIs.
+        cursor = None
+        seen_cursors = set()
+        cursor_chain = []
+        records = []
+        pages = 0
+        while True:
+            page_query = dict(query)
+            if cursor is not None:
+                page_query["after"] = cursor
+            path = endpoint + "?" + urlencode(page_query)
+            response = self.rest.get(path)
+            if not isinstance(response, dict) or response.get("success") is not True:
+                raise RuntimeError("Delta order-history response is not a successful object")
+            rows = response.get("result")
+            if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                raise RuntimeError("Delta order-history response has invalid result rows")
+            records.extend(rows)
+            pages += 1
+            meta = response.get("meta")
+            if not isinstance(meta, dict) or "after" not in meta:
+                raise RuntimeError("Delta order-history pagination metadata is missing explicit after cursor")
+            next_cursor = meta["after"]
+            if next_cursor is None:
+                return records, pages, {
+                    "cursor_exhausted": True,
+                    "cursor_hops": len(cursor_chain),
+                    "record_count": len(records),
+                }
+            if not isinstance(next_cursor, str) or not next_cursor.strip():
+                raise RuntimeError("Delta order-history pagination after cursor is invalid")
+            if next_cursor in seen_cursors or next_cursor == cursor:
+                raise RuntimeError("Delta order-history pagination cursor repeated")
+            if pages >= max_pages:
+                raise RuntimeError("Delta order-history page limit reached; snapshot is incomplete")
+            seen_cursors.add(next_cursor)
+            cursor_chain.append(next_cursor)
+            cursor = next_cursor
+
+    def get_order_history_snapshot(self, *, max_pages=100):
+        """Return active + closed/cancelled order records for reconciliation.
+
+        Delta exposes active orders at GET /v2/orders and closed/cancelled
+        orders at GET /v2/orders/history. Both cursor streams must terminate
+        normally. The local observation timestamp is NOT an exchange-atomic
+        snapshot timestamp; callers must account for concurrent order updates.
+        """
+        self._require_auth()
+        account_id = self._get_authenticated_account_id()
+        active, active_pages, active_pagination = self._read_paginated_order_records(
+            "/v2/orders", params={"state": "open"}, max_pages=max_pages
+        )
+        historical, history_pages, history_pagination = self._read_paginated_order_records(
+            "/v2/orders/history", params={}, max_pages=max_pages
+        )
+        observed_at_ns = time.time_ns()
+        return {
+            "venue": "delta",
+            "account_id": account_id,
+            "account_id_source": "/v2/users/trading_preferences",
+            "source": "delta-v2-active-and-order-history",
+            "orders": active + historical,
+            "complete": True,
+            "snapshot_as_of_ns": observed_at_ns,
+            "observation_is_exchange_atomic": False,
+            "pagination": {
+                "active_pages": active_pages,
+                "history_pages": history_pages,
+                "page_size": 50,
+            },
+            "pagination_evidence": {
+                "active_cursor_exhausted": active_pagination["cursor_exhausted"],
+                "history_cursor_exhausted": history_pagination["cursor_exhausted"],
+                "active_cursor_hops": active_pagination["cursor_hops"],
+                "history_cursor_hops": history_pagination["cursor_hops"],
+                "active_record_count": active_pagination["record_count"],
+                "history_record_count": history_pagination["record_count"],
+            },
+        }
+
+    def get_fill_history_snapshot(self, *, max_pages=100):
+        """Return a fully paginated, read-only Delta fills snapshot.
+
+        This is a separate observation from order history and is not
+        exchange-atomic with it. Callers must bind it to an explicit account
+        scope and must not infer rejection from an order having no fills.
+        """
+        self._require_auth()
+        account_id = self._get_authenticated_account_id()
+        fills, pages, pagination = self._read_paginated_order_records(
+            "/v2/fills", params={}, max_pages=max_pages
+        )
+        return {
+            "venue": "delta",
+            "account_id": account_id,
+            "account_id_source": "/v2/users/trading_preferences",
+            "source": "delta-v2-fills",
+            "fills": fills,
+            "complete": True,
+            "snapshot_as_of_ns": time.time_ns(),
+            "observation_is_exchange_atomic": False,
+            "pagination": {"pages": pages, "page_size": 50},
+            "pagination_evidence": {
+                "cursor_exhausted": pagination["cursor_exhausted"],
+                "cursor_hops": pagination["cursor_hops"],
+                "record_count": pagination["record_count"],
+            },
+        }
 
     # -------------------------------------------------
     # Product id lookup (symbol -> Delta product id)

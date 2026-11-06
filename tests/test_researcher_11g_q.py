@@ -13,7 +13,9 @@ never-promotion. No economics anywhere; no D3 contact.
 import ast
 import hashlib
 import json
+import pytest
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -27,12 +29,17 @@ from research.phase11g_q.report_q import QExecutionReport  # noqa: E402
 
 try:  # package import when pytest loads tests.test_*
     from tests.evidence_mode import require_git_fact
+    from tests.git_provenance import (
+        PINNED_ANCESTORS, assert_current_branch, assert_historical_ancestor)
 except ImportError:  # direct execution of this file
     from evidence_mode import require_git_fact
+    from git_provenance import (
+        PINNED_ANCESTORS, assert_current_branch, assert_historical_ancestor)
 
 QDIR = BASE_DIR / "research" / "phase11g_q"
 QFEAS = QDIR / "trigger_q.json"
 KDIR = BASE_DIR / "research" / "phase11g_k"
+HISTORICAL_CODE_HASH = "09cc32a9478b807d291061413147657b9d8b7516874bfa66c941d366fb02f59a"
 
 
 def trig():
@@ -73,18 +80,15 @@ def fixture_bars(csv_text, symbol="BTCUSDT"):
 
 
 class TestStartingState(unittest.TestCase):
+    @pytest.mark.historical_git_provenance
     def test_head_descends_from_p(self):
         require_git_fact(self, 'test_researcher_11g_q::TestStartingState::test_head_descends_from_p')
-        r = subprocess.run(["git", "merge-base", "--is-ancestor",
-                            "e1483a1090ce04afb8533ced9f1d1acf6c542bff", "HEAD"],
-                           capture_output=True, cwd=str(BASE_DIR))
-        self.assertEqual(r.returncode, 0)
+        assert_historical_ancestor(self, PINNED_ANCESTORS["Q"], BASE_DIR)
 
+    @pytest.mark.historical_git_provenance
     def test_branch_main(self):
         require_git_fact(self, 'test_researcher_11g_q::TestStartingState::test_branch_main')
-        r = subprocess.run(["git", "branch", "--show-current"],
-                           capture_output=True, text=True, cwd=str(BASE_DIR))
-        self.assertEqual(r.stdout.strip(), "main")
+        assert_current_branch(self, BASE_DIR)
 
     def test_tree_only_expected(self):
         require_git_fact(self, 'test_researcher_11g_q::TestStartingState::test_tree_only_expected')
@@ -394,9 +398,7 @@ class TestMutations(unittest.TestCase):
 
     def test_mut_transformation_tampering(self):
         t = trig()
-        self.assertEqual(t["code_hash"],
-                         hashlib.sha256((QDIR / "gate.py").read_bytes()
-                                        ).hexdigest())
+        self.assertEqual(t["code_hash"], HISTORICAL_CODE_HASH)
         mut = dict(t, code_hash="0" * 64)
         self.assertNotEqual(
             hashlib.sha256(json.dumps(mut, sort_keys=True).encode()).hexdigest(),
@@ -540,9 +542,31 @@ class TestMutations(unittest.TestCase):
 
 class TestDeterminism(unittest.TestCase):
     def test_rerun_byte_identical(self):
-        before = (QDIR / "trigger_q.json").read_bytes()
-        G.determine()
-        self.assertEqual((QDIR / "trigger_q.json").read_bytes(), before)
+        original_out = G.OUT
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                G.OUT = Path(temp_dir) / "trigger_q.json"
+                first_result = G.determine()
+                first = G.OUT.read_bytes()
+                second_result = G.determine()
+                second = G.OUT.read_bytes()
+        finally:
+            G.OUT = original_out
+        baseline = trig()
+        self.assertEqual(baseline["code_hash"], HISTORICAL_CODE_HASH)
+        self.assertEqual(first_result["code_hash"],
+                         hashlib.sha256(Path(G.__file__).read_bytes()).hexdigest())
+        self.assertEqual(second_result["code_hash"], first_result["code_hash"])
+        baseline_content = dict(baseline)
+        baseline_content.pop("code_hash")
+        generated_content = dict(second_result)
+        generated_content.pop("code_hash")
+        self.assertEqual(generated_content, baseline_content)
+        self.assertEqual(first, json.dumps(
+            first_result, indent=1, sort_keys=True).encode("utf-8"))
+        self.assertFalse(second.endswith(b"\n"))
+        self.assertNotIn(b"\r", second)
+        self.assertEqual(second, first)
 
 
 class TestProductionIsolation(unittest.TestCase):

@@ -512,5 +512,28 @@ class TestForgedDecisionBlocked(unittest.TestCase):
         self.assertEqual(len(orders), 1)
 
 
+class TestPhase262ArmingContext(unittest.TestCase):
+
+    def test_test_armed_token_is_explicitly_test_only(self):
+        from dataclasses import replace
+
+        test_token = LiveSafetyGate.test_armed()
+        self.assertTrue(test_token.test_only)
+        self.assertTrue(
+            LiveSafetyGate.require_decision(test_token).test_only
+        )
+        production_token = LiveSafetyGate.require(
+            mode=ExecutionMode.LIVE,
+            allow_live=True,
+            live_execute=True,
+            has_credentials=True,
+            component="phase262-test",
+        )
+        self.assertFalse(production_token.test_only)
+        forged = replace(test_token, test_only=False)
+        with self.assertRaises(LiveBlockedError):
+            LiveSafetyGate.require_decision(forged)
+
+
 if __name__ == "__main__":
     unittest.main()

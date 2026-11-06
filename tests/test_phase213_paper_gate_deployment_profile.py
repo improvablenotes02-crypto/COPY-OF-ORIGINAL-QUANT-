@@ -63,7 +63,12 @@ def test_profiled_builder_applies_config_before_returning_engine():
     manager = object()
 
     def builder(**kwargs):
-        assert kwargs == {"marker": 7}
+        assert kwargs == {
+            "marker": 7,
+            "market_data_max_age_seconds": 8.0,
+            "market_data_gate_required": True,
+            "market_data_now_provider": None,
+        }
         return engine, manager
 
     built, returned_manager = build_profiled_paper_engine(
@@ -73,6 +78,7 @@ def test_profiled_builder_applies_config_before_returning_engine():
     )
     assert built is engine
     assert returned_manager is manager
-    assert built.market_data_max_age_seconds == 8.0
-    assert built.market_data_gate_required is True
-    assert built.market_data_now_provider is None
+    # The profile is delivered to the constructor rather than
+    # retrofitted onto an already-created engine.
+    assert built.market_data_max_age_seconds is None
+    assert built.market_data_gate_required is False

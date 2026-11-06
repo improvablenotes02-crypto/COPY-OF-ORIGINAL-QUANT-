@@ -184,6 +184,17 @@ class SubscriptionWorker:
         the subscription fresh but never reach strategy logic;
         closed candles pass through the integrity router."""
 
+        # A transport may race with unsubscribe/disconnect and invoke a
+        # callback already queued on its event loop.  Only the current
+        # LIVE/STALE subscription may refresh health or route strategy data.
+        # In particular, never accept candles while CONNECTING,
+        # RECONNECTING, STOPPED, or FAILED.
+        if self.state.status not in (
+            SubscriptionStatus.LIVE,
+            SubscriptionStatus.STALE,
+        ):
+            return
+
         if not self.symbol_matches(candle):
 
             return

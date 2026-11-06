@@ -1492,3 +1492,63 @@ class Backtester:
     def pending_orders_max_directions(self):
 
         return dict(self._pending_max_directions)
+
+    # ==================================================
+    # Phase 289 — provenance-gated research entry point
+    # ==================================================
+
+    def run_scoped(self, candles, provenance_records, journal=None):
+        """Run a backtest only after validating every input dataset scope.
+
+        Existing run() remains available for legacy research workflows.
+        New venue/account-aware integrations should use this method so
+        incomplete or cross-environment data is rejected before replay.
+        """
+        from core.research.acquisition.scope_provenance import (
+            validate_candle_payload,
+        )
+
+        payload = validate_candle_payload(candles, provenance_records)
+        return self.run(payload, journal=journal)
+
+
+    # ==================================================
+    # Phase 293 — scoped replay with immutable evidence
+    # ==================================================
+
+    def run_scoped_with_evidence(
+        self, candles, provenance_records, journal=None,
+        strategy_fingerprint=None, configuration_fingerprint=None,
+        engine_fingerprint=None, engine_build_identity=None,
+        strategy_identity=None, configuration_identity=None,
+    ):
+        """Run a validated single-symbol replay and return its dataset evidence.
+
+        The legacy run_scoped() return type is unchanged. Callers that need
+        an auditable dataset reference can opt into this additive API.
+        """
+        from core.research.acquisition.scope_provenance import (
+            ScopeProvenanceError,
+            ScopedBacktestOutcome,
+            build_backtest_execution_evidence,
+            validate_backtest_inputs,
+            validate_candle_payload,
+        )
+
+        records = validate_backtest_inputs(provenance_records)
+        if len(records) != 1:
+            raise ScopeProvenanceError(
+                "single-symbol backtest requires exactly one dataset provenance record"
+            )
+        payload = validate_candle_payload(candles, records)
+        evidence = build_backtest_execution_evidence(
+            records, {records[0].symbol: payload},
+            strategy_fingerprint=strategy_fingerprint,
+            configuration_fingerprint=configuration_fingerprint,
+            engine_fingerprint=engine_fingerprint,
+            engine_build_identity=engine_build_identity,
+            strategy_identity=strategy_identity,
+            configuration_identity=configuration_identity,
+        )
+        result = self.run(payload, journal=journal)
+        return ScopedBacktestOutcome(result=result, evidence=evidence)

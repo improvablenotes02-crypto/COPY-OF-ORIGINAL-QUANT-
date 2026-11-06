@@ -67,7 +67,7 @@ from core.backtesting.trade_simulator import TradeSimulator
 from core.live.reconciler import Reconciler
 from core.events.candle_event import CandleEvent
 from core.events.event_types import EventType
-from core.execution.live_safety_gate import LiveSafetyGate
+from core.execution.live_safety_gate import LiveBlockedError, LiveSafetyGate
 from core.execution.order_ack import (
     ACKNOWLEDGED,
     CANCELLED,
@@ -333,6 +333,15 @@ class BrokerEngine:
                 safety,
                 component="BrokerEngine.__init__",
             )
+            if (
+                getattr(executor, "supports_safety", False)
+                and not self._safety.test_only
+                and getattr(executor, "submission_journal", None) is None
+            ):
+                raise LiveBlockedError(
+                    "LIVE EXECUTION REFUSED: production broker requires "
+                    "a durable submission journal"
+                )
 
         # Unified closed-trade ledger for BOTH modes, so the
         # analytics layer consumes the same TradeRegistry
@@ -572,6 +581,29 @@ class BrokerEngine:
         return False, ""
 
     def _route(self, candle):
+
+        # Phase 262: unresolved durable submissions must be checked
+        # before every route. An unreadable journal is itself a halt.
+        journal = getattr(self.executor, "submission_journal", None)
+        if not self.dry_run and journal is not None:
+            try:
+                unresolved = journal.unresolved()
+            except Exception as exc:
+                self.reconciler._halt(
+                    "durable submission journal unavailable",
+                    {"kind": "SUBMISSION_JOURNAL_ERROR",
+                     "error_type": type(exc).__name__},
+                )
+            else:
+                if unresolved:
+                    self.reconciler._halt(
+                        "unresolved durable submissions require authoritative venue reconciliation",
+                        {"kind": "UNRESOLVED_SUBMISSIONS",
+                         "client_order_ids": [
+                             row.get("client_order_id") for row in unresolved
+                         ],
+                         "states": [row.get("state") for row in unresolved]},
+                    )
 
         # Stage 1-3 hardening: a reconciled halt blocks ALL new
         # orders (fail closed) until explicit operator resolution.

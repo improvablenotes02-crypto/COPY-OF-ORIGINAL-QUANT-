@@ -74,6 +74,7 @@ _AUDIT_COMPONENT = "LiveSafetyGate"
 # built to look armed. The secret is never logged, never
 # serialized, and never leaves the process.
 _MINT = secrets.token_hex(16)
+_TEST_MINT = secrets.token_hex(16)
 
 
 # ==================================================
@@ -249,6 +250,10 @@ class SafetyDecision:
     live_execute: bool = False
 
     has_credentials: bool = False
+
+    # Test-only arming is separately minted and cannot be confused with
+    # production settings-based authorization.
+    test_only: bool = False
 
     # Private mint stamp. compare=False so operational
     # equality ("same verdict") is unaffected; the stamp is
@@ -458,11 +463,12 @@ class LiveSafetyGate:
                 component,
             )
 
-        if decision._mint != _MINT:
+        expected_mint = _TEST_MINT if decision.test_only else _MINT
+        if decision._mint != expected_mint:
             return cls._refuse_decision(
                 decision,
-                "decision was not minted by LiveSafetyGate.decide "
-                "(fabricated token)",
+                "decision was not minted for this execution context "
+                "(fabricated or altered token)",
                 component,
             )
 
@@ -580,11 +586,21 @@ class LiveSafetyGate:
         call this -- main.py arms via from_settings +
         require over operator configuration."""
 
-        return cls.decide(
+        decision = cls.decide(
             mode=ExecutionMode.LIVE,
             allow_live=True,
             live_execute=True,
             has_credentials=True,
+        )
+        return SafetyDecision(
+            allowed=decision.allowed,
+            mode=decision.mode,
+            reason=decision.reason,
+            allow_live=decision.allow_live,
+            live_execute=decision.live_execute,
+            has_credentials=decision.has_credentials,
+            test_only=True,
+            _mint=_TEST_MINT,
         )
 
     # -------------------------------------------------

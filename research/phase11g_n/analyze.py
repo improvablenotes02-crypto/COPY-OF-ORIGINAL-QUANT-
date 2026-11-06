@@ -398,7 +398,7 @@ def analyze():
             "Regime deciles are descriptive; must not be reused as thresholds."],
     }
     result["code_hash"] = _sha256_bytes(Path(__file__).read_bytes())
-    OUT.write_text(json.dumps(result, indent=1, sort_keys=True))
+    OUT.write_text(json.dumps(result, indent=1, sort_keys=True), newline="\n")
     return result
 
 

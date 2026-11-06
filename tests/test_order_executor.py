@@ -27,6 +27,8 @@ Stdlib only -- a recording fake exchange replaces the network.
 """
 
 import unittest
+import tempfile
+from pathlib import Path
 
 from core.exchanges.contract_registry import ContractRegistry
 from core.exchanges.delta.delta_contract import DeltaContract
@@ -223,6 +225,55 @@ class TestExecute(unittest.TestCase):
         self.assertEqual(result["reason"], reason)
         self.assertEqual(exchange.placed, [])
 
+    def test_duplicate_client_order_id_is_blocked_before_second_write(self):
+        from core.execution.live_safety_gate import LiveSafetyGate
+
+        executor, exchange = self._executor()
+        order = intent()
+
+        first = executor.execute(
+            order, safety=LiveSafetyGate.test_armed()
+        )
+        second = executor.execute(
+            order, safety=LiveSafetyGate.test_armed()
+        )
+
+        self.assertTrue(first["success"])
+        self.assertFalse(second["success"])
+        self.assertIn("duplicate client_order_id", second["reason"])
+        self.assertEqual(len(exchange.placed), 1)
+
+    def test_ambiguous_transport_timeout_keeps_client_id_reserved(self):
+        from core.execution.live_safety_gate import LiveSafetyGate
+
+        class _AcceptedThenTimedOut(_FakeExchange):
+            def post(self, path, payload=None):
+                self.placed.append(payload)
+                raise TimeoutError("acknowledgement timed out")
+
+        registry = ContractRegistry()
+        registry.add(contract())
+        exchange = _AcceptedThenTimedOut()
+        executor = DeltaOrderExecutor(
+            exchange=exchange,
+            registry=registry,
+            order_id_factory=lambda order: "QE-AMBIGUOUS-1",
+        )
+        order = intent()
+
+        with self.assertRaises(TimeoutError):
+            executor.execute(
+                order, safety=LiveSafetyGate.test_armed()
+            )
+
+        retry = executor.execute(
+            order, safety=LiveSafetyGate.test_armed()
+        )
+
+        self.assertFalse(retry["success"])
+        self.assertIn("reconcile the original submission", retry["reason"])
+        self.assertEqual(len(exchange.placed), 1)
+
     def test_execute_raises_without_contract(self):
         empty = ContractRegistry()
         exchange = _FakeExchange()
@@ -293,6 +344,84 @@ class TestExecute(unittest.TestCase):
         self.assertEqual(
             executor.positions(), ("get", "/v2/positions")
         )
+
+
+    def test_durable_journal_blocks_duplicate_after_executor_restart(self):
+        from core.execution.live_safety_gate import LiveSafetyGate
+        from core.execution.submission_journal import SQLiteOrderSubmissionJournal
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "submissions.sqlite3"
+            registry = ContractRegistry()
+            registry.add(contract())
+            first_exchange = _FakeExchange()
+            first = DeltaOrderExecutor(
+                exchange=first_exchange,
+                registry=registry,
+                order_id_factory=lambda value: "QE-DURABLE-1",
+                submission_journal=SQLiteOrderSubmissionJournal(path),
+            )
+            result = first.execute(intent(), safety=LiveSafetyGate.test_armed())
+            self.assertTrue(result["success"])
+            self.assertEqual(
+                SQLiteOrderSubmissionJournal(path).get("QE-DURABLE-1")["state"],
+                "ACKNOWLEDGED",
+            )
+
+            second_exchange = _FakeExchange()
+            second = DeltaOrderExecutor(
+                exchange=second_exchange,
+                registry=registry,
+                order_id_factory=lambda value: "QE-DURABLE-1",
+                submission_journal=SQLiteOrderSubmissionJournal(path),
+            )
+            retry = second.execute(intent(), safety=LiveSafetyGate.test_armed())
+            self.assertFalse(retry["success"])
+            self.assertIn("duplicate durable", retry["reason"])
+            self.assertEqual(second_exchange.placed, [])
+
+    def test_durable_journal_marks_transport_timeout_unknown(self):
+        from core.execution.live_safety_gate import LiveSafetyGate
+        from core.execution.submission_journal import SQLiteOrderSubmissionJournal
+
+        class _TimedOutExchange(_FakeExchange):
+            def post(self, path, payload=None):
+                self.placed.append(payload)
+                raise TimeoutError("ack lost")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "submissions.sqlite3"
+            registry = ContractRegistry()
+            registry.add(contract())
+            exchange = _TimedOutExchange()
+            executor = DeltaOrderExecutor(
+                exchange=exchange,
+                registry=registry,
+                order_id_factory=lambda value: "QE-DURABLE-TIMEOUT",
+                submission_journal=SQLiteOrderSubmissionJournal(path),
+            )
+            with self.assertRaises(TimeoutError):
+                executor.execute(intent(), safety=LiveSafetyGate.test_armed())
+            record = SQLiteOrderSubmissionJournal(path).get("QE-DURABLE-TIMEOUT")
+            self.assertEqual(record["state"], "UNKNOWN")
+            self.assertEqual(len(SQLiteOrderSubmissionJournal(path).unresolved()), 1)
+
+
+    def test_production_live_token_requires_durable_journal(self):
+        from core.execution.live_safety_gate import LiveBlockedError, LiveSafetyGate
+
+        executor, exchange = self._executor()
+        production_safety = LiveSafetyGate.require(
+            mode="LIVE",
+            allow_live=True,
+            live_execute=True,
+            has_credentials=True,
+            component="phase262-test",
+        )
+        self.assertFalse(production_safety.test_only)
+        with self.assertRaisesRegex(LiveBlockedError, "durable submission journal"):
+            executor.execute(intent(), safety=production_safety)
+        self.assertEqual(exchange.placed, [])
 
 
 if __name__ == "__main__":

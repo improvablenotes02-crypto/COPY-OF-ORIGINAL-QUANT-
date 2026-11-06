@@ -25,11 +25,13 @@ from core.exchanges.delta.delta_exchange import DeltaExchange
 
 from core.exchanges.delta.write_authority import token_for_live_safety
 
-from core.execution.live_safety_gate import LiveSafetyGate
+from core.execution.live_safety_gate import LiveBlockedError, LiveSafetyGate
+from core.execution.order_ack import classify_ack
 
 from core.risk.costs import post_cost_rr
 
 import math
+from threading import Lock
 
 
 class InvalidContractError(ValueError):
@@ -87,6 +89,7 @@ class DeltaOrderExecutor:
         registry,
         attach_brackets=True,
         order_id_factory=None,
+        submission_journal=None,
     ):
 
         if not isinstance(exchange, DeltaExchange):
@@ -98,10 +101,21 @@ class DeltaOrderExecutor:
 
         self.attach_brackets = attach_brackets
 
+        self.submission_journal = submission_journal
+
         self.order_id_factory = (
             order_id_factory
             or self._default_client_order_id
         )
+
+        # A client order id is a one-shot submission key. Keep the
+        # reservation even when transport raises: a timeout can mean
+        # the venue accepted the order but the acknowledgement was lost.
+        # A retry must reconcile the original id, never create a second
+        # write. The lock makes the check-and-reserve atomic for callers
+        # that share this executor across worker threads.
+        self._submission_lock = Lock()
+        self._submitted_client_order_ids = set()
 
     # -------------------------------------------------
 
@@ -215,14 +229,74 @@ class DeltaOrderExecutor:
 
         self._require_execution_evidence(contract, intent.symbol)
 
+        # Production-minted LIVE authorization requires a durable
+        # reservation store. The explicitly test-only token is confined
+        # to offline fake-transport tests.
+        if not safety.test_only and self.submission_journal is None:
+            raise LiveBlockedError(
+                "LIVE EXECUTION REFUSED: durable submission journal is required"
+            )
+
         payload = self._validated_payload(intent, contract)
 
+        client_order_id = str(payload.get("client_order_id") or "").strip()
+        if not client_order_id:
+            raise InvalidContractError(
+                "client_order_id is required for an exchange submission"
+            )
+
+        with self._submission_lock:
+            if client_order_id in self._submitted_client_order_ids:
+                return {
+                    "success": False,
+                    "reason": (
+                        "duplicate client_order_id blocked; reconcile the "
+                        "original submission before retrying"
+                    ),
+                    "intent": intent,
+                    "payload": payload,
+                }
+            self._submitted_client_order_ids.add(client_order_id)
+
+        # Optional durable reservation extends the process-local guard
+        # across executor instances and restarts. Any journal error blocks
+        # dispatch; PREPARED is committed before DISPATCHING and transport.
+        if self.submission_journal is not None:
+            if not self.submission_journal.reserve(client_order_id, payload):
+                return {
+                    "success": False,
+                    "reason": (
+                        "duplicate durable client_order_id blocked; reconcile "
+                        "the original submission before retrying"
+                    ),
+                    "intent": intent,
+                    "payload": payload,
+                }
+            self.submission_journal.transition(client_order_id, "DISPATCHING")
+
+        # Reservation intentionally precedes the transport call. Do not
+        # clear it on exceptions or ambiguous responses.
         base_url = getattr(self.exchange.rest, "base_url", None)
         authority = token_for_live_safety(
             safety, base_url=base_url, endpoint="/v2/orders"
         )
 
-        response = self.exchange.place_order(payload, authority=authority)
+        try:
+            response = self.exchange.place_order(payload, authority=authority)
+        except Exception as exc:
+            if self.submission_journal is not None:
+                self.submission_journal.transition(
+                    client_order_id, "UNKNOWN",
+                    f"{type(exc).__name__}: {str(exc)[:300]}",
+                )
+            raise
+
+        if self.submission_journal is not None:
+            acknowledgement = classify_ack(response)
+            self.submission_journal.transition(
+                client_order_id, acknowledgement.state,
+                acknowledgement.detail,
+            )
 
         return {
             "success": True,

@@ -42,6 +42,17 @@ class Settings:
     # implicitly. See docs/integrations/DELTA_ENVIRONMENTS.md.
     DELTA_ENVIRONMENT = os.getenv("DELTA_ENVIRONMENT", "")
 
+    # Venue region is independent from environment. GLOBAL is retained as
+    # the compatibility default; India accounts must explicitly set INDIA.
+    DELTA_REGION = os.getenv("DELTA_REGION", "GLOBAL")
+
+    # Region-scoped credentials. These are never substituted across
+    # Global/India or production/demo boundaries.
+    INDIA_API_KEY = os.getenv("DELTA_INDIA_API_KEY", "")
+    INDIA_API_SECRET = os.getenv("DELTA_INDIA_API_SECRET", "")
+    INDIA_SANDBOX_API_KEY = os.getenv("DELTA_INDIA_SANDBOX_API_KEY", "")
+    INDIA_SANDBOX_API_SECRET = os.getenv("DELTA_INDIA_SANDBOX_API_SECRET", "")
+
     # Sandbox-only credentials. NEVER reinterpreted from (or as)
     # production credentials: the venue binds keys to
     # environments, and the authority refuses substitution.

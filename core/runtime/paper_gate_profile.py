@@ -50,10 +50,11 @@ def build_profiled_paper_engine(*args, builder=None, environ=None, **kwargs):
     config = resolve_paper_gate_profile(environ)
     if builder is None:
         from core.runtime.paper_main import build_paper_engine as builder
-    engine, manager = builder(*args, **kwargs)
-    # RealTimeEngine's constructor initializes these fields in compatibility
-    # mode. Assign before the returned engine is started or reconciled.
-    engine.market_data_max_age_seconds = config["market_data_max_age_seconds"]
-    engine.market_data_gate_required = config["market_data_gate_required"]
-    engine.market_data_now_provider = None
+    # Pass the validated policy into the canonical constructor so its
+    # invariants are checked at construction time, not applied by mutating
+    # a partially configured engine after construction.
+    effective_kwargs = dict(kwargs)
+    effective_kwargs.update(config)
+    effective_kwargs["market_data_now_provider"] = None
+    engine, manager = builder(*args, **effective_kwargs)
     return engine, manager

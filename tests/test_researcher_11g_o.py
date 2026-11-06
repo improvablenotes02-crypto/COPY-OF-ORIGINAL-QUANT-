@@ -10,7 +10,9 @@ boundary. No economics anywhere; no D3 contact.
 import ast
 import hashlib
 import json
+import pytest
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -25,11 +27,16 @@ from research.phase11g_o.report_o import (  # noqa: E402
 
 try:  # package import when pytest loads tests.test_*
     from tests.evidence_mode import require_git_fact
+    from tests.git_provenance import (
+        PINNED_ANCESTORS, assert_current_branch, assert_historical_ancestor)
 except ImportError:  # direct execution of this file
     from evidence_mode import require_git_fact
+    from git_provenance import (
+        PINNED_ANCESTORS, assert_current_branch, assert_historical_ancestor)
 
 ODIR = BASE_DIR / "research" / "phase11g_o"
 OFEAS = ODIR / "feasibility_o.json"
+HISTORICAL_CODE_HASH = "6fb4a308ed7649002d583f5067a17e094b9c82bfac64fb6d9d22c08233ce1d71"
 
 
 def feas():
@@ -70,18 +77,15 @@ def fixture_bars(csv_text, symbol="BTCUSDT"):
 
 
 class TestRepositoryHead(unittest.TestCase):
+    @pytest.mark.historical_git_provenance
     def test_starting_head_ancestor(self):
         require_git_fact(self, 'test_researcher_11g_o::TestRepositoryHead::test_starting_head_ancestor')
-        r = subprocess.run(["git", "merge-base", "--is-ancestor",
-                            "5c95fd623f33eb79db7d195fb75c28ef8ac3739e", "HEAD"],
-                           capture_output=True, cwd=str(BASE_DIR))
-        self.assertEqual(r.returncode, 0)
+        assert_historical_ancestor(self, PINNED_ANCESTORS["O"], BASE_DIR)
 
+    @pytest.mark.historical_git_provenance
     def test_branch_main(self):
         require_git_fact(self, 'test_researcher_11g_o::TestRepositoryHead::test_branch_main')
-        r = subprocess.run(["git", "branch", "--show-current"],
-                           capture_output=True, text=True, cwd=str(BASE_DIR))
-        self.assertEqual(r.stdout.strip(), "main")
+        assert_current_branch(self, BASE_DIR)
 
     def test_tree_only_expected(self):
         require_git_fact(self, 'test_researcher_11g_o::TestRepositoryHead::test_tree_only_expected')
@@ -462,9 +466,31 @@ class TestMutations(unittest.TestCase):
 
 class TestDeterminism(unittest.TestCase):
     def test_rerun_byte_identical(self):
-        before = (ODIR / "feasibility_o.json").read_bytes()
-        AO.analyze()
-        self.assertEqual((ODIR / "feasibility_o.json").read_bytes(), before)
+        original_out = AO.OUT
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                AO.OUT = Path(temp_dir) / "feasibility_o.json"
+                first_result = AO.analyze()
+                first = AO.OUT.read_bytes()
+                second_result = AO.analyze()
+                second = AO.OUT.read_bytes()
+        finally:
+            AO.OUT = original_out
+        baseline = feas()
+        self.assertEqual(baseline["code_hash"], HISTORICAL_CODE_HASH)
+        self.assertEqual(first_result["code_hash"],
+                         hashlib.sha256(Path(AO.__file__).read_bytes()).hexdigest())
+        self.assertEqual(second_result["code_hash"], first_result["code_hash"])
+        baseline_content = dict(baseline)
+        baseline_content.pop("code_hash")
+        generated_content = dict(second_result)
+        generated_content.pop("code_hash")
+        self.assertEqual(generated_content, baseline_content)
+        self.assertEqual(first, json.dumps(
+            first_result, indent=1, sort_keys=True).encode("utf-8"))
+        self.assertFalse(second.endswith(b"\n"))
+        self.assertNotIn(b"\r", second)
+        self.assertEqual(second, first)
 
 
 class TestProductionIsolation(unittest.TestCase):

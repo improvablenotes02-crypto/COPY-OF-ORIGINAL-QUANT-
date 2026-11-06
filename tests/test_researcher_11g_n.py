@@ -11,7 +11,9 @@ import ast
 import hashlib
 import io
 import json
+import pytest
 import subprocess
+import tempfile
 import unittest
 import zipfile
 from pathlib import Path
@@ -27,11 +29,16 @@ from research.phase11g_n.report import (  # noqa: E402
 
 try:  # package import when pytest loads tests.test_*
     from tests.evidence_mode import require_git_fact
+    from tests.git_provenance import (
+        PINNED_ANCESTORS, assert_current_branch, assert_historical_ancestor)
 except ImportError:  # direct execution of this file
     from evidence_mode import require_git_fact
+    from git_provenance import (
+        PINNED_ANCESTORS, assert_current_branch, assert_historical_ancestor)
 
 NDIR = BASE_DIR / "research" / "phase11g_n"
 FEAS = NDIR / "feasibility.json"
+HISTORICAL_CODE_HASH = "97d8aaa6e1d47a56a2014dbe25e6d41d15548d75401729fe5838ac866e0a9dde"
 
 
 def feas():
@@ -61,18 +68,15 @@ def fixture_csv(n_minutes=3, per_minute=20, side="buy", start_ms=2_000_000_000_0
 
 
 class TestRepositoryHead(unittest.TestCase):
+    @pytest.mark.historical_git_provenance
     def test_starting_head_ancestor(self):
         require_git_fact(self, 'test_researcher_11g_n::TestRepositoryHead::test_starting_head_ancestor')
-        r = subprocess.run(["git", "merge-base", "--is-ancestor",
-                            "acab874d1a2cf256ab5f63a1b7fce5d061069b2d", "HEAD"],
-                           capture_output=True, cwd=str(BASE_DIR))
-        self.assertEqual(r.returncode, 0)
+        assert_historical_ancestor(self, PINNED_ANCESTORS["N"], BASE_DIR)
 
+    @pytest.mark.historical_git_provenance
     def test_branch_main(self):
         require_git_fact(self, 'test_researcher_11g_n::TestRepositoryHead::test_branch_main')
-        r = subprocess.run(["git", "branch", "--show-current"],
-                           capture_output=True, text=True, cwd=str(BASE_DIR))
-        self.assertEqual(r.stdout.strip(), "main")
+        assert_current_branch(self, BASE_DIR)
 
     def test_tree_clean_except_notes(self):
         require_git_fact(self, 'test_researcher_11g_n::TestRepositoryHead::test_tree_clean_except_notes')
@@ -429,9 +433,31 @@ class TestMutations(unittest.TestCase):
 
 class TestDeterminism(unittest.TestCase):
     def test_rerun_byte_identical(self):
-        before = (NDIR / "feasibility.json").read_bytes()
-        AN.analyze()
-        self.assertEqual((NDIR / "feasibility.json").read_bytes(), before)
+        original_out = AN.OUT
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                AN.OUT = Path(temp_dir) / "feasibility.json"
+                first_result = AN.analyze()
+                first = AN.OUT.read_bytes()
+                second_result = AN.analyze()
+                second = AN.OUT.read_bytes()
+        finally:
+            AN.OUT = original_out
+        baseline = feas()
+        self.assertEqual(baseline["code_hash"], HISTORICAL_CODE_HASH)
+        self.assertEqual(first_result["code_hash"],
+                         hashlib.sha256(Path(AN.__file__).read_bytes()).hexdigest())
+        self.assertEqual(second_result["code_hash"], first_result["code_hash"])
+        baseline_content = dict(baseline)
+        baseline_content.pop("code_hash")
+        generated_content = dict(second_result)
+        generated_content.pop("code_hash")
+        self.assertEqual(generated_content, baseline_content)
+        self.assertEqual(first, json.dumps(
+            first_result, indent=1, sort_keys=True).encode("utf-8"))
+        self.assertFalse(second.endswith(b"\n"))
+        self.assertNotIn(b"\r", second)
+        self.assertEqual(second, first)
 
 
 class TestProductionIsolation(unittest.TestCase):

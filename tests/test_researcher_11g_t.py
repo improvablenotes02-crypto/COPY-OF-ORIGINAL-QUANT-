@@ -10,7 +10,9 @@ economics, no D3 contact.
 import ast
 import hashlib
 import json
+import pytest
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -24,12 +26,17 @@ from research.phase11g_t.report_t import TMonitorReport  # noqa: E402
 
 try:  # package import when pytest loads tests.test_*
     from tests.evidence_mode import require_git_fact
+    from tests.git_provenance import (
+        PINNED_ANCESTORS, assert_current_branch, assert_historical_ancestor)
 except ImportError:  # direct execution of this file
     from evidence_mode import require_git_fact
+    from git_provenance import (
+        PINNED_ANCESTORS, assert_current_branch, assert_historical_ancestor)
 
 TDIR = BASE_DIR / "research" / "phase11g_t"
 TFEAS = TDIR / "readiness_t.json"
 KDIR = BASE_DIR / "research" / "phase11g_k"
+HISTORICAL_CODE_HASH = "eea445bd832a92a594716e7ce3ab78fc3c8ba3b75f3b3aeaf8226140d16d6355"
 
 
 def feas():
@@ -74,18 +81,15 @@ def fixture_bars(csv_text, symbol="BTCUSDT"):
 
 
 class TestStartingState(unittest.TestCase):
+    @pytest.mark.historical_git_provenance
     def test_head_descends_from_s(self):
         require_git_fact(self, 'test_researcher_11g_t::TestStartingState::test_head_descends_from_s')
-        r = subprocess.run(["git", "merge-base", "--is-ancestor",
-                            "e235663d2a49a0272ee804c8da4759773ee0847f", "HEAD"],
-                           capture_output=True, cwd=str(BASE_DIR))
-        self.assertEqual(r.returncode, 0)
+        assert_historical_ancestor(self, PINNED_ANCESTORS["T"], BASE_DIR)
 
+    @pytest.mark.historical_git_provenance
     def test_branch_main(self):
         require_git_fact(self, 'test_researcher_11g_t::TestStartingState::test_branch_main')
-        r = subprocess.run(["git", "branch", "--show-current"],
-                           capture_output=True, text=True, cwd=str(BASE_DIR))
-        self.assertEqual(r.stdout.strip(), "main")
+        assert_current_branch(self, BASE_DIR)
 
     def test_tree_only_expected(self):
         require_git_fact(self, 'test_researcher_11g_t::TestStartingState::test_tree_only_expected')
@@ -348,9 +352,7 @@ class TestMutations(unittest.TestCase):
 
     def test_mut_transformation_tampering(self):
         f = feas()
-        self.assertEqual(f["code_hash"],
-                         hashlib.sha256((TDIR / "monitor.py").read_bytes()
-                                        ).hexdigest())
+        self.assertEqual(f["code_hash"], HISTORICAL_CODE_HASH)
         mut = dict(f, code_hash="0" * 64)
         self.assertNotEqual(
             hashlib.sha256(json.dumps(mut, sort_keys=True).encode()).hexdigest(),
@@ -464,9 +466,31 @@ class TestMutations(unittest.TestCase):
 
 class TestDeterminism(unittest.TestCase):
     def test_rerun_byte_identical(self):
-        before = (TDIR / "readiness_t.json").read_bytes()
-        TM.determine(availability())
-        self.assertEqual((TDIR / "readiness_t.json").read_bytes(), before)
+        original_out = TM.OUT
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                TM.OUT = Path(temp_dir) / "readiness_t.json"
+                first_result = TM.determine(availability())
+                first = TM.OUT.read_bytes()
+                second_result = TM.determine(availability())
+                second = TM.OUT.read_bytes()
+        finally:
+            TM.OUT = original_out
+        baseline = feas()
+        self.assertEqual(baseline["code_hash"], HISTORICAL_CODE_HASH)
+        self.assertEqual(first_result["code_hash"],
+                         hashlib.sha256(Path(TM.__file__).read_bytes()).hexdigest())
+        self.assertEqual(second_result["code_hash"], first_result["code_hash"])
+        baseline_content = dict(baseline)
+        baseline_content.pop("code_hash")
+        generated_content = dict(second_result)
+        generated_content.pop("code_hash")
+        self.assertEqual(generated_content, baseline_content)
+        self.assertEqual(first, json.dumps(
+            first_result, indent=1, sort_keys=True).encode("utf-8"))
+        self.assertFalse(second.endswith(b"\n"))
+        self.assertNotIn(b"\r", second)
+        self.assertEqual(second, first)
 
 
 class TestProductionIsolation(unittest.TestCase):
