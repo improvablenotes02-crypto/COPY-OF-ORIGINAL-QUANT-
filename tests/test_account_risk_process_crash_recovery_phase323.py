@@ -1,5 +1,4 @@
 """Phase 323: abrupt process exit before COMMIT leaves risk state unchanged."""
-import json
 import os
 import subprocess
 import sys
@@ -64,6 +63,7 @@ def test_process_exit_inside_uncommitted_risk_transaction_recovers_to_last_commi
     )
     before = repository.get(scope)
     ready, gate = tmp_path / "transaction.ready", tmp_path / "crash.gate"
+    repository_closed = False
     process = subprocess.Popen(
         [sys.executable, "-c", _WORKER, str(database), str(ready), str(gate)],
         cwd=Path(__file__).resolve().parents[1],
@@ -84,6 +84,7 @@ def test_process_exit_inside_uncommitted_risk_transaction_recovers_to_last_commi
 
         # Close the pre-crash connection and reopen through a fresh repository.
         repository.close()
+        repository_closed = True
         recovered = SQLiteAccountRiskRepository(str(database))
         try:
             after = recovered.get(scope)
@@ -96,8 +97,5 @@ def test_process_exit_inside_uncommitted_risk_transaction_recovers_to_last_commi
         if process.poll() is None:
             process.kill()
             process.wait(timeout=5)
-        if not repository._connection is None:
-            try:
-                repository.close()
-            except Exception:
-                pass
+        if not repository_closed:
+            repository.close()
