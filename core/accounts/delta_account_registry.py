@@ -9,6 +9,7 @@ production-grade multi-node storage.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 import json
 import sqlite3
 import threading
@@ -96,6 +97,8 @@ class DeltaCredentialRotationEvent:
     previous_key_id: str
     new_key_id: str
     occurred_at_ns: int
+    previous_event_hash: str
+    event_hash: str
 
 
 class DeltaAccountRepository(Protocol):
@@ -189,10 +192,28 @@ class SQLiteDeltaAccountRepository:
                     previous_key_id TEXT NOT NULL,
                     new_key_id TEXT NOT NULL,
                     occurred_at_ns INTEGER NOT NULL,
+                    previous_event_hash TEXT NOT NULL DEFAULT '',
+                    event_hash TEXT NOT NULL DEFAULT '',
                     UNIQUE (tenant_id, account_id, new_generation)
                 )
                 """
             )
+            event_columns = {
+                row["name"]
+                for row in self._connection.execute(
+                    "PRAGMA table_info(delta_credential_rotation_events)"
+                )
+            }
+            if "previous_event_hash" not in event_columns:
+                self._connection.execute(
+                    "ALTER TABLE delta_credential_rotation_events "
+                    "ADD COLUMN previous_event_hash TEXT NOT NULL DEFAULT ''"
+                )
+            if "event_hash" not in event_columns:
+                self._connection.execute(
+                    "ALTER TABLE delta_credential_rotation_events "
+                    "ADD COLUMN event_hash TEXT NOT NULL DEFAULT ''"
+                )
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_delta_credential_events_account "
                 "ON delta_credential_rotation_events "
@@ -359,16 +380,38 @@ class SQLiteDeltaAccountRepository:
                     return False
                 self._connection.execute(
                     """
-                    INSERT INTO delta_credential_rotation_events (
-                        event_id, tenant_id, account_id, previous_generation,
-                        new_generation, previous_key_id, new_key_id, occurred_at_ns
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        str(uuid.uuid4()), record.tenant_id, record.account_id,
-                        previous["credential_generation"], record.credential_generation,
-                        previous["key_id"], record.key_id, record.updated_at_ns,
-                    ),
+                    previous_events = self.list_credential_rotation_events(
+                        record.tenant_id, record.account_id
+                    )
+                    previous_hash = (
+                        previous_events[-1].event_hash if previous_events else "0" * 64
+                    )
+                    event_id = str(uuid.uuid4())
+                    event_hash = _credential_rotation_event_hash(
+                        event_id=event_id,
+                        tenant_id=record.tenant_id,
+                        account_id=record.account_id,
+                        previous_generation=previous["credential_generation"],
+                        new_generation=record.credential_generation,
+                        previous_key_id=previous["key_id"],
+                        new_key_id=record.key_id,
+                        occurred_at_ns=record.updated_at_ns,
+                        previous_event_hash=previous_hash,
+                    )
+                    self._connection.execute(
+                        """
+                        INSERT INTO delta_credential_rotation_events (
+                            event_id, tenant_id, account_id, previous_generation,
+                            new_generation, previous_key_id, new_key_id, occurred_at_ns,
+                            previous_event_hash, event_hash
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            event_id, record.tenant_id, record.account_id,
+                            previous["credential_generation"], record.credential_generation,
+                            previous["key_id"], record.key_id, record.updated_at_ns,
+                            previous_hash, event_hash,
+                        ),
                 )
                 self._connection.execute("COMMIT")
                 return True
@@ -380,19 +423,30 @@ class SQLiteDeltaAccountRepository:
     def list_credential_rotation_events(
         self, tenant_id: str, account_id: str
     ) -> list[DeltaCredentialRotationEvent]:
+        """Return a verified hash chain; legacy unhashed rows are upgraded in memory.
+
+        The chain detects record corruption or offline edits, but is not a
+        cryptographic signature against an attacker able to rewrite the database.
+        """
         with self._lock:
             rows = self._connection.execute(
                 """
                 SELECT event_id, tenant_id, account_id, previous_generation,
-                       new_generation, previous_key_id, new_key_id, occurred_at_ns
+                       new_generation, previous_key_id, new_key_id, occurred_at_ns,
+                       previous_event_hash, event_hash
                 FROM delta_credential_rotation_events
                 WHERE tenant_id = ? AND account_id = ?
-                ORDER BY occurred_at_ns, event_id
+                ORDER BY new_generation, occurred_at_ns, event_id
                 """,
                 (tenant_id, account_id),
             ).fetchall()
-        return [
-            DeltaCredentialRotationEvent(
+        events = []
+        expected_previous_hash = "0" * 64
+        for row in rows:
+            stored_previous_hash = row["previous_event_hash"] or ""
+            if stored_previous_hash and stored_previous_hash != expected_previous_hash:
+                raise CredentialVaultError("credential rotation audit hash chain is invalid")
+            digest = _credential_rotation_event_hash(
                 event_id=row["event_id"],
                 tenant_id=row["tenant_id"],
                 account_id=row["account_id"],
@@ -401,9 +455,27 @@ class SQLiteDeltaAccountRepository:
                 previous_key_id=row["previous_key_id"],
                 new_key_id=row["new_key_id"],
                 occurred_at_ns=row["occurred_at_ns"],
+                previous_event_hash=expected_previous_hash,
             )
-            for row in rows
-        ]
+            stored_digest = row["event_hash"] or ""
+            if stored_digest and stored_digest != digest:
+                raise CredentialVaultError("credential rotation audit event integrity check failed")
+            events.append(
+                DeltaCredentialRotationEvent(
+                    event_id=row["event_id"],
+                    tenant_id=row["tenant_id"],
+                    account_id=row["account_id"],
+                    previous_generation=row["previous_generation"],
+                    new_generation=row["new_generation"],
+                    previous_key_id=row["previous_key_id"],
+                    new_key_id=row["new_key_id"],
+                    occurred_at_ns=row["occurred_at_ns"],
+                    previous_event_hash=expected_previous_hash,
+                    event_hash=digest,
+                )
+            )
+            expected_previous_hash = digest
+        return events
 
     def close(self) -> None:
         with self._lock:
@@ -425,6 +497,27 @@ def _associated_data(record: EncryptedDeltaAccount) -> bytes:
         "venue": record.venue,
     }
     return json.dumps(scope, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _credential_rotation_event_hash(
+    *, event_id: str, tenant_id: str, account_id: str,
+    previous_generation: int, new_generation: int,
+    previous_key_id: str, new_key_id: str, occurred_at_ns: int,
+    previous_event_hash: str,
+) -> str:
+    payload = {
+        "account_id": account_id,
+        "event_id": event_id,
+        "new_generation": new_generation,
+        "new_key_id": new_key_id,
+        "occurred_at_ns": occurred_at_ns,
+        "previous_event_hash": previous_event_hash,
+        "previous_generation": previous_generation,
+        "previous_key_id": previous_key_id,
+        "tenant_id": tenant_id,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 class DeltaReadOnlySession:

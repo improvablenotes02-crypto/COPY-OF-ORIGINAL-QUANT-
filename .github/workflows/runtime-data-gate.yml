@@ -114,6 +114,7 @@ jobs:
           tests/test_delta_credential_rotation_identity_validation_phase344.py
           tests/test_delta_credential_rotation_audit_phase345.py
           tests/test_delta_credential_audit_immutability_phase346.py
+          tests/test_delta_credential_audit_hash_chain_phase347.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
