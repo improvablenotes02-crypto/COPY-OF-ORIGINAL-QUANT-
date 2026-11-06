@@ -162,10 +162,10 @@ jobs:
       - run: python scripts/generate_manifest.py --root . --verify --strict
       - run: python -m pytest tests/test_postgres_tenant_isolation_phase358.py -q
       - run: python -m pytest tests/test_postgres_delta_repository_phase359.py -q
-      - run: python -m pytest tests/test_postgres_delta_repository_phase360.py -q
         env:
           QUANTENGINE_TEST_POSTGRES_ADMIN_DSN: postgresql://postgres:qe-test-only@localhost:5432/quantengine_test
           QUANTENGINE_TEST_POSTGRES_RUNTIME_DSN: postgresql://qe_runtime_phase358:qe_runtime_phase358_test@localhost:5432/quantengine_test
+      - run: python -m pytest tests/test_postgres_delta_repository_phase360.py -q
         env:
           QUANTENGINE_TEST_POSTGRES_ADMIN_DSN: postgresql://postgres:qe-test-only@localhost:5432/quantengine_test
           QUANTENGINE_TEST_POSTGRES_RUNTIME_DSN: postgresql://qe_runtime_phase358:qe_runtime_phase358_test@localhost:5432/quantengine_test
