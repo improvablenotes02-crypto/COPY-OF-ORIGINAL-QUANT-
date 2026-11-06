@@ -639,6 +639,11 @@ class DeltaAccountRegistry:
         current = self._repository.get(tenant, account)
         if current is None:
             raise AccountNotFoundError("Delta account not found for tenant")
+        replace_credentials = getattr(self._repository, "replace_credentials", None)
+        if not callable(replace_credentials):
+            raise CredentialVaultError(
+                "account repository does not support atomic credential rotation"
+            )
 
         endpoint = delta_environments.resolve_rest_endpoint(
             current.environment, current.region
@@ -729,11 +734,6 @@ class DeltaAccountRegistry:
             updated_at_ns=max(time.time_ns(), current.updated_at_ns + 1),
             credential_generation=current.credential_generation + 1,
         )
-        replace_credentials = getattr(self._repository, "replace_credentials", None)
-        if not callable(replace_credentials):
-            raise CredentialVaultError(
-                "account repository does not support atomic credential rotation"
-            )
         try:
             committed = replace_credentials(
                 updated,
