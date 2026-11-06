@@ -236,7 +236,7 @@ class SQLiteDeltaAccountRepository:
             cursor = self._connection.execute(
                 """
                 UPDATE delta_accounts
-                SET provider_account_id = ?, updated_at_ns = ?
+                SET provider_account_id = ?, updated_at_ns = MAX(?, updated_at_ns + 1)
                 WHERE tenant_id = ? AND account_id = ?
                   AND (provider_account_id IS NULL OR provider_account_id = ?)
                 """,
