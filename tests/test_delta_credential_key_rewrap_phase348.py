@@ -17,11 +17,15 @@ class _RotatingProvider:
         self.active_key_id = "kms-key-version-1"
 
     def encrypt(self, plaintext: bytes, *, associated_data: bytes) -> CiphertextEnvelope:
-        tag = hashlib.sha256(associated_data).digest()[:16]
+        tag = hashlib.sha256(
+            associated_data + self.active_key_id.encode("utf-8")
+        ).digest()[:16]
         return CiphertextEnvelope(self.active_key_id, "TEST-ONLY", tag + plaintext)
 
     def decrypt(self, envelope: CiphertextEnvelope, *, associated_data: bytes) -> bytes:
-        tag = hashlib.sha256(associated_data).digest()[:16]
+        tag = hashlib.sha256(
+            associated_data + envelope.key_id.encode("utf-8")
+        ).digest()[:16]
         if not envelope.ciphertext.startswith(tag):
             raise ValueError("associated data mismatch")
         return envelope.ciphertext[16:]
