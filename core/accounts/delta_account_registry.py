@@ -86,6 +86,18 @@ class DeltaAccountMetadata:
     updated_at_ns: int
 
 
+@dataclass(frozen=True, slots=True)
+class DeltaCredentialRotationEvent:
+    event_id: str
+    tenant_id: str
+    account_id: str
+    previous_generation: int
+    new_generation: int
+    previous_key_id: str
+    new_key_id: str
+    occurred_at_ns: int
+
+
 class DeltaAccountRepository(Protocol):
     def save(self, record: EncryptedDeltaAccount) -> None:
         ...
@@ -108,6 +120,11 @@ class DeltaAccountRepository(Protocol):
         self, record: EncryptedDeltaAccount, *, expected_generation: int,
         expected_updated_at_ns: int,
     ) -> bool:
+        ...
+
+    def list_credential_rotation_events(
+        self, tenant_id: str, account_id: str
+    ) -> list[DeltaCredentialRotationEvent]:
         ...
 
 
@@ -161,6 +178,26 @@ class SQLiteDeltaAccountRepository:
                     "ALTER TABLE delta_accounts ADD COLUMN credential_generation "
                     "INTEGER NOT NULL DEFAULT 1 CHECK (credential_generation >= 1)"
                 )
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS delta_credential_rotation_events (
+                    event_id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    previous_generation INTEGER NOT NULL,
+                    new_generation INTEGER NOT NULL,
+                    previous_key_id TEXT NOT NULL,
+                    new_key_id TEXT NOT NULL,
+                    occurred_at_ns INTEGER NOT NULL,
+                    UNIQUE (tenant_id, account_id, new_generation)
+                )
+                """
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_delta_credential_events_account "
+                "ON delta_credential_rotation_events "
+                "(tenant_id, account_id, occurred_at_ns, event_id)"
+            )
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_delta_accounts_tenant "
                 "ON delta_accounts (tenant_id, created_at_ns, account_id)"
@@ -262,26 +299,93 @@ class SQLiteDeltaAccountRepository:
         self, record: EncryptedDeltaAccount, *, expected_generation: int,
         expected_updated_at_ns: int,
     ) -> bool:
-        """Atomically replace ciphertext only if credential and account versions match."""
+        """Commit a credential generation and its audit event in one transaction."""
         if record.credential_generation != expected_generation + 1:
             return False
         with self._lock:
-            cursor = self._connection.execute(
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                previous = self._connection.execute(
+                    """
+                    SELECT credential_generation, updated_at_ns, key_id
+                    FROM delta_accounts
+                    WHERE tenant_id = ? AND account_id = ?
+                    """,
+                    (record.tenant_id, record.account_id),
+                ).fetchone()
+                if (
+                    previous is None
+                    or previous["credential_generation"] != expected_generation
+                    or previous["updated_at_ns"] != expected_updated_at_ns
+                    or record.updated_at_ns <= previous["updated_at_ns"]
+                ):
+                    self._connection.execute("ROLLBACK")
+                    return False
+                cursor = self._connection.execute(
+                    """
+                    UPDATE delta_accounts
+                    SET key_id = ?, algorithm = ?, ciphertext = ?, updated_at_ns = ?,
+                        credential_generation = ?, provider_account_id = ?
+                    WHERE tenant_id = ? AND account_id = ? AND credential_generation = ?
+                      AND updated_at_ns = ?
+                    """,
+                    (
+                        record.key_id, record.algorithm, sqlite3.Binary(record.ciphertext),
+                        record.updated_at_ns, record.credential_generation,
+                        record.provider_account_id, record.tenant_id, record.account_id,
+                        expected_generation, expected_updated_at_ns,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    self._connection.execute("ROLLBACK")
+                    return False
+                self._connection.execute(
+                    """
+                    INSERT INTO delta_credential_rotation_events (
+                        event_id, tenant_id, account_id, previous_generation,
+                        new_generation, previous_key_id, new_key_id, occurred_at_ns
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()), record.tenant_id, record.account_id,
+                        previous["credential_generation"], record.credential_generation,
+                        previous["key_id"], record.key_id, record.updated_at_ns,
+                    ),
+                )
+                self._connection.execute("COMMIT")
+                return True
+            except Exception:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
+
+    def list_credential_rotation_events(
+        self, tenant_id: str, account_id: str
+    ) -> list[DeltaCredentialRotationEvent]:
+        with self._lock:
+            rows = self._connection.execute(
                 """
-                UPDATE delta_accounts
-                SET key_id = ?, algorithm = ?, ciphertext = ?, updated_at_ns = ?,
-                    credential_generation = ?, provider_account_id = ?
-                WHERE tenant_id = ? AND account_id = ? AND credential_generation = ?
-                  AND updated_at_ns = ?
+                SELECT event_id, tenant_id, account_id, previous_generation,
+                       new_generation, previous_key_id, new_key_id, occurred_at_ns
+                FROM delta_credential_rotation_events
+                WHERE tenant_id = ? AND account_id = ?
+                ORDER BY occurred_at_ns, event_id
                 """,
-                (
-                    record.key_id, record.algorithm, sqlite3.Binary(record.ciphertext),
-                    record.updated_at_ns, record.credential_generation,
-                    record.provider_account_id, record.tenant_id, record.account_id,
-                    expected_generation, expected_updated_at_ns,
-                ),
+                (tenant_id, account_id),
+            ).fetchall()
+        return [
+            DeltaCredentialRotationEvent(
+                event_id=row["event_id"],
+                tenant_id=row["tenant_id"],
+                account_id=row["account_id"],
+                previous_generation=row["previous_generation"],
+                new_generation=row["new_generation"],
+                previous_key_id=row["previous_key_id"],
+                new_key_id=row["new_key_id"],
+                occurred_at_ns=row["occurred_at_ns"],
             )
-        return cursor.rowcount == 1
+            for row in rows
+        ]
 
     def close(self) -> None:
         with self._lock:
