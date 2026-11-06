@@ -652,6 +652,7 @@ class DeltaAccountRegistry:
                 and current.environment == record.environment
                 and current.key_id == record.key_id
                 and current.algorithm == record.algorithm
+                and current.provider_account_id == record.provider_account_id
                 and current.ciphertext == record.ciphertext
                 and current.updated_at_ns == record.updated_at_ns
             )

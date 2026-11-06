@@ -52,7 +52,7 @@ def test_reconciliation_evidence_cannot_be_read_or_applied_from_another_account(
         _, current = repository.get(scope_a)
         projected = replace(
             current, pending_orders=0, pending_exposure=0.0,
-            revision=current.revision + 1,
+            revision=current.revision,
         )
         evidence = AccountRiskReconciliationEvidence(
             scope=scope_a, reservation_id=reservation_id,
