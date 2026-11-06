@@ -45,7 +45,7 @@ def _evidence(scope, reservation_id, state):
     return AccountRiskReconciliationEvidence(
         scope=scope, reservation_id=reservation_id,
         client_order_id=reservation_id, source="DELTA_AUTHENTICATED_READ", exchange_order_id="delta-order-123",
-        terminal_status="FILLED", observed_at="2026-11-06T00:00:00+00:00",
+        terminal_status="REJECTED", observed_at="2026-11-06T00:00:00+00:00",
         snapshot_hash="a" * 64, risk_state_hash=hash_account_risk_state(state), identity_verified=True,
         orders_complete=True, fills_complete=True, positions_complete=True,
         open_order_absent=True,
@@ -118,10 +118,7 @@ def test_settlement_replaces_pending_reservation_with_authoritative_account_snap
     coordinator, repository, scope = _coordinator(tmp_path / "reserve.sqlite")
     coordinator.reserve_order(reservation_id="order-001", proposal=_proposal(scope))
     current = coordinator.get_state(scope)[1]
-    reconciled = replace(
-        current, pending_orders=0, pending_exposure=0.0,
-        current_exposure=500.0, open_positions=1,
-    )
+    reconciled = replace(current, pending_orders=0, pending_exposure=0.0)
     assert coordinator.settle_reservation(
         scope=scope, reservation_id="order-001",
         expected_revision=current.revision, reconciled_state=reconciled,
@@ -133,7 +130,7 @@ def test_settlement_replaces_pending_reservation_with_authoritative_account_snap
         evidence=_evidence(scope, "order-001", reconciled),
     ) is False
     settled = coordinator.get_state(scope)[1]
-    assert settled.current_exposure == 500.0
+    assert settled.current_exposure == 0.0
     assert settled.pending_exposure == 0.0
     assert settled.revision == 2
     repository.close()

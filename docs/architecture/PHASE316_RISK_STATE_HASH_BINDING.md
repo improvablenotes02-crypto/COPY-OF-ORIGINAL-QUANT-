@@ -2,14 +2,12 @@
 
 ## Contract
 
-The durable reconciliation evidence now includes a canonical SHA-256 hash of the exact normalized `AccountRiskState` that is committed when a reservation settles.
+Reconciliation evidence includes a canonical SHA-256 hash of the exact normalized AccountRiskState committed when a reservation settles. Before the transaction, the repository recomputes the canonical hash and rejects evidence that binds a different state. The transaction writes the state, changes the reservation to SETTLED, and persists the evidence record atomically.
 
-Before the transaction begins, the repository validates the state and recomputes its canonical hash. Settlement is rejected unless the evidence hash matches the state hash. The same transaction writes the state, changes the reservation to `SETTLED`, and persists the evidence record.
+## Phase 317 refinement
 
-## Benefit
-
-This prevents evidence created for one risk-state payload from being accidentally reused to settle a different state. The state hash includes account scope, capital, P&L, positions, exposure, controls, and revision.
+The hash check is necessary but not sufficient. The repository now also enforces a narrow rejected-order projection: only the target pending reservation may be removed; every other risk-state field must remain unchanged at the typed-value level. Executed or cancelled orders cannot settle until a trusted position-reconciliation projection exists.
 
 ## Limit
 
-A hash binds data identity; it does not prove that the state was honestly derived from an exchange snapshot. The Phase 315 adapter and production reconciliation worker remain responsible for deriving the state from authenticated, complete account observations. Live order writing remains disarmed.
+A hash binds data identity; it does not prove that the state was honestly derived from an exchange snapshot. The Phase 315 adapter and future position-reconciliation worker remain responsible for deriving state from authenticated, complete account observations. Live order writing remains disarmed.

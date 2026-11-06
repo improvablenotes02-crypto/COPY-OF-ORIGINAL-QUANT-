@@ -1,25 +1,17 @@
 # Phase 314 — Evidence-Gated Account Risk Settlement
 
-## Risk
-
-A durable reservation should not be marked settled merely because a caller supplies a state object. That would allow a programming error or an unverified response to release pending risk capacity without an auditable exchange reconciliation record.
-
 ## Contract
 
-Settlement now requires an immutable `AccountRiskReconciliationEvidence` record bound to the exact account scope and reservation ID. It requires:
+Durable reservation settlement requires an immutable AccountRiskReconciliationEvidence record bound to the exact account scope and reservation ID. It records the authenticated-read source designation, exact client and provider order identities, terminal order status, UTC observation time, snapshot SHA-256, verified identity, and complete order/fill/position observations.
 
-- Delta authenticated-read source designation;
-- the original client order ID exactly matching the reservation ID, plus the provider exchange order ID and terminal order status;
-- UTC-aware observation time;
-- SHA-256 snapshot identity;
-- verified account identity;
-- complete order, fill, and position observations;
-- confirmation that the order is no longer open.
+The evidence is stored in the same repository transaction that updates account-risk state and marks the reservation settled. Retrieval is scope checked and survives repository restart.
 
-The evidence is written in the same SQLite transaction that updates the account-risk state and marks the reservation settled. The repository exposes a scope-checked retrieval method so evidence remains available after restart.
+## Phase 317 safety refinement
 
-## Safety boundary
+The persistence boundary now permits settlement only for an exchange-rejected order. The committed state must be the exact current state with only this reservation's pending-order count and pending notional removed. Equity, P&L, exposure, position count, risk basis, kill switch, and trading-enabled controls must remain unchanged.
 
-This is a typed application contract, not cryptographic proof that a caller really authenticated with Delta. The production Delta reconciliation adapter must construct evidence only after signature verification, account identity re-check, pagination exhaustion, and consistency checks. Unit tests use synthetic evidence and do not certify a live exchange integration.
+A hash binds the state payload but does not prove that it was derived from an exchange observation. This narrow rule prevents a caller from smuggling unverified risk-state changes through an otherwise valid evidence envelope.
 
-An ambiguous or incomplete observation must leave the reservation pending. Live order writing remains disarmed.
+## Deferred outcomes
+
+Filled, partially filled then cancelled, cancelled, and expired orders remain pending until a separately implemented position-reconciliation projection can derive their effects safely. Ambiguous or incomplete observations also remain pending. Live order writing remains disarmed.

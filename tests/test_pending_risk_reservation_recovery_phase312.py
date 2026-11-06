@@ -1,5 +1,7 @@
 """Phase 312: durable pending risk reservation recovery."""
 
+from dataclasses import replace
+
 from core.accounts.account_risk import (
     AccountRiskProfile,
     AccountRiskScope,
@@ -44,7 +46,7 @@ def _evidence(scope, reservation_id, state):
     return AccountRiskReconciliationEvidence(
         scope=scope, reservation_id=reservation_id,
         client_order_id=reservation_id, source="DELTA_AUTHENTICATED_READ", exchange_order_id="delta-order-123",
-        terminal_status="FILLED", observed_at="2026-11-06T00:00:00+00:00",
+        terminal_status="REJECTED", observed_at="2026-11-06T00:00:00+00:00",
         snapshot_hash="a" * 64, risk_state_hash=hash_account_risk_state(state), identity_verified=True,
         orders_complete=True, fills_complete=True, positions_complete=True,
         open_order_absent=True,
@@ -110,14 +112,7 @@ def test_released_and_settled_reservations_are_not_recovered_as_pending(tmp_path
     coordinator.reserve_order(reservation_id="settle-me", proposal=_proposal(scope, 300.0))
     assert coordinator.release_reservation(scope=scope, reservation_id="release-me")
     current = coordinator.get_state(scope)[1]
-    reconciled = AccountRiskState(
-        scope=scope, risk_basis=current.risk_basis, equity=current.equity,
-        daily_pnl=current.daily_pnl, weekly_pnl=current.weekly_pnl,
-        monthly_pnl=current.monthly_pnl, open_positions=1,
-        pending_orders=0, current_exposure=300.0, pending_exposure=0.0,
-        kill_switch=current.kill_switch, trading_enabled=current.trading_enabled,
-        revision=current.revision,
-    )
+    reconciled = replace(current, pending_orders=0, pending_exposure=0.0)
     assert coordinator.settle_reservation(
         scope=scope, reservation_id="settle-me",
         expected_revision=current.revision, reconciled_state=reconciled,

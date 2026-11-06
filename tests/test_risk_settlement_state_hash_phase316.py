@@ -30,7 +30,7 @@ def _evidence(scope, state, *, state_hash=None):
     return AccountRiskReconciliationEvidence(
         scope=scope, reservation_id="QE-316", client_order_id="QE-316",
         source="DELTA_AUTHENTICATED_READ", exchange_order_id="delta-order-316",
-        terminal_status="FILLED", observed_at="2026-11-06T00:00:00+00:00",
+        terminal_status="REJECTED", observed_at="2026-11-06T00:00:00+00:00",
         snapshot_hash="e" * 64,
         risk_state_hash=state_hash or hash_account_risk_state(state),
         identity_verified=True, orders_complete=True, fills_complete=True,
@@ -62,7 +62,7 @@ def _setup(path):
         ),
     )
     current = coordinator.get_state(scope)[1]
-    state = replace(current, pending_orders=0, pending_exposure=0.0, current_exposure=250.0)
+    state = replace(current, pending_orders=0, pending_exposure=0.0)
     return coordinator, repo, scope, state
 
 

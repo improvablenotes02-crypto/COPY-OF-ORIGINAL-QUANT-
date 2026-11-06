@@ -206,3 +206,23 @@ def test_session_scope_mismatch_fails_before_exchange_observation(tmp_path):
         )
     assert len(coordinator.list_pending_reservations(scope)) == 1
     repo.close()
+
+
+def test_filled_order_stays_pending_without_terminalizing_submission_journal(tmp_path):
+    coordinator, repo, scope, session, reconciled = _setup(
+        tmp_path, order_status="filled",
+    )
+    journal = _Journal()
+    result = reconcile_and_settle_pending_reservation(
+        coordinator=coordinator, journal=journal, scope=scope,
+        reservation_id="QE-315", session=session,
+        reconciled_state=reconciled, now_ns=time.time_ns() + 2_000_000_000,
+    )
+    assert result["settled"] is False
+    assert "position state" in result["reason"]
+    assert journal.state == "DISPATCHING"
+    assert len(coordinator.list_pending_reservations(scope)) == 1
+    state = coordinator.get_state(scope)[1]
+    assert state.pending_orders == 1
+    assert state.pending_exposure == 250.0
+    repo.close()

@@ -578,6 +578,11 @@ class SQLiteAccountRiskRepository:
             raise AccountRiskError("reconciliation evidence does not match reservation scope and ID")
         if evidence.risk_state_hash != hash_account_risk_state(reconciled_state):
             raise AccountRiskError("reconciliation evidence does not bind the committed risk state")
+        if evidence.terminal_status != "REJECTED":
+            raise AccountRiskError(
+                "settlement requires a rejected order; executed or cancelled orders need "
+                "independent position reconciliation"
+            )
         if (
             isinstance(expected_revision, bool)
             or not isinstance(expected_revision, int)
@@ -590,7 +595,7 @@ class SQLiteAccountRiskRepository:
             try:
                 row = self._connection.execute(
                     """
-                    SELECT tenant_id, account_id, status
+                    SELECT tenant_id, account_id, status, notional
                     FROM account_risk_reservations WHERE reservation_id = ?
                     """,
                     (reservation_id,),
@@ -598,7 +603,7 @@ class SQLiteAccountRiskRepository:
                 if row is None:
                     self._connection.execute("ROLLBACK")
                     return False
-                tenant_id, account_id, status = row
+                tenant_id, account_id, status, reservation_notional = row
                 if (tenant_id, account_id) != self._key(scope):
                     raise AccountRiskError("reservation scope mismatch")
                 if status != "PENDING":
@@ -610,6 +615,37 @@ class SQLiteAccountRiskRepository:
                 _, current_state = stored
                 if current_state.revision != expected_revision:
                     raise AccountRiskError("stale risk revision during reservation settlement")
+                if (
+                    current_state.pending_orders < 1
+                    or current_state.pending_exposure + 1e-9 < float(reservation_notional)
+                ):
+                    raise AccountRiskError("current risk state cannot cover the pending reservation")
+                expected_pending_orders = current_state.pending_orders - 1
+                expected_pending_exposure = max(
+                    0.0, current_state.pending_exposure - float(reservation_notional)
+                )
+                if (
+                    reconciled_state.pending_orders != expected_pending_orders
+                    or not math.isclose(
+                        reconciled_state.pending_exposure,
+                        expected_pending_exposure,
+                        rel_tol=0.0,
+                        abs_tol=1e-9,
+                    )
+                ):
+                    raise AccountRiskError(
+                        "settlement must release exactly the target pending reservation"
+                    )
+                unchanged_projection = replace(
+                    reconciled_state,
+                    pending_orders=current_state.pending_orders,
+                    pending_exposure=current_state.pending_exposure,
+                )
+                if unchanged_projection != current_state:
+                    raise AccountRiskError(
+                        "rejected-order settlement may only release its own pending reservation; "
+                        "all other risk fields must remain unchanged"
+                    )
                 next_state = replace(reconciled_state, revision=expected_revision + 1)
                 state_data = asdict(next_state)
                 state_data.pop("scope", None)

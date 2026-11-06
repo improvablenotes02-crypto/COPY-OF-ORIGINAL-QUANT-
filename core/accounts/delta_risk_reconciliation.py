@@ -6,6 +6,7 @@ reconciliation evidence required by the persistent risk repository.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -102,6 +103,16 @@ def reconcile_and_settle_pending_reservation(
         )
     ):
         raise AccountRiskError("settlement would alter risk reserved by other pending orders")
+    expected_state = replace(
+        current_state,
+        pending_orders=expected_pending_orders,
+        pending_exposure=max(0.0, expected_pending_exposure),
+    )
+    if reconciled_state != expected_state:
+        raise AccountRiskError(
+            "rejected-order settlement may only release the target pending reservation; "
+            "all other risk fields must remain unchanged"
+        )
 
     snapshot = session.get_account_snapshot()
     if (
@@ -144,6 +155,32 @@ def reconcile_and_settle_pending_reservation(
         "source": "delta-v2-read-only-account-snapshot:fills",
         "complete": True, "snapshot_as_of_ns": fill_time, "fills": fills,
     }
+    matched_orders = [
+        row for row in orders
+        if isinstance(row, dict)
+        and str(row.get("client_order_id", row.get("clientOrderId", ""))).strip() == reservation_id
+    ]
+    if len(matched_orders) > 1:
+        raise AccountRiskError("Delta snapshot contains multiple matching client orders")
+    if len(matched_orders) == 1:
+        observed_status = str(
+            matched_orders[0].get("state", matched_orders[0].get("status", ""))
+        ).strip().upper()
+        terminal_observed = _TERMINAL_STATUS.get(observed_status)
+        if terminal_observed is not None and terminal_observed != "REJECTED":
+            return {
+                "settled": False,
+                "reason": (
+                    "executed, cancelled, or expired orders remain pending until "
+                    "position state is independently reconciled"
+                ),
+                "reconciliation": {
+                    "resolved": False,
+                    "state": observed_status,
+                    "reason": "position reconciliation is not yet implemented",
+                },
+            }
+
     reconciliation = reconcile_delta_submission(
         journal, reservation_id, account_id=scope.provider_account_id,
         order_snapshot=order_snapshot, fill_snapshot=fill_snapshot,
@@ -162,11 +199,6 @@ def reconcile_and_settle_pending_reservation(
             "reconciliation": reconciliation,
         }
 
-    matched_orders = [
-        row for row in orders
-        if isinstance(row, dict)
-        and str(row.get("client_order_id", row.get("clientOrderId", ""))).strip() == reservation_id
-    ]
     if len(matched_orders) != 1:
         raise AccountRiskError("Delta snapshot does not contain exactly one matching client order")
     order = matched_orders[0]
