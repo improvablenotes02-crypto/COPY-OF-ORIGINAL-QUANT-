@@ -136,3 +136,31 @@ jobs:
           tests/test_phase211_central_paper_gate_policy.py
           tests/test_phase213_paper_gate_deployment_profile.py
           -q
+
+  postgres-tenant-isolation:
+    name: PostgreSQL tenant-isolation integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: qe-test-only
+          POSTGRES_DB: quantengine_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d quantengine_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 1, persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install -r requirements.txt
+      - run: python scripts/generate_manifest.py --root . --verify --strict
+      - run: python -m pytest tests/test_postgres_tenant_isolation_phase358.py -q
+        env:
+          QUANTENGINE_TEST_POSTGRES_ADMIN_DSN: postgresql://postgres:qe-test-only@localhost:5432/quantengine_test
+          QUANTENGINE_TEST_POSTGRES_RUNTIME_DSN: postgresql://qe_runtime_phase358:qe_runtime_phase358_test@localhost:5432/quantengine_test
