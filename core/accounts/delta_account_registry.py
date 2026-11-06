@@ -108,6 +108,9 @@ class SQLiteDeltaAccountRepository:
     deployments should inject a durable shared repository implementation.
     """
 
+    # This local SQLite implementation is never production-admissible.
+    production_ready = False
+
     def __init__(self, database: str | Path = ":memory:"):
         self.database = str(database)
         self._lock = threading.RLock()
@@ -398,13 +401,33 @@ class DeltaAccountRegistry:
         encryption_provider: EncryptionProvider,
         *,
         exchange_factory=None,
+        require_production_security: bool = False,
     ):
         if repository is None or encryption_provider is None:
             raise ValueError("repository and encryption_provider are required")
+        if not isinstance(require_production_security, bool):
+            raise ValueError("require_production_security must be a boolean")
         self._repository = repository
         self._encryption_provider = encryption_provider
         self._exchange_factory = exchange_factory
+        self._require_production_security = require_production_security
+        if self._require_production_security:
+            self._assert_production_security_contract()
 
+    def _assert_production_security_contract(self) -> str:
+        """Require explicit production declarations from crypto and storage.
+
+        These declarations are admission gates, not cryptographic attestations.
+        Deployments must separately audit the provider and backing KMS/storage.
+        """
+        provider_ready = getattr(self._encryption_provider, "production_ready", False)
+        provider_algorithm = getattr(self._encryption_provider, "algorithm", None)
+        repository_ready = getattr(self._repository, "production_ready", False)
+        if provider_ready is not True or provider_algorithm != "AES-256-GCM" or repository_ready is not True:
+            raise CredentialVaultError(
+                "production credential security requires an approved AES-256-GCM provider and production-grade repository"
+            )
+        return provider_algorithm
     def register_account(
         self,
         *,
@@ -450,6 +473,7 @@ class DeltaAccountRegistry:
             separators=(",", ":"),
         ).encode("utf-8")
         try:
+            expected_algorithm = self._assert_production_security_contract() if self._require_production_security else None
             envelope = self._encryption_provider.encrypt(
                 plaintext, associated_data=_associated_data(provisional)
             )
@@ -461,6 +485,7 @@ class DeltaAccountRegistry:
             or not envelope.algorithm
             or not isinstance(envelope.ciphertext, bytes)
             or not envelope.ciphertext
+            or (expected_algorithm is not None and envelope.algorithm != expected_algorithm)
         ):
             raise CredentialVaultError("encryption provider returned an invalid ciphertext envelope")
 
@@ -504,6 +529,9 @@ class DeltaAccountRegistry:
             ciphertext=record.ciphertext,
         )
         try:
+            expected_algorithm = self._assert_production_security_contract() if self._require_production_security else None
+            if expected_algorithm is not None and record.algorithm != expected_algorithm:
+                raise ValueError("credential algorithm does not match production policy")
             plaintext = self._encryption_provider.decrypt(
                 envelope, associated_data=_associated_data(record)
             )
