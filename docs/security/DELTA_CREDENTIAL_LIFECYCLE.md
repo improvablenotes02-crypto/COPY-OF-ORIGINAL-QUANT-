@@ -3,11 +3,20 @@
 ## Current behavior
 
 The account registry encrypts credentials before persistence and creates a read-only
-exchange client when a session is opened. The returned session retains that client.
-Deleting an account removes its persisted registry row; it does **not** revoke a
-credential at Delta, and it does not invalidate an exchange client that was already
-constructed. A caller holding an existing session may continue making the methods
-exposed by that read-only facade until the client or process is shut down.
+exchange client when a session is opened. Before each exposed exchange operation, the
+session re-reads its account record and checks that its scope, credential envelope,
+and update generation still match the record used to create the client. Deleting the
+account, binding/changing its provider identity, or changing its credential record
+therefore causes the next operation to fail closed. A repository read failure also
+fails closed. This check can invalidate sessions across processes only when the
+injected repository itself is shared and provides sufficiently fresh reads; the
+included SQLite repository is local development/test storage.
+
+This is a check-before-use guard, **not an atomic distributed lease**. If deletion or
+rotation races after the authorization check but before or during an exchange request,
+that already-started request may complete. The next operation will be rejected. Strong
+revocation requires a server-side lease/generation protocol with defined consistency
+and in-flight request handling, plus venue-side API-key revocation.
 
 Credential replacement is not currently implemented as an atomic rotation operation.
 Do not treat deleting and re-registering an account as a safe rotation procedure.
@@ -18,10 +27,12 @@ Do not treat deleting and re-registering an account as a safe rotation procedure
    update. Encrypt the new key pair with authenticated associated data bound to the
    tenant, internal account ID, venue, region, environment, and credential version.
    Preserve audit evidence without retaining plaintext.
-2. **Session invalidation:** add server-side session leases with an account credential
-   generation. Check the generation before every exchange operation. A rotation or
-   deletion increments the generation so stale sessions fail closed. This must work
-   across processes; an in-memory registry is insufficient.
+2. **Session invalidation:** the current implementation performs a repository-backed
+   preflight check before each operation and rejects stale sessions. Upgrade this to
+   server-side session leases with a monotonic account credential generation and
+   explicitly defined in-flight request semantics. A rotation or deletion must
+   invalidate stale sessions across processes; a check-before-use alone cannot cancel
+   an operation that has already passed its check.
 3. **Venue-side revocation:** separately revoke the old API key in the Delta account
    security settings/API workflow. Local deletion cannot revoke a venue credential.
 4. **Failure handling:** if persistence, KMS, or invalidation is unavailable, do not
