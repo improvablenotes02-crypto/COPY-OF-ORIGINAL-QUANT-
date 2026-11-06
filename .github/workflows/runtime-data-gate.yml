@@ -117,6 +117,7 @@ jobs:
           tests/test_delta_credential_audit_hash_chain_phase347.py
           tests/test_delta_credential_key_rewrap_phase348.py
           tests/test_delta_credential_rewrap_concurrency_phase349.py
+          tests/test_delta_credential_rewrap_session_revocation_phase350.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py
           tests/test_delta_order_history_phase264.py
