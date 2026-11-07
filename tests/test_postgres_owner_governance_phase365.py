@@ -43,3 +43,40 @@ def test_member_requires_approval_and_rejection_is_terminal(service):
     service.submit_credential(actor_id="member-2",tenant_id="tenant-a",credential_id="cred-2",account_id="acct-2",fingerprint="d"*64)
     service.decide_credential(actor_id="owner-1",tenant_id="tenant-a",credential_id="cred-2",approve=False)
     with pytest.raises(GovernanceConflictError): service.decide_credential(actor_id="owner-1",tenant_id="tenant-a",credential_id="cred-2",approve=True)
+
+
+def test_delta_approval_adapter_uses_exact_postgres_tuple_and_live_revocation(service):
+    from core.accounts.delta_credential_approval import (
+        OwnerGovernanceDeltaCredentialApprovalProvider,
+    )
+    repository = service._repository
+    provider = OwnerGovernanceDeltaCredentialApprovalProvider(repository)
+    service.submit_credential(
+        actor_id="owner-1", tenant_id="tenant-a", credential_id="credential-delta",
+        account_id="delta-account", fingerprint="e" * 64,
+    )
+    assert not provider.is_approved(
+        tenant_id="tenant-a", account_id="delta-account", fingerprint="e" * 64
+    )
+    service.decide_credential(
+        actor_id="owner-1", tenant_id="tenant-a",
+        credential_id="credential-delta", approve=True,
+    )
+    assert provider.is_approved(
+        tenant_id="tenant-a", account_id="delta-account", fingerprint="e" * 64
+    )
+    assert not provider.is_approved(
+        tenant_id="tenant-b", account_id="delta-account", fingerprint="e" * 64
+    )
+    assert not provider.is_approved(
+        tenant_id="tenant-a", account_id="other-account", fingerprint="e" * 64
+    )
+    assert not provider.is_approved(
+        tenant_id="tenant-a", account_id="delta-account", fingerprint="f" * 64
+    )
+    service.revoke_credential(
+        actor_id="owner-1", tenant_id="tenant-a", credential_id="credential-delta"
+    )
+    assert not provider.is_approved(
+        tenant_id="tenant-a", account_id="delta-account", fingerprint="e" * 64
+    )

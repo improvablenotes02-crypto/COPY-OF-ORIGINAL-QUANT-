@@ -110,3 +110,69 @@ def test_provider_never_claims_production_readiness():
     repository, _governance, provider = setup()
     assert provider.production_ready is False
     repository.close()
+
+
+def test_governance_adapter_is_live_runtime_admission_gate():
+    from core.accounts.delta_account_registry import (
+        CiphertextEnvelope, CredentialVaultError, DeltaAccountRegistry,
+        SQLiteDeltaAccountRepository, delta_credential_fingerprint,
+    )
+    from core.accounts.delta_credential_approval import (
+        OwnerGovernanceDeltaCredentialApprovalProvider,
+    )
+
+    class Crypto:
+        def encrypt(self, plaintext, *, associated_data):
+            import hashlib
+            tag = hashlib.sha256(associated_data).digest()[:16]
+            return CiphertextEnvelope("test-key", "TEST-ONLY", tag + bytes(x ^ 165 for x in plaintext))
+        def decrypt(self, envelope, *, associated_data):
+            import hashlib
+            tag = hashlib.sha256(associated_data).digest()[:16]
+            if not envelope.ciphertext.startswith(tag):
+                raise ValueError("context mismatch")
+            return bytes(x ^ 165 for x in envelope.ciphertext[16:])
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        def get_balance(self): return {"success": True}
+        def close(self): pass
+
+    governance_repo, governance, _unused = setup()
+    accounts = SQLiteDeltaAccountRepository()
+    try:
+        fingerprint = delta_credential_fingerprint("delta-key", "delta-secret")
+        meta = DeltaAccountRegistry(
+            accounts, Crypto(), exchange_factory=Client,
+        ).register_account(
+            tenant_id="tenant-a", label="runtime", region="INDIA",
+            environment="SANDBOX", api_key="delta-key", api_secret="delta-secret",
+        )
+        governance.submit_credential(
+            actor_id="owner-1", tenant_id="tenant-a", credential_id="credential-runtime",
+            account_id=meta.account_id, fingerprint=fingerprint,
+        )
+        provider = OwnerGovernanceDeltaCredentialApprovalProvider(governance_repo)
+        registry = DeltaAccountRegistry(
+            accounts, Crypto(), exchange_factory=Client,
+            credential_approval_provider=provider,
+        )
+        with pytest.raises(CredentialVaultError, match="not owner-approved"):
+            registry.open_read_only_session(tenant_id="tenant-a", account_id=meta.account_id)
+        governance.decide_credential(
+            actor_id="owner-1", tenant_id="tenant-a",
+            credential_id="credential-runtime", approve=True,
+        )
+        session = registry.open_read_only_session(
+            tenant_id="tenant-a", account_id=meta.account_id
+        )
+        assert session.get_balance() == {"success": True}
+        governance.revoke_credential(
+            actor_id="owner-1", tenant_id="tenant-a", credential_id="credential-runtime"
+        )
+        with pytest.raises(CredentialVaultError, match="no longer authorized"):
+            session.get_balance()
+        session.close()
+    finally:
+        accounts.close()
+        governance_repo.close()
