@@ -47,3 +47,8 @@ No queue transitions, automatic replay, exactly-once claim, or live authorizatio
 ## Cross-platform verification correction
 
 The Windows inventory gate exposed a mismatch between successful backup creation and read-only backup verification. File identity now uses Python's no-follow filesystem stat identity on both Windows and POSIX and rejects unavailable/zero inode identifiers. SQLite verification evaluates each Windows URI candidate independently and accepts only a candidate whose full integrity, schema and semantic checks pass; a syntactically successful open of the wrong/empty database no longer prevents trying the alternate URI. Both paths remain read-only, and inability to establish identity or verify a healthy database still fails closed. The existing Windows inventory regression is the acceptance gate for this correction.
+
+
+## Inventory rejection diagnostics
+
+The bounded backup inventory now records explicit rejection categories when a candidate changes during the post-verification identity check or when the verified receipt size does not match the final file metadata. This keeps rejected candidates fail-closed while making cross-platform inventory failures diagnosable without exposing file contents or credentials.

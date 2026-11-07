@@ -272,9 +272,11 @@ class SQLiteBackgroundJobMaintenance:
                     identity=lambda st:(st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns)
                     if not __import__("stat").S_ISREG(after.st_mode) or identity(before)!=identity(after):
                         rejected+=1
+                        reasons["changed_during_verification"]=reasons.get("changed_during_verification",0)+1
                         continue
                     if receipt.size_bytes!=after.st_size or receipt.size_bytes>max_total_bytes-verified_bytes:
                         rejected+=1
+                        reasons["receipt_size_mismatch"]=reasons.get("receipt_size_mismatch",0)+1
                         truncated=True
                         break
                     results.append(receipt)
