@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import math
 import json
 import sqlite3
 import threading
@@ -16,6 +17,12 @@ import time
 import uuid
 from pathlib import Path
 from typing import Callable
+
+from core.accounts.request_tenant_authorization import (
+    AuthenticatedPrincipal,
+    SessionStatusValidator,
+    TrustedPrincipalSource,
+)
 
 
 class GovernanceError(RuntimeError):
@@ -256,7 +263,135 @@ class OwnerGovernance:
         return record is not None and record.status=="APPROVED"
 
     @property
+    def storage_ready(self):
+        """Whether the persistence adapter meets its declared storage contract."""
+        return (
+            getattr(self._repository, "production_ready", False) is True
+            and getattr(self._repository, "durable_shared_storage", False) is True
+            and getattr(self._repository, "tenant_isolation_enforced", False) is True
+        )
+
+    @property
     def production_ready(self):
-        return getattr(self._repository,"production_ready",False) is True and getattr(
-            self._repository,"durable_shared_storage",False) is True and getattr(
-            self._repository,"tenant_isolation_enforced",False) is True
+        """The actor-id facade is internal and never request-facing/production-ready."""
+        return False
+
+
+class AuthenticatedOwnerGovernance:
+    """Request-facing owner governance facade bound to a trusted principal.
+
+    The caller cannot supply an actor_id. Identity, tenant membership, token
+    expiry, and session activity are derived from injected trusted services.
+    """
+
+    def __init__(
+        self,
+        governance: OwnerGovernance,
+        principal_source: TrustedPrincipalSource,
+        session_validator: SessionStatusValidator,
+        *,
+        clock: Callable[[], float] = time.time,
+    ):
+        if governance is None:
+            raise ValueError("owner governance service is required")
+        if not callable(getattr(principal_source, "current_principal", None)):
+            raise ValueError("trusted principal source is required")
+        if not callable(getattr(session_validator, "is_session_active", None)):
+            raise ValueError("session status validator is required")
+        self._governance = governance
+        self._principal_source = principal_source
+        self._session_validator = session_validator
+        self._clock = clock
+
+    def _identity(self, tenant_id: str) -> tuple[str, str]:
+        tenant = OwnerGovernance._text(tenant_id, "tenant_id")
+        try:
+            principal = self._principal_source.current_principal()
+            if not isinstance(principal, AuthenticatedPrincipal):
+                raise ValueError("authenticated principal missing")
+            if (
+                not isinstance(principal.subject_id, str)
+                or not principal.subject_id.strip()
+                or not isinstance(principal.session_id, str)
+                or not principal.session_id.strip()
+                or not isinstance(principal.tenant_ids, frozenset)
+                or any(
+                    not isinstance(item, str) or not item.strip()
+                    for item in principal.tenant_ids
+                )
+                or isinstance(principal.expires_at_epoch, bool)
+                or not isinstance(principal.expires_at_epoch, (int, float))
+                or not math.isfinite(principal.expires_at_epoch)
+            ):
+                raise ValueError("authenticated principal is malformed")
+            now = self._clock()
+            if (
+                isinstance(now, bool)
+                or not isinstance(now, (int, float))
+                or not math.isfinite(now)
+                or principal.expires_at_epoch <= now
+                or tenant not in principal.tenant_ids
+            ):
+                raise ValueError("authenticated principal is expired or out of scope")
+            if self._session_validator.is_session_active(principal) is not True:
+                raise ValueError("authenticated session is inactive")
+            return tenant, principal.subject_id
+        except Exception:
+            raise OwnerAuthorizationError(
+                "authenticated tenant principal required"
+            ) from None
+
+    def invite_member(self, *, tenant_id, subject_id, permissions=()):
+        tenant, actor = self._identity(tenant_id)
+        self._governance.invite_member(
+            actor_id=actor,
+            tenant_id=tenant,
+            subject_id=subject_id,
+            permissions=permissions,
+        )
+
+    def decide_member(self, *, tenant_id, subject_id, approve, permissions=()):
+        tenant, actor = self._identity(tenant_id)
+        self._governance.decide_member(
+            actor_id=actor,
+            tenant_id=tenant,
+            subject_id=subject_id,
+            approve=approve,
+            permissions=permissions,
+        )
+
+    def submit_credential(
+        self, *, tenant_id, credential_id, account_id, fingerprint
+    ):
+        tenant, actor = self._identity(tenant_id)
+        self._governance.submit_credential(
+            actor_id=actor,
+            tenant_id=tenant,
+            credential_id=credential_id,
+            account_id=account_id,
+            fingerprint=fingerprint,
+        )
+
+    def decide_credential(self, *, tenant_id, credential_id, approve):
+        tenant, actor = self._identity(tenant_id)
+        self._governance.decide_credential(
+            actor_id=actor,
+            tenant_id=tenant,
+            credential_id=credential_id,
+            approve=approve,
+        )
+
+    def credential_is_approved(self, *, tenant_id, credential_id):
+        tenant, _actor = self._identity(tenant_id)
+        return self._governance.credential_is_approved(
+            tenant_id=tenant,
+            credential_id=credential_id,
+        )
+
+    @property
+    def production_ready(self):
+        return (
+            getattr(self._principal_source, "production_ready", False) is True
+            and getattr(self._session_validator, "production_ready", False) is True
+            and self._governance.storage_ready is True
+        )

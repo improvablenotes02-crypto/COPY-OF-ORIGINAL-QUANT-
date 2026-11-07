@@ -1,4 +1,8 @@
-"""Phase 365 PostgreSQL owner-governance repository."""
+"""Phase 365 PostgreSQL owner-governance repository.
+
+The transaction-local tenant GUC is caller-settable; this adapter does not yet
+provide database-authenticated tenant isolation.
+"""
 from __future__ import annotations
 from contextlib import contextmanager
 import hashlib, json, uuid
@@ -6,10 +10,10 @@ from typing import Iterator
 from core.accounts.owner_governance import CredentialApproval, GovernanceConflictError, Membership
 
 class PostgreSQLOwnerGovernanceRepository:
-    """Durable tenant-RLS repository; not an identity provider or credential vault."""
+    """Persistence only; RLS context is not a database-authenticated identity."""
     production_ready = False
     durable_shared_storage = True
-    tenant_isolation_enforced = True
+    tenant_isolation_enforced = False
     def __init__(self, dsn: str, *, connect_timeout: int = 5):
         if not isinstance(dsn,str) or not dsn.strip(): raise ValueError("PostgreSQL DSN is required")
         if isinstance(connect_timeout,bool) or not isinstance(connect_timeout,int) or not 1 <= connect_timeout <= 60: raise ValueError("invalid connect_timeout")
