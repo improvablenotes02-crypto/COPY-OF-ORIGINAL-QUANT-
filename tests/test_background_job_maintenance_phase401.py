@@ -58,3 +58,46 @@ def test_phase404_failed_backup_validation_removes_private_temp_file(tmp_path,mo
   with pytest.raises(RuntimeError,match="integrity"):ops.create_backup(target)
  assert not target.exists()
  assert not list(tmp_path.glob(".qe-job-backup-*"))
+
+ 
+def test_phase405_duplicate_queue_timestamps_do_not_hide_corrupt_identity(tmp_path):
+ store,ops=setup(tmp_path)
+ with bind_authenticated_principal(principal()):store.enqueue(principal(),"tenant-a")
+ c=sqlite3.connect(store._path)
+ try:
+  c.execute("UPDATE qe_background_jobs SET created_at=10,expires_at=20")
+  second=c.execute("SELECT job_id FROM qe_background_jobs ORDER BY rowid DESC LIMIT 1").fetchone()[0]
+  c.execute("UPDATE qe_background_jobs SET tenant_ids_json='[]' WHERE job_id=?",(second,));c.commit()
+ finally:c.close()
+ with bind_authenticated_principal(principal()):report=ops.verify_source()
+ assert not report["healthy"] and "background_job_identity_invariant_failed" in report["problems"]
+
+def test_phase406_malformed_timestamp_fails_closed_without_type_error(tmp_path):
+ store,ops=setup(tmp_path);c=sqlite3.connect(store._path)
+ try:c.execute("UPDATE qe_background_jobs SET expires_at='not-a-number'");c.commit()
+ finally:c.close()
+ with bind_authenticated_principal(principal()):report=ops.verify_source()
+ assert not report["healthy"] and "background_job_timestamp_or_state_invalid" in report["problems"]
+
+def test_phase407_restore_drill_binds_expected_state_counts(tmp_path):
+ store,ops=setup(tmp_path);backup=tmp_path/"source.sqlite3";restored=tmp_path/"restored.sqlite3"
+ with bind_authenticated_principal(principal()):
+  receipt=ops.create_backup(backup)
+  assert ops.restore_drill(backup,restored,expected_sha256=receipt.sha256,expected_state_counts={"PENDING":1}).verified
+  with pytest.raises(RuntimeError,match="state-count"):
+   ops.restore_drill(backup,tmp_path/"wrong.sqlite3",expected_sha256=receipt.sha256,expected_state_counts={"FAILED":1})
+ assert not (tmp_path/"wrong.sqlite3").exists()
+
+def test_phase408_restore_drill_rechecks_expected_counts_after_restore(tmp_path,monkeypatch):
+ store,ops=setup(tmp_path);backup=tmp_path/"source.sqlite3";restored=tmp_path/"restored.sqlite3"
+ with bind_authenticated_principal(principal()):receipt=ops.create_backup(backup)
+ original=ops.verify_backup;calls={"count":0}
+ def tampered(path,*,expected_sha256,expected_state_counts=None):
+  calls["count"]+=1
+  if calls["count"]==2:raise RuntimeError("state-count verification failed after restore")
+  return original(path,expected_sha256=expected_sha256,expected_state_counts=expected_state_counts)
+ monkeypatch.setattr(ops,"verify_backup",tampered)
+ with bind_authenticated_principal(principal()):
+  with pytest.raises(RuntimeError,match="after restore"):
+   ops.restore_drill(backup,restored,expected_sha256=receipt.sha256,expected_state_counts={"PENDING":1})
+ assert not restored.exists() and not list(tmp_path.glob(".qe-job-restore-*"))

@@ -4,3 +4,7 @@
 - **403:** Add a spawned independent-process race test proving only one process can publish a shared backup destination; the other receives no-clobber collision.
 - **404:** Inject backup validation failure and assert temporary artifacts are removed and no destination is published.
 No queue transitions, automatic replay, exactly-once claim, or live authorization are introduced. SQLite remains local single-host maintenance and production readiness remains false.
+- **405:** Validate each job's principal snapshot from the same row, eliminating ambiguous timestamp-based identity lookups when jobs share timestamps.
+- **406:** Validate all numeric timestamps and principal expiry before comparisons; malformed SQLite values fail closed without leaking a type error.
+- **407:** Bind restore drills to expected queue-state counts at source verification and after isolated restore.
+- **408:** Inject post-restore count-verification failure and assert no restore destination or private temporary artifact is left behind.
