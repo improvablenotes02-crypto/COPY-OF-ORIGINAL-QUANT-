@@ -184,3 +184,5 @@ jobs:
         run: python -m pytest tests/test_postgres_authenticated_tenant_phase370.py -q
         env:
           QUANTENGINE_TEST_POSTGRES_ADMIN_DSN: postgresql://postgres:qe-test-only@localhost:5432/quantengine_test
+      - name: Certify tenant-bound repository routing and identity checks
+        run: python -m pytest tests/test_postgres_tenant_connection_phase373.py -q

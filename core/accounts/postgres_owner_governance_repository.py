@@ -88,3 +88,21 @@ class PostgreSQLOwnerGovernanceRepository:
     def audit_events(self,tenant):
         with self._connection(tenant) as c: rows=c.execute("SELECT * FROM public.qe_governance_audit WHERE tenant_id=%s ORDER BY occurred_at_ns,event_id",(tenant,)).fetchall()
         return [dict(row) for row in rows]
+
+
+class AuthenticatedPostgreSQLOwnerGovernanceRepository(PostgreSQLOwnerGovernanceRepository):
+    """Owner-governance repository bound to a trusted tenant-specific DB login."""
+    production_ready = False
+    durable_shared_storage = True
+    tenant_isolation_enforced = True
+
+    def __init__(self, dsn_resolver, *, connect_timeout: int = 5, connect_factory=None):
+        from core.accounts.postgres_tenant_connection import TenantBoundPostgreSQLConnection
+        self._tenant_connection = TenantBoundPostgreSQLConnection(dsn_resolver, connect_timeout=connect_timeout, connect_factory=connect_factory)
+
+    @contextmanager
+    def _connection(self, tenant: str) -> Iterator[object]:
+        try:
+            with self._tenant_connection.connect(tenant) as connection: yield connection
+        except (ValueError, GovernanceConflictError, PermissionError): raise
+        except Exception: raise RuntimeError("PostgreSQL owner-governance operation failed") from None

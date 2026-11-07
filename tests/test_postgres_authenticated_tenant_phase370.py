@@ -68,8 +68,8 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
                 db.execute("SELECT set_config('quantengine.tenant_id','tenant-b',true)")
                 assert db.execute("SELECT account_id FROM public.delta_accounts").fetchall() == [("acct-a",)]
                 assert db.execute("SELECT subject_id FROM public.qe_memberships").fetchall() == [("member-a",)]
-                with db.transaction():
-                    with pytest.raises(psycopg.Error):
+                with pytest.raises(psycopg.Error):
+                    with db.transaction():
                         db.execute(
                             "INSERT INTO public.delta_accounts "
                             "(account_id,tenant_id,venue,region,environment,label,key_id,algorithm,ciphertext,"
@@ -81,6 +81,19 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
             assert db.execute("SELECT public.qe_authenticated_tenant_id()").fetchone()[0] == "tenant-b"
             assert db.execute("SELECT account_id FROM public.delta_accounts").fetchall() == [("acct-b",)]
             assert db.execute("SELECT subject_id FROM public.qe_memberships").fetchall() == [("member-b",)]
+
+        from core.accounts.postgres_delta_account_repository import AuthenticatedPostgreSQLDeltaAccountRepository
+        from core.accounts.postgres_owner_governance_repository import AuthenticatedPostgreSQLOwnerGovernanceRepository
+        tenant_a_resolver = lambda tenant: _dsn(ROLE_A, PASSWORD_A)
+        delta_repo = AuthenticatedPostgreSQLDeltaAccountRepository(tenant_a_resolver)
+        assert delta_repo.get("tenant-a", "acct-a").account_id == "acct-a"
+        assert delta_repo.get("tenant-a", "acct-b") is None
+        with pytest.raises(Exception):
+            delta_repo.get("tenant-b", "acct-b")
+        governance_repo = AuthenticatedPostgreSQLOwnerGovernanceRepository(tenant_a_resolver)
+        assert governance_repo.membership("tenant-a", "member-a").subject_id == "member-a"
+        with pytest.raises(RuntimeError, match="operation failed"):
+            governance_repo.membership("tenant-b", "member-b")
     finally:
         with psycopg.connect(ADMIN, autocommit=True) as db:
             db.execute("DELETE FROM public.qe_tenant_login_map WHERE login_role IN (%s,%s)", (ROLE_A, ROLE_B))
