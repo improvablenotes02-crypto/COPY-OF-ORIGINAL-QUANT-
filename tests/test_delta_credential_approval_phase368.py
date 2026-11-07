@@ -80,8 +80,8 @@ def test_revocation_and_ambiguous_duplicate_rows_fail_closed():
         actor_id="owner-1", tenant_id="tenant-a",
         credential_id="credential-a", approve=True,
     )
-    repository.decide_credential(
-        "tenant-a", "credential-a", "REVOKED", "owner-1", 11
+    governance.revoke_credential(
+        actor_id="owner-1", tenant_id="tenant-a", credential_id="credential-a"
     )
     assert not provider.is_approved(
         tenant_id="tenant-a", account_id="account-a", fingerprint="a" * 64

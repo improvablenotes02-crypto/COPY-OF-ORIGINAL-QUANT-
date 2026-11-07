@@ -189,6 +189,18 @@ class SQLiteOwnerGovernanceRepository:
         return CredentialApproval(row["tenant_id"],row["credential_id"],row["subject_id"],
             row["account_id"],row["fingerprint"],row["status"],row["created_at_ns"],row["updated_at_ns"])
 
+    def revoke_credential(self, tenant, credential, actor, now):
+        """Revoke a previously approved credential as an audited one-way transition."""
+        with self._lock, self._db:
+            cur = self._db.execute(
+                "UPDATE qe_credential_approvals SET status='REVOKED',updated_at_ns=? "
+                "WHERE tenant_id=? AND credential_id=? AND status='APPROVED'",
+                (now, tenant, credential),
+            )
+            if cur.rowcount != 1:
+                raise GovernanceConflictError("credential is not approved")
+            self._audit(tenant, actor, "CREDENTIAL_REVOKED", credential, now)
+
     def credentials_for_account_fingerprint(self, tenant, account, fingerprint):
         """Return every exact credential tuple match; callers must reject ambiguity."""
         with self._lock:
@@ -272,6 +284,15 @@ class OwnerGovernance:
         self._repository.decide_credential(
             self._text(tenant_id,"tenant_id"),self._text(credential_id,"credential_id"),
             "APPROVED" if approve else "REJECTED",actor_id,self._clock())
+
+    def revoke_credential(self, *, actor_id, tenant_id, credential_id):
+        self._owner_only(actor_id)
+        self._repository.revoke_credential(
+            self._text(tenant_id, "tenant_id"),
+            self._text(credential_id, "credential_id"),
+            actor_id,
+            self._clock(),
+        )
 
     def credential_is_approved(self, *, tenant_id, credential_id):
         record=self._repository.credential(self._text(tenant_id,"tenant_id"),
@@ -395,6 +416,12 @@ class AuthenticatedOwnerGovernance:
             tenant_id=tenant,
             credential_id=credential_id,
             approve=approve,
+        )
+
+    def revoke_credential(self, *, tenant_id, credential_id):
+        tenant, actor = self._identity(tenant_id)
+        self._governance.revoke_credential(
+            actor_id=actor, tenant_id=tenant, credential_id=credential_id
         )
 
     def credential_is_approved(self, *, tenant_id, credential_id):

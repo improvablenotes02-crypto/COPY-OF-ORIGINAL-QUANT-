@@ -65,6 +65,15 @@ class PostgreSQLOwnerGovernanceRepository:
         with self._connection(tenant) as c: row=c.execute("SELECT * FROM public.qe_credential_approvals WHERE tenant_id=%s AND credential_id=%s",(tenant,credential)).fetchone()
         if row is None:return None
         return CredentialApproval(row["tenant_id"],row["credential_id"],row["subject_id"],row["account_id"],row["fingerprint"],row["status"],row["created_at_ns"],row["updated_at_ns"])
+    def revoke_credential(self,tenant,credential,actor,now):
+        with self._connection(tenant) as c:
+            cur=c.execute(
+                "UPDATE public.qe_credential_approvals SET status='REVOKED',updated_at_ns=%s "
+                "WHERE tenant_id=%s AND credential_id=%s AND status='APPROVED'",
+                (now,tenant,credential),
+            )
+            if cur.rowcount!=1: raise GovernanceConflictError("credential is not approved")
+            self._audit(c,tenant,actor,"CREDENTIAL_REVOKED",credential,now)
     def credentials_for_account_fingerprint(self,tenant,account,fingerprint):
         """Return every exact credential tuple match; callers must reject ambiguity."""
         with self._connection(tenant) as c:
