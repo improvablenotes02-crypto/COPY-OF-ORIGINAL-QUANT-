@@ -16,11 +16,12 @@ credential approval, rejection, and revocation decisions remain enforced by
 the governance domain service and must never be inferred from tenant membership.
 
 ## Phase 378 — background task identity
-Background work must load a server-authenticated principal envelope, then
-revalidate expiry, membership, and session status immediately before callback
-execution. The runner binds the principal only for the callback scope and
-restores the previous context on success or failure. Never reconstruct a
-principal from task payload fields. A job without trusted identity fails closed.
+Background work passes only an opaque job ID to a server-owned principal
+resolver. The resolver loads the authenticated job envelope; the runner then
+revalidates expiry, membership, and active session immediately before callback
+execution. Callers cannot pass a principal object or tenant-membership set.
+The runner binds the resolved principal only for the callback scope and restores
+the previous context on success or failure. A job without trusted identity fails closed.
 
 ## Deployment boundary
 These phases do not provision tenant login roles, change migration 003 rollout

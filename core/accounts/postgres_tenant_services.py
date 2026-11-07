@@ -5,7 +5,7 @@ Never derive database role names, DSNs, or tenant mappings from request data.
 """
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Protocol
 
 from core.accounts.delta_account_registry import AccountScopeError
 from core.accounts.oidc_tenant_principal import AuthenticatedPrincipal
@@ -161,25 +161,46 @@ class AuthenticatedTenantRepositoryFactory:
         )
 
 
-class TenantBackgroundTaskRunner:
-    """Revalidate a trusted principal and tenant before running a background task.
+class TrustedBackgroundPrincipalResolver(Protocol):
+    """Resolve an opaque server-owned job ID to a verified active principal."""
+    production_ready: bool
 
-    Call only after loading a server-authenticated job envelope. Never construct
-    AuthenticatedPrincipal from task payload fields or client-supplied claims.
+    def resolve_job_principal(self, job_id: str) -> AuthenticatedPrincipal | None:
+        ...
+
+
+class TenantBackgroundTaskRunner:
+    """Revalidate a trusted job identity before running tenant-scoped work.
+
+    The worker passes an opaque job ID, never a principal or tenant membership
+    object. The resolver must load an authenticated server-side job envelope.
     """
     production_ready = False
 
-    def __init__(self, authorizer: RequestScopedTenantAuthorizer):
+    def __init__(
+        self,
+        principal_resolver: TrustedBackgroundPrincipalResolver,
+        authorizer: RequestScopedTenantAuthorizer,
+    ):
+        if not callable(getattr(principal_resolver, "resolve_job_principal", None)):
+            raise ValueError("trusted background principal resolver is required")
         if not isinstance(authorizer, RequestScopedTenantAuthorizer):
             raise ValueError("trusted request-scoped tenant authorizer is required")
+        self._principal_resolver = principal_resolver
         self._authorizer = authorizer
 
-    def run(self, principal: AuthenticatedPrincipal, tenant_id: str, callback, *args, **kwargs):
+    def run(self, job_id: str, tenant_id: str, callback, *args, **kwargs):
         from core.accounts.request_tenant_authorization import bind_authenticated_principal
-        if not isinstance(principal, AuthenticatedPrincipal):
-            raise AccountScopeError("background task principal could not be verified")
+        if not isinstance(job_id, str) or not job_id.strip() or len(job_id) > 256:
+            raise AccountScopeError("background task identity could not be verified")
         if not callable(callback):
             raise ValueError("background task callback must be callable")
+        try:
+            principal = self._principal_resolver.resolve_job_principal(job_id)
+        except Exception:
+            raise AccountScopeError("background task identity could not be verified") from None
+        if not isinstance(principal, AuthenticatedPrincipal):
+            raise AccountScopeError("background task identity could not be verified")
         with bind_authenticated_principal(principal):
             if self._authorizer.authorize_tenant(tenant_id) is not True:
                 raise AccountScopeError("background task tenant is not authorized")

@@ -33,6 +33,14 @@ class _FakeDelta:
     def get(self, tenant, account): self.calls.append((tenant, account)); return None
 
 
+class JobResolver:
+    production_ready = True
+    def __init__(self, resolved=None): self.resolved = resolved
+    def resolve_job_principal(self, job_id):
+        if job_id != "opaque-job-1": return None
+        return self.resolved
+
+
 def factory():
     source = ContextVarPrincipalSource()
     sessions = SessionValidator()
@@ -82,32 +90,33 @@ def test_governance_facade_does_not_confuse_membership_with_owner_role():
 
 def test_background_task_revalidates_tenant_and_session():
     services, _, sessions, _ = factory()
-    runner = TenantBackgroundTaskRunner(services.tenant_authorizer)
-    with bind_authenticated_principal(principal()):
-        assert runner.run(principal(), "tenant-a", lambda x: x + 1, 4) == 5
-        with pytest.raises(AccountScopeError):
-            runner.run(principal(), "tenant-b", lambda: "must not run")
-        sessions.active = False
-        with pytest.raises(AccountScopeError):
-            runner.run(principal(), "tenant-a", lambda: "must not run")
+    runner = TenantBackgroundTaskRunner(JobResolver(principal()), services.tenant_authorizer)
+    assert runner.run("opaque-job-1", "tenant-a", lambda x: x + 1, 4) == 5
+    with pytest.raises(AccountScopeError):
+        runner.run("opaque-job-1", "tenant-b", lambda: "must not run")
+    sessions.active = False
+    with pytest.raises(AccountScopeError):
+        runner.run("opaque-job-1", "tenant-a", lambda: "must not run")
 
 
 def test_background_task_context_is_restored_after_callback_failure():
     services, _, _, _ = factory()
-    runner = TenantBackgroundTaskRunner(services.tenant_authorizer)
+    runner = TenantBackgroundTaskRunner(JobResolver(principal()), services.tenant_authorizer)
     with pytest.raises(RuntimeError, match="task failed"):
-        runner.run(principal(), "tenant-a", lambda: (_ for _ in ()).throw(RuntimeError("task failed")))
+        runner.run("opaque-job-1", "tenant-a", lambda: (_ for _ in ()).throw(RuntimeError("task failed")))
     with pytest.raises(AccountScopeError, match="could not be verified"):
         services.tenant_authorizer.authorize_tenant("tenant-a")
 
 
 def test_background_task_rejects_untrusted_principal_and_callback():
     services, _, _, _ = factory()
-    runner = TenantBackgroundTaskRunner(services.tenant_authorizer)
+    runner = TenantBackgroundTaskRunner(JobResolver(None), services.tenant_authorizer)
     with pytest.raises(AccountScopeError):
-        runner.run(object(), "tenant-a", lambda: None)
+        runner.run("missing-job", "tenant-a", lambda: None)
     with pytest.raises(ValueError):
-        runner.run(principal(), "tenant-a", None)
+        runner.run("opaque-job-1", "tenant-a", None)
+    with pytest.raises(AccountScopeError):
+        runner.run(principal(), "tenant-a", lambda: None)
 
 
 def test_repository_factory_rejects_untrusted_resolver():
