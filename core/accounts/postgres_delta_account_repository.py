@@ -1,8 +1,9 @@
-"""PostgreSQL-backed, tenant-isolated Delta account repository.
+"""PostgreSQL-backed shared Delta account repository.
 
-Connections are created per operation. Tenant context is transaction-local, so
-pooled/reused connections cannot inherit another tenant's scope. The database
-role must be a non-owner, non-superuser role without BYPASSRLS.
+Tenant context is transaction-local, but the custom GUC is set by the same
+runtime role and can be changed by that role. RLS is scoped defense-in-depth,
+not a database-authenticated tenant boundary. This adapter must not claim
+tenant isolation until database identity is bound to tenant identity.
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ class PostgreSQLDeltaAccountRepository:
 
     production_ready = False
     durable_shared_storage = True
-    tenant_isolation_enforced = True
+    tenant_isolation_enforced = False
 
     def __init__(self, dsn: str, *, connect_timeout: int = 5):
         if not isinstance(dsn, str) or not dsn.strip():
@@ -266,3 +267,21 @@ class PostgreSQLDeltaAccountRepository:
             ))
             expected_previous_hash = digest
         return events
+
+
+class AuthenticatedPostgreSQLDeltaAccountRepository(PostgreSQLDeltaAccountRepository):
+    """Delta repository bound to a trusted tenant-specific PostgreSQL login."""
+    production_ready = False
+    durable_shared_storage = True
+    tenant_isolation_enforced = True
+
+    def __init__(self, dsn_resolver, *, connect_timeout: int = 5, connect_factory=None):
+        from core.accounts.postgres_tenant_connection import TenantBoundPostgreSQLConnection
+        self._tenant_connection = TenantBoundPostgreSQLConnection(dsn_resolver, connect_timeout=connect_timeout, connect_factory=connect_factory)
+
+    @contextmanager
+    def _connection(self, tenant_id: str) -> Iterator[object]:
+        try:
+            with self._tenant_connection.connect(tenant_id) as connection: yield connection
+        except (AccountNotFoundError, AccountScopeError, CredentialVaultError, ValueError): raise
+        except Exception: raise CredentialVaultError("PostgreSQL account repository operation failed") from None

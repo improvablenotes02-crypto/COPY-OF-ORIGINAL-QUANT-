@@ -59,15 +59,16 @@ class EncryptionProvider(Protocol):
 
 
 class TenantAuthorizationProvider(Protocol):
-    """Server-side tenant authorization bound to the authenticated request principal.
-
-    Implementations must obtain identity from trusted authentication middleware,
-    never from a caller-controlled tenant_id value alone.
-    """
-
+    """Server-side tenant authorization bound to the authenticated request principal."""
     production_ready: bool
-
     def authorize_tenant(self, tenant_id: str) -> bool:
+        ...
+
+
+class DeltaCredentialApprovalProvider(Protocol):
+    """Owner-governance lookup for an exact account and credential fingerprint."""
+    production_ready: bool
+    def is_approved(self, *, tenant_id: str, account_id: str, fingerprint: str) -> bool:
         ...
 
 
@@ -499,6 +500,17 @@ def _require_text(value: object, name: str, *, max_length: int = 128) -> str:
     return value.strip()
 
 
+def delta_credential_fingerprint(api_key: str, api_secret: str) -> str:
+    """Stable SHA-256 fingerprint over canonical credential JSON."""
+    if not isinstance(api_key, str) or not api_key:
+        raise ValueError("api_key must be non-empty")
+    if not isinstance(api_secret, str) or not api_secret:
+        raise ValueError("api_secret must be non-empty")
+    raw = json.dumps({"api_key": api_key, "api_secret": api_secret},
+                     sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
 def _associated_data(record: EncryptedDeltaAccount) -> bytes:
     scope = {
         "account_id": record.account_id,
@@ -735,6 +747,7 @@ class DeltaAccountRegistry:
         exchange_factory=None,
         require_production_security: bool = False,
         tenant_authorizer: TenantAuthorizationProvider | None = None,
+        credential_approval_provider: DeltaCredentialApprovalProvider | None = None,
     ):
         if repository is None or encryption_provider is None:
             raise ValueError("repository and encryption_provider are required")
@@ -744,6 +757,7 @@ class DeltaAccountRegistry:
         self._encryption_provider = encryption_provider
         self._exchange_factory = exchange_factory
         self._tenant_authorizer = tenant_authorizer
+        self._credential_approval_provider = credential_approval_provider
         self._require_production_security = require_production_security
         self._provider_conformance_verified = False
         self._provider_conformance_provider_id: int | None = None
@@ -773,18 +787,30 @@ class DeltaAccountRegistry:
             getattr(self._tenant_authorizer, "production_ready", False) is True
             and callable(getattr(self._tenant_authorizer, "authorize_tenant", None))
         )
+        approval_provider_ready = (
+            getattr(self._credential_approval_provider, "production_ready", False) is True
+            and callable(getattr(self._credential_approval_provider, "is_approved", None))
+        )
         if (
-            provider_ready is not True
-            or provider_algorithm != "AES-256-GCM"
-            or repository_ready is not True
+            repository_ready is not True
             or durable_shared is not True
             or tenant_isolation is not True
             or not repository_surface
-            or not tenant_authorizer_ready
         ):
             raise CredentialVaultError(
-                "production credential security requires an approved AES-256-GCM provider, "
-                "a durable shared tenant-isolated repository, and a trusted tenant authorization provider"
+                "production credential security requires a durable shared tenant-isolated repository"
+            )
+        if not tenant_authorizer_ready:
+            raise CredentialVaultError(
+                "production credential security requires a trusted tenant authorization provider"
+            )
+        if not approval_provider_ready:
+            raise CredentialVaultError(
+                "production credential security requires an owner credential approval provider"
+            )
+        if provider_ready is not True or provider_algorithm != "AES-256-GCM":
+            raise CredentialVaultError(
+                "production credential security requires an approved AES-256-GCM encryption provider"
             )
         if (
             not self._provider_conformance_verified
@@ -1176,6 +1202,18 @@ class DeltaAccountRegistry:
         except Exception:
             raise CredentialVaultError("Delta credential decryption or validation failed") from None
 
+        fingerprint = delta_credential_fingerprint(payload["api_key"], payload["api_secret"])
+        approval_provider = self._credential_approval_provider
+        approval_required = self._require_production_security or approval_provider is not None
+        def approval_check() -> bool:
+            if not approval_required: return True
+            if approval_provider is None: return False
+            try:
+                return approval_provider.is_approved(tenant_id=tenant, account_id=account, fingerprint=fingerprint) is True
+            except Exception: return False
+        if not approval_check():
+            raise CredentialVaultError("Delta credentials are not owner-approved")
+
         endpoint = delta_environments.resolve_rest_endpoint(
             record.environment, record.region
         )
@@ -1204,7 +1242,7 @@ class DeltaAccountRegistry:
             except AccountScopeError:
                 return False
             current = self._repository.get(tenant, account)
-            if current is None:
+            if current is None or not approval_check():
                 return False
             # Any credential, scope, or metadata generation change invalidates
             # clients created from the prior record. Shared repositories make
