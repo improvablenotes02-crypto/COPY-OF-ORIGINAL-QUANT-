@@ -121,8 +121,8 @@ class SQLiteBackgroundJobMaintenance:
                 raise ValueError("expected state counts must be a non-negative integer mapping")
             if report["state_counts"]!=expected_state_counts:raise RuntimeError("backup state-count verification failed")
         return SQLiteBackupReceipt(path,actual,os.path.getsize(path),True)
-    def restore_drill(self,backup_path,destination,*,expected_sha256,expected_state_counts=None)
-        """396: SQLite restore into an isolated temp DB, then atomic no-clobber publication."""
+    def restore_drill(self,backup_path,destination,*,expected_sha256,expected_state_counts=None):
+        """396/407/408: isolated restore, bind expected state counts, and roll back failed publication."""
         self._owner()
         source_receipt=self.verify_backup(backup_path,expected_sha256=expected_sha256,expected_state_counts=expected_state_counts)
         target=self._safe_destination(destination,self._store._path)
@@ -130,6 +130,7 @@ class SQLiteBackgroundJobMaintenance:
             raise ValueError("restore destination must differ from backup")
         fd,temp=tempfile.mkstemp(prefix=".qe-job-restore-",dir=os.path.dirname(target))
         os.close(fd)
+        published=False
         try:
             source=sqlite3.connect(source_receipt.path)
             restored=sqlite3.connect(temp,isolation_level=None)
@@ -148,6 +149,11 @@ class SQLiteBackgroundJobMaintenance:
             if not report["healthy"]:
                 raise RuntimeError("restored database integrity verification failed")
             os.link(temp,target)
+            published=True
+            # Keep the private hard link until the published path passes the same
+            # digest, schema, integrity and expected-state checks as the source.
+            digest=self._digest(target)
+            receipt=self.verify_backup(target,expected_sha256=digest,expected_state_counts=expected_state_counts)
             os.unlink(temp)
             if os.name!="nt":
                 directory_fd=os.open(os.path.dirname(target),os.O_RDONLY)
@@ -155,8 +161,18 @@ class SQLiteBackgroundJobMaintenance:
                     os.fsync(directory_fd)
                 finally:
                     os.close(directory_fd)
-            digest=self._digest(target)
-            return self.verify_backup(target,expected_sha256=digest,expected_state_counts=expected_state_counts)
+            return receipt
+        except Exception:
+            if published and os.path.exists(temp) and os.path.exists(target):
+                try:
+                    left,right=os.stat(temp),os.stat(target)
+                    if (left.st_dev,left.st_ino)==(right.st_dev,right.st_ino):
+                        os.unlink(target)
+                except OSError:
+                    # Preserve the original verification error; an operator can
+                    # inspect the remaining destination if filesystem cleanup fails.
+                    pass
+            raise
         finally:
             if os.path.exists(temp):
                 os.unlink(temp)
