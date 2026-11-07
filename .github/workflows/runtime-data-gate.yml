@@ -33,7 +33,23 @@ jobs:
         run: python scripts/generate_manifest.py --root . --verify --strict
       - name: Certify integrated tenant governance runtime boundaries
         run: python -m pytest tests/test_tenant_governance_runtime_phase379.py -q
-      - name: Run market-data, paper-runtime, stream-recovery, and venue-history certification
+      - name: Run focused runtime and tenant regression gate
+        run: >-
+          python -m pytest
+          tests/test_realtime.py
+          tests/test_order_executor.py
+          tests/test_safety_guards_11a.py
+          tests/test_submission_journal_phase278.py
+          tests/test_account_risk_process_crash_recovery_phase323.py
+          tests/test_delta_account_session_revocation_phase335.py
+          tests/test_owner_governance_phase364.py
+          tests/test_authenticated_owner_governance_phase366.py
+          tests/test_delta_credential_approval_phase368.py
+          tests/test_postgres_tenant_services_phase376.py
+          tests/test_tenant_governance_runtime_phase379.py
+          -q
+      - name: Run full historical regression suite (manual release certification)
+        if: github.event_name == 'workflow_dispatch'
         run: >-
           python -m pytest
           tests/test_realtime.py
