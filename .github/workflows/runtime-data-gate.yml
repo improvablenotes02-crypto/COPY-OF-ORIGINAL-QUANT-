@@ -1,4 +1,4 @@
-name: Runtime data-gate certification
+name: Runtime data-gate certification # phase-420 cross-platform diagnostic rerun
 
 on:
   push:
