@@ -792,18 +792,25 @@ class DeltaAccountRegistry:
             and callable(getattr(self._credential_approval_provider, "is_approved", None))
         )
         if (
-            provider_ready is not True
-            or provider_algorithm != "AES-256-GCM"
-            or repository_ready is not True
+            repository_ready is not True
             or durable_shared is not True
             or tenant_isolation is not True
             or not repository_surface
-            or not tenant_authorizer_ready
-            or not approval_provider_ready
         ):
             raise CredentialVaultError(
-                "production credential security requires approved encryption, durable tenant-isolated storage, "
-                "trusted tenant authorization, and owner credential approval"
+                "production credential security requires a durable shared tenant-isolated repository"
+            )
+        if not tenant_authorizer_ready:
+            raise CredentialVaultError(
+                "production credential security requires a trusted tenant authorization provider"
+            )
+        if not approval_provider_ready:
+            raise CredentialVaultError(
+                "production credential security requires an owner credential approval provider"
+            )
+        if provider_ready is not True or provider_algorithm != "AES-256-GCM":
+            raise CredentialVaultError(
+                "production credential security requires an approved AES-256-GCM encryption provider"
             )
         if (
             not self._provider_conformance_verified

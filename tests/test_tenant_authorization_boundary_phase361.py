@@ -7,7 +7,10 @@ from core.accounts.delta_account_registry import (
     DeltaAccountRegistry,
 )
 from tests.test_credential_provider_conformance_phase353 import _TestOnlyConformingProvider
-from tests.test_delta_credential_provider_admission_phase356 import _ProductionDeclaredTestRepository
+from tests.test_delta_credential_provider_admission_phase356 import (
+    _AllowOwnerApproval,
+    _ProductionDeclaredTestRepository,
+)
 
 
 class _TenantAuthorizer:
@@ -30,6 +33,7 @@ def _registry(tmp_path, authorizer):
         _TestOnlyConformingProvider(),
         require_production_security=True,
         tenant_authorizer=authorizer,
+        credential_approval_provider=_AllowOwnerApproval(),
     )
     return repository, registry
 
