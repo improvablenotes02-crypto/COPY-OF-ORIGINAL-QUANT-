@@ -204,3 +204,45 @@ def test_phase416_health_reports_inventory_failure_as_degraded(tmp_path):
     assert report["verified_backup_count"]==0
     assert report["automatic_replay_enabled"] is False
     assert report["production_ready"] is False
+
+
+def test_phase417_readonly_backup_uri_verifies_on_host_platform(tmp_path):
+    _,ops=setup(tmp_path);backup=tmp_path/"portable.sqlite3"
+    with bind_authenticated_principal(principal()):
+        receipt=ops.create_backup(backup)
+        verified=ops.verify_backup(backup,expected_sha256=receipt.sha256)
+    assert verified.verified and verified.sha256==receipt.sha256
+
+
+def test_phase418_inventory_exposes_sanitized_rejection_categories(tmp_path):
+    _,ops=setup(tmp_path);folder=tmp_path/"diagnostics";folder.mkdir()
+    (folder/"broken.sqlite3").write_bytes(b"not sqlite")
+    with bind_authenticated_principal(principal()):
+        report=ops.backup_inventory_report(folder)
+    assert report["verified_count"]==0 and report["rejected_count"]==1
+    assert report["rejection_reasons"]
+    assert all(isinstance(k,str) and isinstance(v,int) for k,v in report["rejection_reasons"].items())
+
+
+def test_phase419_inventory_excludes_hardlink_alias_of_live_source_database(tmp_path):
+    store,ops=setup(tmp_path);folder=tmp_path/"alias";folder.mkdir()
+    alias=folder/"source.sqlite3"
+    try:
+        os.link(store._path,alias)
+    except (OSError,NotImplementedError):
+        pytest.skip("hard links unavailable on this platform")
+    with bind_authenticated_principal(principal()):
+        report=ops.backup_inventory_report(folder)
+    assert report["verified_count"]==0
+    assert report["rejection_reasons"].get("source_database_alias")==1
+
+
+def test_phase420_inventory_rejects_symlink_directory_root(tmp_path):
+    _,ops=setup(tmp_path);folder=tmp_path/"real";folder.mkdir();link=tmp_path/"alias"
+    try:
+        link.symlink_to(folder,target_is_directory=True)
+    except (OSError,NotImplementedError):
+        pytest.skip("directory symlinks unavailable on this platform")
+    with bind_authenticated_principal(principal()):
+        with pytest.raises(ValueError,match="non-symlink"):
+            ops.backup_inventory_report(link)

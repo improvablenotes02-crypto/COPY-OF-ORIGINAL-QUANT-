@@ -117,8 +117,9 @@ class SQLiteBackgroundJobMaintenance:
         if any(ch not in "0123456789abcdef" for ch in expected_sha256.lower()):
             raise ValueError("backup SHA-256 digest must be hexadecimal")
         # Open backups read-only: verification must never create journals or mutate evidence.
-        from pathlib import Path
-        uri=Path(path).as_uri()+"?mode=ro"
+        # Normalize Windows drive paths into SQLite file URIs consistently.
+        from urllib.parse import quote
+        uri="file:"+quote(path.replace(chr(92),"/"),safe="/:")+"?mode=ro"
         c=sqlite3.connect(uri,uri=True)
         try:
             c.execute("PRAGMA query_only=ON")
@@ -195,8 +196,12 @@ class SQLiteBackgroundJobMaintenance:
             raise ValueError("max_total_bytes must be a positive integer")
         if not isinstance(directory,(str,os.PathLike)): raise ValueError("backup directory required")
         root=os.path.abspath(os.fspath(directory))
-        if os.path.islink(root) or not os.path.isdir(root): raise ValueError("backup directory must be a regular directory")
-        results=[];candidates=0;rejected=0;truncated=False;scanned=0;verified_bytes=0
+        root_stat=os.lstat(root)
+        if not __import__("stat").S_ISDIR(root_stat.st_mode): raise ValueError("backup directory must be a regular non-symlink directory")
+        results=[];candidates=0;rejected=0;truncated=False;scanned=0;verified_bytes=0;reasons={}
+        source_stat=None
+        try: source_stat=os.lstat(self._store._path)
+        except OSError: pass
         # Stop while iterating; do not materialize an attacker-controlled directory.
         with os.scandir(root) as entries:
             for entry in entries:
@@ -209,7 +214,10 @@ class SQLiteBackgroundJobMaintenance:
                 try:
                     before=entry.stat(follow_symlinks=False)
                     if not __import__("stat").S_ISREG(before.st_mode):
-                        rejected+=1
+                        rejected+=1;reasons["not_regular_file"]=reasons.get("not_regular_file",0)+1
+                        continue
+                    if source_stat is not None and (before.st_dev,before.st_ino)==(source_stat.st_dev,source_stat.st_ino):
+                        rejected+=1;reasons["source_database_alias"]=reasons.get("source_database_alias",0)+1
                         continue
                     if before.st_size<1 or before.st_size>max_total_bytes-verified_bytes:
                         rejected+=1
@@ -228,11 +236,14 @@ class SQLiteBackgroundJobMaintenance:
                         break
                     results.append(receipt)
                     verified_bytes+=receipt.size_bytes
-                except (OSError,RuntimeError,ValueError,sqlite3.DatabaseError):
+                except (OSError,RuntimeError,ValueError,sqlite3.DatabaseError) as exc:
                     rejected+=1
+                    reason=type(exc).__name__
+                    reasons[reason]=reasons.get(reason,0)+1
         return {"receipts":tuple(results),"candidate_count":candidates,"verified_count":len(results),
                 "rejected_count":rejected,"truncated":truncated,"verified_bytes":verified_bytes,
-                "scanned_entry_count":scanned,"max_total_bytes":max_total_bytes}
+                "scanned_entry_count":scanned,"max_total_bytes":max_total_bytes,
+                "rejection_reasons":dict(sorted(reasons.items()))}
 
     def backup_inventory(self,directory,*,max_entries=500,max_total_bytes=256*1024*1024):
         """398/409: compatibility tuple of verified backups with a bounded scan."""
@@ -246,7 +257,7 @@ class SQLiteBackgroundJobMaintenance:
             inventory=self.backup_inventory_report(directory,max_entries=max_entries,max_total_bytes=max_total_bytes)
             inventory_error=False
         except (OSError,RuntimeError,ValueError,sqlite3.DatabaseError):
-            inventory={"verified_count":0,"verified_bytes":0,"candidate_count":0,"rejected_count":0,"truncated":True}
+            inventory={"verified_count":0,"verified_bytes":0,"candidate_count":0,"rejected_count":0,"truncated":True,"rejection_reasons":{}}
             inventory_error=True
         return {"source_healthy":source["healthy"],"source_state_counts":source["state_counts"],
                 "verified_backup_count":inventory["verified_count"],"verified_backup_bytes":inventory["verified_bytes"],

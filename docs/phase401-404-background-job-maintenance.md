@@ -18,3 +18,8 @@ No queue transitions, automatic replay, exactly-once claim, or live authorizatio
 - **414:** Add a positive total-byte verification budget; oversized candidates are rejected and the report marks the scan truncated rather than spending unbounded I/O.
 - **415:** Compare no-follow file identity, size and modification time before and after verification; reject candidates that change during the scan. This narrows, but does not eliminate, filesystem TOCTOU risk.
 - **416:** Make maintenance health explicitly degraded when inventory cannot be read; report a sanitized error flag and never disguise the failure as a healthy empty inventory.
+
+- **417:** Normalize Windows drive paths into SQLite read-only file URIs while preserving mode=ro and query-only verification.
+- **418:** Add sanitized per-category rejection counts so operators can distinguish malformed backups, filesystem errors and non-regular entries without exposing paths or exception text.
+- **419:** Exclude hard-link aliases of the live queue database from backup inventory; a live mutable database is not accepted as a backup artifact.
+- **420:** Validate the inventory root using a no-follow filesystem stat and reject symlinked directory roots.
