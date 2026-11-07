@@ -68,14 +68,15 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
                 db.execute("SELECT set_config('quantengine.tenant_id','tenant-b',true)")
                 assert db.execute("SELECT account_id FROM public.delta_accounts").fetchall() == [("acct-a",)]
                 assert db.execute("SELECT subject_id FROM public.qe_memberships").fetchall() == [("member-a",)]
-                with pytest.raises(psycopg.Error):
-                    db.execute(
-                        "INSERT INTO public.delta_accounts "
-                        "(account_id,tenant_id,venue,region,environment,label,key_id,algorithm,ciphertext,"
-                        "created_at_ns,updated_at_ns,credential_generation) "
-                        "VALUES ('spoof','tenant-b','delta','INDIA','SANDBOX','spoof','k1','AES-256-GCM',%s,2,2,1)",
-                        (b"synthetic",),
-                    )
+                with db.transaction():
+                    with pytest.raises(psycopg.Error):
+                        db.execute(
+                            "INSERT INTO public.delta_accounts "
+                            "(account_id,tenant_id,venue,region,environment,label,key_id,algorithm,ciphertext,"
+                            "created_at_ns,updated_at_ns,credential_generation) "
+                            "VALUES ('spoof','tenant-b','delta','INDIA','SANDBOX','spoof','k1','AES-256-GCM',%s,2,2,1)",
+                            (b"synthetic",),
+                        )
         with psycopg.connect(_dsn(ROLE_B, PASSWORD_B)) as db:
             assert db.execute("SELECT public.qe_authenticated_tenant_id()").fetchone()[0] == "tenant-b"
             assert db.execute("SELECT account_id FROM public.delta_accounts").fetchall() == [("acct-b",)]
