@@ -33,6 +33,8 @@ jobs:
         run: python scripts/generate_manifest.py --root . --verify --strict
       - name: Certify integrated tenant governance runtime boundaries
         run: python -m pytest tests/test_tenant_governance_runtime_phase379.py -q
+      - name: Certify owner-reviewed background job operations (phases 385-388)
+        run: python -m pytest tests/test_background_job_operations_phase385.py -q
       - name: Certify durable tenant background jobs (phases 382-384)
         run: python -m pytest tests/test_tenant_background_jobs_phase382.py -q
       - name: Run focused runtime and tenant regression gate
