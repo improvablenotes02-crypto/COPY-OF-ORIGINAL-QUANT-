@@ -38,3 +38,7 @@ No queue transitions, automatic replay, exactly-once claim, or live authorizatio
 - **430:** Reject direct backup verification of hard-link aliases to the live queue database, closing the gap between inventory filtering and the public verification boundary.
 - **431:** Prove a digest mismatch is rejected before SQLite is opened, avoiding unnecessary parsing of untrusted backup contents.
 - **432:** Verify inventory and health summaries never expose low-level SQLite exception text or private filesystem paths; replay remains disabled.
+- **433:** Add stable file-identity comparison, using Windows volume serial/file index rather than relying on st_ino behavior across Windows filesystem providers.
+- **434:** Route direct backup verification and inventory hard-link exclusion through the same stable identity primitive.
+- **435:** Fail closed when source/candidate file identity cannot be established at the direct verification boundary.
+- **436:** Verify inventory rejects candidates whose file identity cannot be established and exposes only a sanitized filesystem rejection category.

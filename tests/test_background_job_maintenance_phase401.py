@@ -397,3 +397,51 @@ def test_phase432_inventory_and_health_never_expose_windows_uri_or_exception_tex
     assert health["automatic_replay_enabled"] is False
     assert health["production_ready"] is False
     assert "customer.sqlite3" not in repr(health)
+
+
+def test_phase433_file_identity_distinguishes_files_and_detects_hardlinks(tmp_path):
+    first=tmp_path/"first.bin";second=tmp_path/"second.bin";first.write_bytes(b"same")
+    second.write_bytes(b"same")
+    identity=SQLiteBackgroundJobMaintenance._file_identity
+    assert identity(first)!=identity(second)
+    alias=tmp_path/"alias.bin"
+    try:
+        os.link(first,alias)
+    except (OSError,NotImplementedError):
+        pytest.skip("hard links unavailable on this platform")
+    assert identity(first)==identity(alias)
+
+
+def test_phase434_direct_verification_uses_stable_file_identity(tmp_path,monkeypatch):
+    store,ops=setup(tmp_path);alias=tmp_path/"identity-alias.sqlite3"
+    alias.write_bytes(b"placeholder")
+    source_identity=ops._file_identity(store._path)
+    monkeypatch.setattr(ops,"_file_identity",lambda path:source_identity)
+    with bind_authenticated_principal(principal()):
+        with pytest.raises(ValueError,match="alias the live source"):
+            ops.verify_backup(alias,expected_sha256=ops._digest(alias))
+
+
+def test_phase435_file_identity_errors_fail_closed_at_verification_boundary(tmp_path,monkeypatch):
+    _,ops=setup(tmp_path);backup=tmp_path/"backup.sqlite3"
+    with bind_authenticated_principal(principal()):receipt=ops.create_backup(backup)
+    def unavailable(_):raise OSError("file identity unavailable")
+    monkeypatch.setattr(ops,"_file_identity",unavailable)
+    with bind_authenticated_principal(principal()):
+        with pytest.raises(OSError,match="file identity unavailable"):
+            ops.verify_backup(backup,expected_sha256=receipt.sha256)
+
+
+def test_phase436_inventory_uses_stable_identity_and_reports_identity_failure(tmp_path,monkeypatch):
+    _,ops=setup(tmp_path);folder=tmp_path/"identity-inventory";folder.mkdir()
+    with bind_authenticated_principal(principal()):ops.create_backup(folder/"valid.sqlite3")
+    real=ops._file_identity
+    def fail_candidate(path):
+        if str(path).endswith("valid.sqlite3"):raise OSError("identity unavailable")
+        return real(path)
+    monkeypatch.setattr(ops,"_file_identity",fail_candidate)
+    with bind_authenticated_principal(principal()):
+        report=ops.backup_inventory_report(folder)
+    assert report["verified_count"]==0
+    assert report["rejected_count"]==1
+    assert report["rejection_reasons"].get("filesystem_error")==1

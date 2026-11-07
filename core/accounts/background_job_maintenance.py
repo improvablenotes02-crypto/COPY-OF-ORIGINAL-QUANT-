@@ -79,6 +79,44 @@ class SQLiteBackgroundJobMaintenance:
         if os.path.lexists(target):raise FileExistsError("destination already exists")
         return target
     @staticmethod
+    def _file_identity(path):
+        """Return a stable volume/file identifier, including on Windows."""
+        if os.name!="nt":
+            info=os.stat(path,follow_symlinks=False)
+            return (info.st_dev,info.st_ino)
+        import ctypes
+        from ctypes import wintypes
+        class _FILETIME(ctypes.Structure):
+            _fields_=[("dwLowDateTime",wintypes.DWORD),("dwHighDateTime",wintypes.DWORD)]
+        class _BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
+            _fields_=[("dwFileAttributes",wintypes.DWORD),("ftCreationTime",_FILETIME),
+                ("ftLastAccessTime",_FILETIME),("ftLastWriteTime",_FILETIME),
+                ("dwVolumeSerialNumber",wintypes.DWORD),("nFileSizeHigh",wintypes.DWORD),
+                ("nFileSizeLow",wintypes.DWORD),("nNumberOfLinks",wintypes.DWORD),
+                ("nFileIndexHigh",wintypes.DWORD),("nFileIndexLow",wintypes.DWORD)]
+        kernel32=ctypes.WinDLL("kernel32",use_last_error=True)
+        create=kernel32.CreateFileW
+        create.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,
+            wintypes.LPVOID,wintypes.DWORD,wintypes.DWORD,wintypes.HANDLE]
+        create.restype=wintypes.HANDLE
+        get_info=kernel32.GetFileInformationByHandle
+        get_info.argtypes=[wintypes.HANDLE,ctypes.POINTER(_BY_HANDLE_FILE_INFORMATION)]
+        get_info.restype=wintypes.BOOL
+        close=kernel32.CloseHandle
+        close.argtypes=[wintypes.HANDLE]
+        close.restype=wintypes.BOOL
+        handle=create(os.fspath(path),0,0x1|0x2|0x4,None,3,0,None)
+        if handle==ctypes.c_void_p(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            info=_BY_HANDLE_FILE_INFORMATION()
+            if not get_info(handle,ctypes.byref(info)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            index=(int(info.nFileIndexHigh)<<32)|int(info.nFileIndexLow)
+            return (int(info.dwVolumeSerialNumber),index)
+        finally:
+            close(handle)
+    @staticmethod
     def _digest(path):
         h=hashlib.sha256()
         with open(path,"rb") as f:
@@ -117,11 +155,7 @@ class SQLiteBackgroundJobMaintenance:
         if not stat.S_ISREG(before.st_mode):raise ValueError("backup must be a regular non-symlink file")
         # A hard link to the live queue is not a backup, even when its digest
         # and schema are valid. Reject it at the direct verification boundary.
-        try:
-            source_stat=os.lstat(self._store._path)
-        except OSError:
-            source_stat=None
-        if source_stat is not None and (before.st_dev,before.st_ino)==(source_stat.st_dev,source_stat.st_ino):
+        if self._file_identity(path)==self._file_identity(self._store._path):
             raise ValueError("backup must not alias the live source database")
         actual=self._digest(path)
         if not hmac.compare_digest(actual,expected_sha256.lower()):raise RuntimeError("backup SHA-256 mismatch")
@@ -233,9 +267,7 @@ class SQLiteBackgroundJobMaintenance:
         root_stat=os.lstat(root)
         if not __import__("stat").S_ISDIR(root_stat.st_mode): raise ValueError("backup directory must be a regular non-symlink directory")
         results=[];candidates=0;rejected=0;truncated=False;scanned=0;verified_bytes=0;reasons={}
-        source_stat=None
-        try: source_stat=os.lstat(self._store._path)
-        except OSError: pass
+        source_identity=self._file_identity(self._store._path)
         # Stop while iterating; do not materialize an attacker-controlled directory.
         with os.scandir(root) as entries:
             for entry in entries:
@@ -250,14 +282,14 @@ class SQLiteBackgroundJobMaintenance:
                     if not __import__("stat").S_ISREG(before.st_mode):
                         rejected+=1;reasons["not_regular_file"]=reasons.get("not_regular_file",0)+1
                         continue
-                    if source_stat is not None and (before.st_dev,before.st_ino)==(source_stat.st_dev,source_stat.st_ino):
+                    path=os.path.join(root,entry.name)
+                    if self._file_identity(path)==source_identity:
                         rejected+=1;reasons["source_database_alias"]=reasons.get("source_database_alias",0)+1
                         continue
                     if before.st_size<1 or before.st_size>max_total_bytes-verified_bytes:
                         rejected+=1
                         truncated=True
                         break
-                    path=os.path.join(root,entry.name)
                     receipt=self.verify_backup(path,expected_sha256=self._digest(path))
                     after=os.lstat(path)
                     identity=lambda st:(st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns)
