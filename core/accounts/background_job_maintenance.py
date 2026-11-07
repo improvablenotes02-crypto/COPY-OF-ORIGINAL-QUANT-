@@ -134,7 +134,9 @@ class SQLiteBackgroundJobMaintenance:
         # as a different/empty database on some builds. Prefer the drive-letter
         # URI first so a successful-but-wrong open cannot prevent the fallback.
         if os.name=="nt":
-            uri_candidates=["file:"+Path(path).as_posix()+"?mode=ro",Path(path).as_uri()+"?mode=ro"]
+            from urllib.parse import quote
+            drive_uri="file:"+quote(Path(path).as_posix(),safe="/:")+"?mode=ro"
+            uri_candidates=[drive_uri,Path(path).as_uri()+"?mode=ro"]
         else:
             uri_candidates=[Path(path).as_uri()+"?mode=ro"]
         c=None
