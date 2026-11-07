@@ -18,7 +18,8 @@ def test_phase386_stale_inventory_bounded_and_read_only(tmp_path):
  st,src,op,j=setup(tmp_path)
  with bind_authenticated_principal(p()):r=op.stale_running(before_epoch=999,limit=3)
  assert len(r)==1 and r[0]["job_id"]==j and st.status(j)=="RUNNING"
- with bind_authenticated_principal(p()):\n  with pytest.raises(ValueError):op.stale_running(before_epoch=999,limit=501)
+ with bind_authenticated_principal(p()):
+  with pytest.raises(ValueError):op.stale_running(before_epoch=999,limit=501)
 def test_phase387_review_never_changes_or_replays_job(tmp_path):
  st,src,op,j=setup(tmp_path)
  with bind_authenticated_principal(p()):
