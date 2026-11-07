@@ -2,7 +2,7 @@
 import pytest
 from core.accounts.delta_account_registry import AccountScopeError
 from core.accounts.oidc_tenant_principal import AuthenticatedPrincipal
-from core.accounts.owner_governance import SQLiteOwnerGovernanceRepository
+from core.accounts.owner_governance import OwnerAuthorizationError, SQLiteOwnerGovernanceRepository
 from core.accounts.request_tenant_authorization import ContextVarPrincipalSource, bind_authenticated_principal
 import core.accounts.tenant_governance_runtime as runtime_module
 
@@ -40,7 +40,7 @@ def test_phase379_composes_owner_only_governance_over_tenant_guard(runtime):
         service.owner_governance.invite_member(tenant_id="tenant-a", subject_id="member-1", permissions=("read",))
         service.owner_governance.decide_member(tenant_id="tenant-a", subject_id="member-1", approve=True, permissions=("read",))
     with bind_authenticated_principal(principal("member-1")):
-        with pytest.raises(Exception, match="owner authorization required"):
+        with pytest.raises(OwnerAuthorizationError, match="owner authorization required"):
             service.owner_governance.decide_member(tenant_id="tenant-a", subject_id="member-1", approve=False)
     assert repositories[0].membership("tenant-a", "member-1").status == "APPROVED"
     assert service.production_ready is False
@@ -48,18 +48,40 @@ def test_phase379_composes_owner_only_governance_over_tenant_guard(runtime):
 def test_phase379_rejects_cross_tenant_before_governance_storage(runtime):
     service, _source, _sessions, repositories = runtime
     with bind_authenticated_principal(principal()):
-        with pytest.raises(Exception, match="authenticated tenant principal required"):
+        with pytest.raises(OwnerAuthorizationError, match="authenticated tenant principal required"):
             service.owner_governance.invite_member(tenant_id="tenant-b", subject_id="member-2")
     assert repositories[0].membership("tenant-b", "member-2") is None
 
-def test_phase380_credential_approval_uses_same_tenant_guard_and_owner_workflow(runtime):
+def test_phase380_owner_invites_member_and_approves_members_credential(runtime):
     service, _source, _sessions, _repositories = runtime
     fingerprint = "a" * 64
     with bind_authenticated_principal(principal()):
-        service.owner_governance.submit_credential(tenant_id="tenant-a", credential_id="cred-1", account_id="acct-1", fingerprint=fingerprint)
-        assert not service.credential_approval_provider.is_approved(tenant_id="tenant-a", account_id="acct-1", fingerprint=fingerprint)
-        service.owner_governance.decide_credential(tenant_id="tenant-a", credential_id="cred-1", approve=True)
-        assert service.credential_approval_provider.is_approved(tenant_id="tenant-a", account_id="acct-1", fingerprint=fingerprint)
+        service.owner_governance.invite_member(
+            tenant_id="tenant-a", subject_id="member-1", permissions=("read",)
+        )
+        service.owner_governance.decide_member(
+            tenant_id="tenant-a", subject_id="member-1",
+            approve=True, permissions=("read",),
+        )
+    with bind_authenticated_principal(principal("member-1")):
+        service.owner_governance.submit_credential(
+            tenant_id="tenant-a", credential_id="cred-1",
+            account_id="acct-1", fingerprint=fingerprint,
+        )
+        with pytest.raises(OwnerAuthorizationError, match="owner authorization required"):
+            service.owner_governance.decide_credential(
+                tenant_id="tenant-a", credential_id="cred-1", approve=True
+            )
+        assert not service.credential_approval_provider.is_approved(
+            tenant_id="tenant-a", account_id="acct-1", fingerprint=fingerprint
+        )
+    with bind_authenticated_principal(principal()):
+        service.owner_governance.decide_credential(
+            tenant_id="tenant-a", credential_id="cred-1", approve=True
+        )
+        assert service.credential_approval_provider.is_approved(
+            tenant_id="tenant-a", account_id="acct-1", fingerprint=fingerprint
+        )
 
 def test_phase380_credential_lookup_without_trusted_context_fails_closed(runtime):
     service, _source, _sessions, _repositories = runtime
@@ -81,7 +103,7 @@ def test_phase381_session_revocation_blocks_governance_and_credential_reads(runt
     service, _source, sessions, _repositories = runtime
     sessions.active = False
     with bind_authenticated_principal(principal()):
-        with pytest.raises(Exception, match="authenticated tenant principal required"):
+        with pytest.raises(OwnerAuthorizationError, match="authenticated tenant principal required"):
             service.owner_governance.invite_member(tenant_id="tenant-a", subject_id="blocked")
         with pytest.raises(AccountScopeError):
             service.credential_approval_provider.is_approved(tenant_id="tenant-a", account_id="acct-a", fingerprint="c" * 64)
