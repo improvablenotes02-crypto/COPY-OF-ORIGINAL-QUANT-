@@ -60,6 +60,28 @@ class SQLiteBackgroundJobOperations:
             if c.in_transaction:c.execute("ROLLBACK")
             raise
         finally:c.close()
+    def health_snapshot(self,*,stale_before_epoch,limit=100,require_valid_audit=True):
+        """Owner-only diagnostic snapshot; never mutates or replays queue work."""
+        self._owner()
+        if not isinstance(require_valid_audit,bool):raise ValueError("audit requirement must be boolean")
+        stale=self.stale_running(before_epoch=stale_before_epoch,limit=limit)
+        c=self.store._connect()
+        try:
+            rows=c.execute("SELECT state,COUNT(*) FROM qe_background_jobs GROUP BY state").fetchall()
+        finally:c.close()
+        counts={state:count for state,count in rows}
+        for state in ("PENDING","RUNNING","SUCCEEDED","FAILED","EXPIRED"):
+            counts.setdefault(state,0)
+        audit_valid=self.audit_chain_valid()
+        if require_valid_audit and not audit_valid:
+            raise RuntimeError("background job audit integrity check failed")
+        return {
+            "counts":counts,
+            "stale_running":tuple({"job_id":r["job_id"],"claimed_at":r["claimed_at"],"expires_at":r["expires_at"]} for r in stale),
+            "audit_chain_valid":audit_valid,
+            "automatic_replay_enabled":False,
+            "production_ready":False,
+        }
     def audit_chain_valid(self):
         self._owner();c=self.store._connect()
         try:rows=c.execute("SELECT sequence,job_id,tenant_id,actor_id,disposition,reason,occurred_at,previous_hash,event_hash FROM qe_background_job_reviews ORDER BY sequence").fetchall()
