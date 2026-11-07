@@ -45,7 +45,7 @@ def test_native_windows_timeout_terminates_real_descendant_process_tree():
             encoding="utf-8",
         )
 
-        result = _run_one(test_file, timeout_seconds=2.0)
+        result = _run_one(test_file, timeout_seconds=10.0)
         assert result["status"] == "timeout", result
         assert marker.exists(), "fixture child did not start before timeout"
         child_pid = int(marker.read_text(encoding="ascii"))

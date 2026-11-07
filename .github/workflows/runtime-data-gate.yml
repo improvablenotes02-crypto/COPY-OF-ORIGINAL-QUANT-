@@ -35,6 +35,8 @@ jobs:
         run: python -m pytest tests/test_tenant_governance_runtime_phase379.py -q
       - name: Certify owner-reviewed background job operations and process safety (phases 385-392)
         run: python -m pytest tests/test_background_job_operations_phase385.py -q
+      - name: Certify background-job integrity and recovery (phases 393-396)
+        run: python -m pytest tests/test_background_job_maintenance_phase393.py -q
       - name: Certify durable tenant background jobs (phases 382-384)
         run: python -m pytest tests/test_tenant_background_jobs_phase382.py -q
       - name: Run focused runtime and tenant regression gate
