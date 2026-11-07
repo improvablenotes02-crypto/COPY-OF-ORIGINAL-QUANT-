@@ -7,6 +7,7 @@ from core.accounts.owner_governance import AuthenticatedOwnerGovernance, OwnerGo
 from core.accounts.postgres_owner_governance_repository import AuthenticatedPostgreSQLOwnerGovernanceRepository
 from core.accounts.postgres_tenant_services import TenantGovernanceRepository
 from core.accounts.request_tenant_authorization import RequestScopedTenantAuthorizer, SessionStatusValidator, TrustedPrincipalSource
+from core.accounts.postgres_tenant_services import TenantBackgroundTaskRunner, TrustedBackgroundJobStore
 
 class AuthenticatedTenantGovernanceRuntime:
     """Compose owner-only governance and credential admission over one tenant guard.
@@ -19,7 +20,8 @@ class AuthenticatedTenantGovernanceRuntime:
                  session_validator: SessionStatusValidator,
                  tenant_dsn_resolver: Callable[[str], str], connect_timeout: int = 5,
                  governance_clock: Callable[[], int] = time.time_ns,
-                 auth_clock: Callable[[], float] = time.time):
+                 auth_clock: Callable[[], float] = time.time,
+                 background_job_store: TrustedBackgroundJobStore | None = None):
         if not isinstance(owner_subject_id, str) or not owner_subject_id.strip():
             raise ValueError("trusted owner identity is required")
         if not callable(tenant_dsn_resolver):
@@ -47,6 +49,8 @@ class AuthenticatedTenantGovernanceRuntime:
         self._credential_approval = OwnerGovernanceDeltaCredentialApprovalProvider(
             self._repository
         )
+        self._background_job_store = background_job_store
+        self._background_runner = TenantBackgroundTaskRunner(background_job_store, self._authorizer) if background_job_store is not None else None
 
     @property
     def owner_governance(self) -> AuthenticatedOwnerGovernance:
@@ -62,6 +66,24 @@ class AuthenticatedTenantGovernanceRuntime:
     def tenant_authorizer(self) -> RequestScopedTenantAuthorizer:
         return self._authorizer
 
+    def enqueue_background_job(self, tenant_id: str, *, ttl_seconds: float = 300.0) -> str:
+        """Create a durable job envelope from the current verified request context."""
+        if self._background_job_store is None:
+            raise RuntimeError("background job store is not configured")
+        try:
+            principal = self._principal_source.current_principal()
+            if self._authorizer.authorize_tenant(tenant_id) is not True:
+                raise ValueError("tenant scope denied")
+            return self._background_job_store.enqueue(principal, tenant_id, ttl_seconds=ttl_seconds)
+        except Exception:
+            raise PermissionError("background task could not be authorized") from None
+
+    def run_background_job(self, job_id: str, callback, *args, **kwargs):
+        """Worker dispatch accepts an opaque job ID and no caller-selected tenant."""
+        if self._background_runner is None:
+            raise RuntimeError("background job store is not configured")
+        return self._background_runner.run(job_id, callback, *args, **kwargs)
+
     @property
     def production_ready(self) -> bool:
         # PostgreSQL adapter remains deliberately non-admissible pending
@@ -73,4 +95,6 @@ class AuthenticatedTenantGovernanceRuntime:
             and getattr(self._repository, "production_ready", False) is True
             and getattr(self._repository, "durable_shared_storage", False) is True
             and getattr(self._repository, "tenant_isolation_enforced", False) is True
+            and self._background_job_store is not None
+            and getattr(self._background_job_store, "production_ready", False) is True
         )
