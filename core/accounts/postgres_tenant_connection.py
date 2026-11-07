@@ -23,11 +23,12 @@ class TenantBoundPostgreSQLConnection:
             dsn = self._dsn_resolver(tenant_id)
             if not isinstance(dsn, str) or not dsn.strip():
                 raise PostgreSQLTenantIdentityError("tenant database identity is unavailable")
+            from psycopg.rows import dict_row
             if self._connect_factory is None:
                 import psycopg
                 connect = psycopg.connect
             else: connect = self._connect_factory
-            with connect(dsn, connect_timeout=self._connect_timeout) as connection:
+            with connect(dsn, connect_timeout=self._connect_timeout, row_factory=dict_row) as connection:
                 with connection.transaction():
                     row = connection.execute("SELECT public.qe_authenticated_tenant_id()").fetchone()
                     actual_tenant = row[0] if row else None
