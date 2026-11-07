@@ -5,7 +5,7 @@ from core.accounts.delta_account_registry import AccountScopeError
 from core.accounts.oidc_tenant_principal import AuthenticatedPrincipal
 from core.accounts.postgres_tenant_services import (
     AuthenticatedTenantRepositoryFactory,
-    TenantBackgroundTaskRunner,
+    TenantBackgroundTaskRunner, SQLiteBackgroundJobStore,
 )
 from core.accounts.request_tenant_authorization import (
     ContextVarPrincipalSource, RequestScopedTenantAuthorizer,
@@ -31,14 +31,6 @@ class _FakeGovernance:
 class _FakeDelta:
     def __init__(self): self.calls = []
     def get(self, tenant, account): self.calls.append((tenant, account)); return None
-
-
-class JobResolver:
-    production_ready = True
-    def __init__(self, resolved=None): self.resolved = resolved
-    def resolve_job_principal(self, job_id):
-        if job_id != "opaque-job-1": return None
-        return self.resolved
 
 
 def factory():
@@ -88,35 +80,46 @@ def test_governance_facade_does_not_confuse_membership_with_owner_role():
         assert callable(repo.decide_credential)
 
 
-def test_background_task_revalidates_tenant_and_session():
+def test_background_task_revalidates_tenant_and_session(tmp_path):
     services, _, sessions, _ = factory()
-    runner = TenantBackgroundTaskRunner(JobResolver(principal()), services.tenant_authorizer)
-    assert runner.run("opaque-job-1", "tenant-a", lambda x: x + 1, 4) == 5
-    with pytest.raises(AccountScopeError):
-        runner.run("opaque-job-1", "tenant-b", lambda: "must not run")
+    store = SQLiteBackgroundJobStore(str(tmp_path / "jobs.sqlite3"), clock=lambda: 100.0)
+    runner = TenantBackgroundTaskRunner(store, services.tenant_authorizer)
+    job = store.enqueue(principal(), "tenant-a")
+    assert runner.run(job, lambda x: x + 1, 4) == 5
+
+    scoped_job = store.enqueue(principal(), "tenant-a")
+    assert runner.run(
+        scoped_job, lambda: services.tenant_authorizer.authorize_tenant("tenant-b")
+    ) is False
+
+    revoked_job = store.enqueue(principal(), "tenant-a")
     sessions.active = False
     with pytest.raises(AccountScopeError):
-        runner.run("opaque-job-1", "tenant-a", lambda: "must not run")
+        runner.run(revoked_job, lambda: "must not run")
 
 
-def test_background_task_context_is_restored_after_callback_failure():
+def test_background_task_context_is_restored_after_callback_failure(tmp_path):
     services, _, _, _ = factory()
-    runner = TenantBackgroundTaskRunner(JobResolver(principal()), services.tenant_authorizer)
+    store = SQLiteBackgroundJobStore(str(tmp_path / "jobs.sqlite3"), clock=lambda: 100.0)
+    runner = TenantBackgroundTaskRunner(store, services.tenant_authorizer)
+    job = store.enqueue(principal(), "tenant-a")
     with pytest.raises(RuntimeError, match="task failed"):
-        runner.run("opaque-job-1", "tenant-a", lambda: (_ for _ in ()).throw(RuntimeError("task failed")))
+        runner.run(job, lambda: (_ for _ in ()).throw(RuntimeError("task failed")))
     with pytest.raises(AccountScopeError, match="could not be verified"):
         services.tenant_authorizer.authorize_tenant("tenant-a")
 
 
-def test_background_task_rejects_untrusted_principal_and_callback():
+def test_background_task_rejects_untrusted_job_and_callback(tmp_path):
     services, _, _, _ = factory()
-    runner = TenantBackgroundTaskRunner(JobResolver(None), services.tenant_authorizer)
+    store = SQLiteBackgroundJobStore(str(tmp_path / "jobs.sqlite3"), clock=lambda: 100.0)
+    runner = TenantBackgroundTaskRunner(store, services.tenant_authorizer)
+    job = store.enqueue(principal(), "tenant-a")
     with pytest.raises(AccountScopeError):
-        runner.run("missing-job", "tenant-a", lambda: None)
+        runner.run("missing-job", lambda: None)
     with pytest.raises(ValueError):
-        runner.run("opaque-job-1", "tenant-a", None)
+        runner.run(job, None)
     with pytest.raises(AccountScopeError):
-        runner.run(principal(), "tenant-a", lambda: None)
+        runner.run(principal(), lambda: None)
 
 
 def test_repository_factory_rejects_untrusted_resolver():
