@@ -260,7 +260,8 @@ class SQLiteBackgroundJobMaintenance:
                         rejected+=1;reasons["not_regular_file"]=reasons.get("not_regular_file",0)+1
                         continue
                     path=os.path.join(root,entry.name)
-                    if self._file_identity(path)==source_identity:
+                    before_file_identity=self._file_identity(path)
+                    if before_file_identity==source_identity:
                         rejected+=1;reasons["source_database_alias"]=reasons.get("source_database_alias",0)+1
                         continue
                     if before.st_size<1 or before.st_size>max_total_bytes-verified_bytes:
@@ -269,8 +270,11 @@ class SQLiteBackgroundJobMaintenance:
                         break
                     receipt=self.verify_backup(path,expected_sha256=self._digest(path))
                     after=os.lstat(path)
-                    identity=lambda st:(st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns)
-                    if not __import__("stat").S_ISREG(after.st_mode) or identity(before)!=identity(after):
+                    after_file_identity=self._file_identity(path)
+                    if (not __import__("stat").S_ISREG(after.st_mode)
+                            or before_file_identity!=after_file_identity
+                            or before.st_size!=after.st_size
+                            or before.st_mtime_ns!=after.st_mtime_ns):
                         rejected+=1
                         reasons["changed_during_verification"]=reasons.get("changed_during_verification",0)+1
                         continue

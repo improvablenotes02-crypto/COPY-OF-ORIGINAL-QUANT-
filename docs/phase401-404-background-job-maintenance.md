@@ -52,3 +52,8 @@ The Windows inventory gate exposed a mismatch between successful backup creation
 ## Inventory rejection diagnostics
 
 The bounded backup inventory now records explicit rejection categories when a candidate changes during the post-verification identity check or when the verified receipt size does not match the final file metadata. This keeps rejected candidates fail-closed while making cross-platform inventory failures diagnosable without exposing file contents or credentials.
+
+
+## Cross-platform inventory identity comparison
+
+The inventory now compares stable file identities obtained through the same no-follow `os.stat` helper both before and after SQLite verification, while separately checking size and modification time. This avoids comparing Windows `DirEntry.stat` metadata with `os.lstat` metadata from different filesystem query paths. Source-database alias rejection and fail-closed changed-file detection remain in place.
