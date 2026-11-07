@@ -1,8 +1,9 @@
-"""PostgreSQL-backed, tenant-isolated Delta account repository.
+"""PostgreSQL-backed shared Delta account repository.
 
-Connections are created per operation. Tenant context is transaction-local, so
-pooled/reused connections cannot inherit another tenant's scope. The database
-role must be a non-owner, non-superuser role without BYPASSRLS.
+Tenant context is transaction-local, but the custom GUC is set by the same
+runtime role and can be changed by that role. RLS is scoped defense-in-depth,
+not a database-authenticated tenant boundary. This adapter must not claim
+tenant isolation until database identity is bound to tenant identity.
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ class PostgreSQLDeltaAccountRepository:
 
     production_ready = False
     durable_shared_storage = True
-    tenant_isolation_enforced = True
+    tenant_isolation_enforced = False
 
     def __init__(self, dsn: str, *, connect_timeout: int = 5):
         if not isinstance(dsn, str) or not dsn.strip():
