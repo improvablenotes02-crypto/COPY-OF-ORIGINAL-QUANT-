@@ -41,8 +41,7 @@ def test_production_admission_requires_behavioral_provider_conformance(tmp_path)
                 repository,
                 _BrokenProvider(),
                 require_production_security=True,
-        tenant_authorizer=_AllowTenantAuthorizer(),
-        credential_approval_provider=_AllowOwnerApproval(),
+                tenant_authorizer=_AllowTenantAuthorizer(),
                 credential_approval_provider=_AllowOwnerApproval(),
             )
         assert repository.list_for_tenant("tenant-phase356") == []
@@ -78,7 +77,8 @@ def test_replacing_provider_object_invalidates_cached_conformance(tmp_path):
     registry = DeltaAccountRegistry(
         repository, _TestOnlyConformingProvider(),
         require_production_security=True,
-                tenant_authorizer=_AllowTenantAuthorizer(),
+        tenant_authorizer=_AllowTenantAuthorizer(),
+        credential_approval_provider=_AllowOwnerApproval(),
     )
     try:
         registry._encryption_provider = _BrokenProvider()
