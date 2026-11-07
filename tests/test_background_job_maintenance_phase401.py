@@ -246,3 +246,57 @@ def test_phase420_inventory_rejects_symlink_directory_root(tmp_path):
     with bind_authenticated_principal(principal()):
         with pytest.raises(ValueError,match="non-symlink"):
             ops.backup_inventory_report(link)
+
+
+def test_phase421_readonly_backup_uri_is_portable_and_read_only(tmp_path):
+    _,ops=setup(tmp_path);backup=tmp_path/"portable-uri.sqlite3"
+    with bind_authenticated_principal(principal()):
+        receipt=ops.create_backup(backup)
+        verified=ops.verify_backup(backup,expected_sha256=receipt.sha256)
+    assert verified.verified and verified.sha256==receipt.sha256
+
+
+def test_phase422_verification_rejects_metadata_change_during_inspection(tmp_path,monkeypatch):
+    _,ops=setup(tmp_path);backup=tmp_path/"changing.sqlite3"
+    with bind_authenticated_principal(principal()):
+        receipt=ops.create_backup(backup)
+    original=ops._inspect
+    def touch_after_inspect(connection):
+        report=original(connection)
+        current=os.stat(backup)
+        os.utime(backup,ns=(current.st_atime_ns,current.st_mtime_ns+2000000))
+        return report
+    monkeypatch.setattr(ops,"_inspect",touch_after_inspect)
+    with bind_authenticated_principal(principal()):
+        with pytest.raises(RuntimeError,match="changed during verification"):
+            ops.verify_backup(backup,expected_sha256=receipt.sha256)
+
+
+def test_phase423_inventory_rejects_directory_replaced_during_scan(tmp_path,monkeypatch):
+    _,ops=setup(tmp_path);folder=tmp_path/"root";folder.mkdir()
+    with bind_authenticated_principal(principal()):
+        ops.create_backup(folder/"one.sqlite3")
+    original_scandir=os.scandir
+    class ReplaceRootAfterScan:
+        def __enter__(self):
+            self.iterator=original_scandir(folder)
+            return self.iterator.__enter__()
+        def __exit__(self,*args):
+            result=self.iterator.__exit__(*args)
+            os.rename(folder,tmp_path/"old-root")
+            folder.mkdir()
+            return result
+    monkeypatch.setattr(os,"scandir",lambda path: ReplaceRootAfterScan() if os.path.abspath(path)==os.path.abspath(folder) else original_scandir(path))
+    with bind_authenticated_principal(principal()):
+        with pytest.raises(RuntimeError,match="directory changed"):
+            ops.backup_inventory_report(folder)
+
+
+def test_phase424_inventory_rejection_reasons_are_sanitized_categories(tmp_path):
+    _,ops=setup(tmp_path);folder=tmp_path/"sanitized";folder.mkdir()
+    (folder/"broken.sqlite3").write_bytes(b"not sqlite")
+    with bind_authenticated_principal(principal()):
+        report=ops.backup_inventory_report(folder)
+    assert report["rejected_count"]==1
+    assert report["rejection_reasons"].get("invalid_sqlite")==1
+    assert all("/" not in key and "\\" not in key for key in report["rejection_reasons"])

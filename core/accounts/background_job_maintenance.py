@@ -1,6 +1,7 @@
 """Owner-only integrity verification and atomic backup/restore drills for the local job queue."""
 from __future__ import annotations
 from dataclasses import dataclass
+from pathlib import Path
 import hashlib,hmac,os,sqlite3,tempfile
 from core.accounts.request_tenant_authorization import AuthenticatedPrincipal
 _REQUIRED=frozenset({"job_id","tenant_id","subject_id","session_id","tenant_ids_json","principal_expires_at","expires_at","created_at","claimed_at","finished_at","state"})
@@ -111,21 +112,29 @@ class SQLiteBackgroundJobMaintenance:
         if any(ch not in "0123456789abcdef" for ch in expected_sha256.lower()):
             raise ValueError("backup SHA-256 digest must be hexadecimal")
         path=os.path.abspath(os.fspath(backup_path))
-        if os.path.islink(path) or not os.path.isfile(path):raise ValueError("backup must be a regular non-symlink file")
+        import stat
+        before=os.lstat(path)
+        if not stat.S_ISREG(before.st_mode):raise ValueError("backup must be a regular non-symlink file")
         actual=self._digest(path)
         if not hmac.compare_digest(actual,expected_sha256.lower()):raise RuntimeError("backup SHA-256 mismatch")
         if any(ch not in "0123456789abcdef" for ch in expected_sha256.lower()):
             raise ValueError("backup SHA-256 digest must be hexadecimal")
         # Open backups read-only: verification must never create journals or mutate evidence.
         # Normalize Windows drive paths into SQLite file URIs consistently.
-        from urllib.parse import quote
-        uri="file:"+quote(path.replace(chr(92),"/"),safe="/:")+"?mode=ro"
+        # pathlib emits a correctly escaped file URI on both POSIX and Windows.
+        uri=Path(path).as_uri()+"?mode=ro"
         c=sqlite3.connect(uri,uri=True)
         try:
             c.execute("PRAGMA query_only=ON")
             report=self._inspect(c)
         finally:c.close()
         if not report["healthy"]:raise RuntimeError("backup integrity verification failed")
+        after=os.lstat(path)
+        identity=lambda st:(st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns)
+        if not stat.S_ISREG(after.st_mode) or identity(before)!=identity(after):
+            raise RuntimeError("backup changed during verification")
+        if not hmac.compare_digest(self._digest(path),actual):
+            raise RuntimeError("backup changed during verification")
         if expected_state_counts is not None:
             if not isinstance(expected_state_counts,dict) or any(not isinstance(k,str) or isinstance(v,bool) or not isinstance(v,int) or v<0 for k,v in expected_state_counts.items()):
                 raise ValueError("expected state counts must be a non-negative integer mapping")
@@ -238,8 +247,18 @@ class SQLiteBackgroundJobMaintenance:
                     verified_bytes+=receipt.size_bytes
                 except (OSError,RuntimeError,ValueError,sqlite3.DatabaseError) as exc:
                     rejected+=1
-                    reason=type(exc).__name__
+                    if isinstance(exc,PermissionError): reason="permission_denied"
+                    elif isinstance(exc,FileNotFoundError): reason="file_disappeared"
+                    elif isinstance(exc,sqlite3.DatabaseError): reason="invalid_sqlite"
+                    elif isinstance(exc,RuntimeError) and str(exc)=="backup integrity verification failed": reason="invalid_sqlite"
+                    elif isinstance(exc,RuntimeError): reason="verification_failed"
+                    elif isinstance(exc,OSError): reason="filesystem_error"
+                    else: reason="invalid_backup"
                     reasons[reason]=reasons.get(reason,0)+1
+        root_after=os.lstat(root)
+        root_identity=lambda st:(st.st_dev,st.st_ino,st.st_mode)
+        if root_identity(root_stat)!=root_identity(root_after):
+            raise RuntimeError("backup directory changed during inventory")
         return {"receipts":tuple(results),"candidate_count":candidates,"verified_count":len(results),
                 "rejected_count":rejected,"truncated":truncated,"verified_bytes":verified_bytes,
                 "scanned_entry_count":scanned,"max_total_bytes":max_total_bytes,

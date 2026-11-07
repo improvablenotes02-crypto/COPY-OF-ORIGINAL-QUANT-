@@ -23,3 +23,8 @@ No queue transitions, automatic replay, exactly-once claim, or live authorizatio
 - **418:** Add sanitized per-category rejection counts so operators can distinguish malformed backups, filesystem errors and non-regular entries without exposing paths or exception text.
 - **419:** Exclude hard-link aliases of the live queue database from backup inventory; a live mutable database is not accepted as a backup artifact.
 - **420:** Validate the inventory root using a no-follow filesystem stat and reject symlinked directory roots.
+
+- **421:** Build SQLite read-only backup URIs with pathlib's platform-aware URI encoder; retain explicit mode=ro and query-only enforcement on Windows and POSIX.
+- **422:** Recheck file identity, size, modification time and SHA-256 after SQLite inspection; reject artifacts changed during verification.
+- **423:** Recheck inventory directory identity after scanning; fail closed if the root directory was replaced during the scan.
+- **424:** Normalize inventory rejection diagnostics to allow-listed categories; never expose exception messages or filesystem paths in health output.

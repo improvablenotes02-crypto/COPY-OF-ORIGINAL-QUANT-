@@ -1,4 +1,4 @@
-name: Runtime data-gate certification # phase-420 cross-platform diagnostic rerun
+name: Runtime data-gate certification # phase-424 cross-platform inventory verification
 
 on:
   push:
@@ -39,7 +39,7 @@ jobs:
         run: python -m pytest tests/test_background_job_maintenance_phase393.py -q
       - name: Certify SQLite background-job maintenance hardening (phases 397-400)
         run: python -m pytest tests/test_background_job_maintenance_phase397.py -q
-      - name: Certify identity-bound maintenance and bounded backup inventory (phases 401-420)
+      - name: Certify identity-bound maintenance and bounded backup inventory (phases 401-424)
         run: python -m pytest tests/test_background_job_maintenance_phase401.py -q
       - name: Certify durable tenant background jobs (phases 382-384)
         run: python -m pytest tests/test_tenant_background_jobs_phase382.py -q
