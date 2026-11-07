@@ -73,7 +73,7 @@ def test_phase390_crashed_worker_remains_stale_and_never_replays(tmp_path):
     src=ContextVarPrincipalSource()
     ops=SQLiteBackgroundJobOperations(store,principal_source=src,owner_authorizer=lambda x:x.subject_id=="owner-1",clock=lambda:101.0)
     with bind_authenticated_principal(p()):
-        stale=ops.stale_running(before_epoch=999)
+        stale=ops.stale_running(before_epoch=9999999999)
         assert [row["job_id"] for row in stale]==[job]
         assert store.claim_job(job) is None
         ops.review_running(job,disposition="OUTCOME_UNKNOWN",reason="worker process exited; external effect unverified")
