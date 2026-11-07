@@ -24,6 +24,7 @@ def test_phase398_inventory_omits_invalid_and_symlink_backups(tmp_path):
  bad.write_bytes(b"not sqlite")
  with bind_authenticated_principal(principal()):report=ops.backup_inventory_report(folder)
  found=report["receipts"]
+ assert report["rejection_reasons"] == {"invalid_sqlite": 1}, report["rejection_reasons"]
  assert [x.path for x in found]==[str(good)], report
 def test_phase399_health_is_owner_only_and_never_authorizes_replay(tmp_path):
  _,ops,_=setup(tmp_path);folder=tmp_path/"backups";folder.mkdir()
