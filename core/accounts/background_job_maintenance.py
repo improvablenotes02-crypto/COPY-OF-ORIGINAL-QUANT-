@@ -108,6 +108,8 @@ class SQLiteBackgroundJobMaintenance:
         """395: verify backup digest and its SQLite integrity/schema before use."""
         self._owner()
         if not isinstance(backup_path,(str,os.PathLike)) or not isinstance(expected_sha256,str) or len(expected_sha256)!=64:raise ValueError("backup path and SHA-256 digest required")
+        if any(ch not in "0123456789abcdef" for ch in expected_sha256.lower()):
+            raise ValueError("backup SHA-256 digest must be hexadecimal")
         path=os.path.abspath(os.fspath(backup_path))
         if os.path.islink(path) or not os.path.isfile(path):raise ValueError("backup must be a regular non-symlink file")
         actual=self._digest(path)
