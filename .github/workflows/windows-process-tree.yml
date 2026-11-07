@@ -2,7 +2,19 @@ name: Windows process-tree cleanup
 
 on:
   push:
+    paths:
+      - 'core/**process*'
+      - 'scripts/**process*'
+      - 'tests/test_phase22*'
+      - 'tests/test_phase23*'
+      - '.github/workflows/windows-process-tree.yml'
   pull_request:
+    paths:
+      - 'core/**process*'
+      - 'scripts/**process*'
+      - 'tests/test_phase22*'
+      - 'tests/test_phase23*'
+      - '.github/workflows/windows-process-tree.yml'
   workflow_dispatch:
 
 permissions:
@@ -53,6 +65,7 @@ jobs:
 
 
   release-package-reproducibility:
+    if: github.event_name == 'workflow_dispatch'
     name: Release ZIP reproducibility (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
