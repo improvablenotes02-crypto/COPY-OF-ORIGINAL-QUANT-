@@ -8,3 +8,8 @@ No queue transitions, automatic replay, exactly-once claim, or live authorizatio
 - **406:** Validate all numeric timestamps and principal expiry before comparisons; malformed SQLite values fail closed without leaking a type error.
 - **407:** Bind restore drills to expected queue-state counts at source verification and after isolated restore.
 - **408:** Inject post-restore count-verification failure and assert no restore destination or private temporary artifact is left behind.
+
+- **409:** Backup digests must be hexadecimal SHA-256 values; verification opens the SQLite artifact read-only and cannot write through the verification connection.
+- **410:** Keep backup verification non-mutating by enforcing SQLite query-only mode and read-only URI access.
+- **411:** Add a bounded owner-only inventory report with verified, rejected, candidate and truncation counts; retain the tuple API as a compatibility wrapper.
+- **412:** Extend the maintenance health summary with bounded inventory metrics while preserving explicit replay-disabled and production-not-ready indicators.

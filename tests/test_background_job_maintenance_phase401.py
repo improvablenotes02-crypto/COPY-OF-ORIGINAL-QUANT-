@@ -101,3 +101,46 @@ def test_phase408_restore_drill_rechecks_expected_counts_after_restore(tmp_path,
   with pytest.raises(RuntimeError,match="after restore"):
    ops.restore_drill(backup,restored,expected_sha256=receipt.sha256,expected_state_counts={"PENDING":1})
  assert not restored.exists() and not list(tmp_path.glob(".qe-job-restore-*"))
+
+ 
+def test_phase409_backup_verification_rejects_non_hex_digest(tmp_path):
+ store,ops=setup(tmp_path);backup=tmp_path/"source.sqlite3"
+ with bind_authenticated_principal(principal()):
+  receipt=ops.create_backup(backup)
+  with pytest.raises(ValueError,match="hexadecimal"):
+   ops.verify_backup(backup,expected_sha256="z"*64)
+
+def test_phase410_backup_verification_opens_read_only(tmp_path,monkeypatch):
+ store,ops=setup(tmp_path);backup=tmp_path/"source.sqlite3"
+ with bind_authenticated_principal(principal()):
+  receipt=ops.create_backup(backup)
+  verified=ops.verify_backup(backup,expected_sha256=receipt.sha256)
+ assert verified.verified
+ c=sqlite3.connect(f"file:{backup}?mode=ro",uri=True)
+ try:
+  with pytest.raises(sqlite3.OperationalError):c.execute("CREATE TABLE forbidden_write(x)")
+ finally:c.close()
+
+def test_phase411_inventory_is_bounded_and_reports_rejections(tmp_path):
+ _,ops=setup(tmp_path);folder=tmp_path/"backups";folder.mkdir()
+ with bind_authenticated_principal(principal()):
+  ops.create_backup(folder/"a.sqlite3")
+ (folder/"b.db").write_bytes(b"not a database")
+ (folder/"c.sqlite3").write_bytes(b"not a database")
+ with bind_authenticated_principal(principal()):
+  report=ops.backup_inventory_report(folder,max_entries=2)
+ assert report["candidate_count"]==2 and report["verified_count"]==1
+ assert report["rejected_count"]==1 and report["truncated"] is True
+ assert len(report["receipts"])==1
+ with bind_authenticated_principal(principal()):
+  with pytest.raises(ValueError):ops.backup_inventory_report(folder,max_entries=0)
+
+def test_phase412_health_reports_bounded_inventory_without_replay_authority(tmp_path):
+ _,ops=setup(tmp_path);folder=tmp_path/"backups";folder.mkdir()
+ with bind_authenticated_principal(principal()):
+  ops.create_backup(folder/"one.sqlite3")
+  report=ops.maintenance_health(folder,max_entries=1)
+ assert report["verified_backup_count"]==1
+ assert report["backup_candidate_count"]==1
+ assert report["backup_inventory_truncated"] is False
+ assert report["automatic_replay_enabled"] is False and report["production_ready"] is False

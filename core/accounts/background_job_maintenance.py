@@ -112,8 +112,15 @@ class SQLiteBackgroundJobMaintenance:
         if os.path.islink(path) or not os.path.isfile(path):raise ValueError("backup must be a regular non-symlink file")
         actual=self._digest(path)
         if not hmac.compare_digest(actual,expected_sha256.lower()):raise RuntimeError("backup SHA-256 mismatch")
-        c=sqlite3.connect(path)
-        try:report=self._inspect(c)
+        if any(ch not in "0123456789abcdef" for ch in expected_sha256.lower()):
+            raise ValueError("backup SHA-256 digest must be hexadecimal")
+        # Open backups read-only: verification must never create journals or mutate evidence.
+        from urllib.parse import quote
+        uri="file:"+quote(path,safe="/:\\\\")+"?mode=ro"
+        c=sqlite3.connect(uri,uri=True)
+        try:
+            c.execute("PRAGMA query_only=ON")
+            report=self._inspect(c)
         finally:c.close()
         if not report["healthy"]:raise RuntimeError("backup integrity verification failed")
         if expected_state_counts is not None:
@@ -177,24 +184,44 @@ class SQLiteBackgroundJobMaintenance:
             if os.path.exists(temp):
                 os.unlink(temp)
 
-    def backup_inventory(self,directory):
-        """398: owner-only inventory of verified SQLite backup files."""
+    def backup_inventory_report(self,directory,*,max_entries=500):
+        """409-412: bounded, sanitized inventory accounting for verified and rejected backups."""
         self._owner()
+        if isinstance(max_entries,bool) or not isinstance(max_entries,int) or not 1<=max_entries<=5000:
+            raise ValueError("max_entries must be between 1 and 5000")
         if not isinstance(directory,(str,os.PathLike)): raise ValueError("backup directory required")
         root=os.path.abspath(os.fspath(directory))
         if os.path.islink(root) or not os.path.isdir(root): raise ValueError("backup directory must be a regular directory")
-        results=[]
+        results=[];candidates=0;rejected=0;truncated=False
         for name in sorted(os.listdir(root)):
+            if not name.lower().endswith((".sqlite3",".db")): continue
+            if candidates>=max_entries:
+                truncated=True
+                break
+            candidates+=1
             path=os.path.join(root,name)
-            if not name.lower().endswith((".sqlite3",".db")) or os.path.islink(path) or not os.path.isfile(path): continue
-            try: results.append(self.verify_backup(path,expected_sha256=self._digest(path)))
-            except (OSError,RuntimeError,ValueError,sqlite3.DatabaseError): continue
-        return tuple(results)
+            try:
+                if os.path.islink(path) or not os.path.isfile(path):
+                    rejected+=1
+                    continue
+                receipt=self.verify_backup(path,expected_sha256=self._digest(path))
+                results.append(receipt)
+            except (OSError,RuntimeError,ValueError,sqlite3.DatabaseError):
+                rejected+=1
+        return {"receipts":tuple(results),"candidate_count":candidates,"verified_count":len(results),
+                "rejected_count":rejected,"truncated":truncated,
+                "verified_bytes":sum(item.size_bytes for item in results)}
 
-    def maintenance_health(self,directory):
-        """399: owner-only bounded maintenance health summary."""
+    def backup_inventory(self,directory,*,max_entries=500):
+        """398/409: compatibility tuple of verified backups with a bounded scan."""
+        return self.backup_inventory_report(directory,max_entries=max_entries)["receipts"]
+
+    def maintenance_health(self,directory,*,max_entries=500):
+        """399/412: owner-only bounded maintenance health summary."""
         self._owner()
-        source=self.verify_source();backups=self.backup_inventory(directory)
+        source=self.verify_source();inventory=self.backup_inventory_report(directory,max_entries=max_entries)
         return {"source_healthy":source["healthy"],"source_state_counts":source["state_counts"],
-                "verified_backup_count":len(backups),"verified_backup_bytes":sum(x.size_bytes for x in backups),
+                "verified_backup_count":inventory["verified_count"],"verified_backup_bytes":inventory["verified_bytes"],
+                "backup_candidate_count":inventory["candidate_count"],"rejected_backup_count":inventory["rejected_count"],
+                "backup_inventory_truncated":inventory["truncated"],
                 "automatic_replay_enabled":False,"production_ready":False}
