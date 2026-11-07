@@ -217,7 +217,7 @@ class SQLiteBackgroundJobMaintenance:
                         break
                     path=os.path.join(root,entry.name)
                     receipt=self.verify_backup(path,expected_sha256=self._digest(path))
-                    after=os.stat(path,follow_symlinks=False)
+                    after=os.lstat(path)
                     identity=lambda st:(st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns)
                     if not __import__("stat").S_ISREG(after.st_mode) or identity(before)!=identity(after):
                         rejected+=1
