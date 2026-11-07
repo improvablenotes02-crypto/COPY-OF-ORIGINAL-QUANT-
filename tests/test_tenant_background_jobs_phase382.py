@@ -29,7 +29,7 @@ def test_phase382_job_scope_is_from_server_envelope_not_worker_argument(tmp_path
     seen=[]
     assert runner.run(job,lambda: seen.append(auth.authorize_tenant("tenant-a")) or "ok")=="ok"
     assert seen==[True] and store.status(job)=="SUCCEEDED"
-    with pytest.raises(TypeError): runner.run(job,"tenant-b",lambda:None)
+    with pytest.raises(ValueError,match="callback must be callable"): runner.run(job,"tenant-b",lambda:None)
 
 def test_phase382_enqueue_rejects_wrong_tenant_and_expired_principal(tmp_path):
     store,_,_,_=setup(tmp_path)
