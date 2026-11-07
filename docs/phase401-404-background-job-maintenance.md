@@ -28,3 +28,8 @@ No queue transitions, automatic replay, exactly-once claim, or live authorizatio
 - **422:** Recheck file identity, size, modification time and SHA-256 after SQLite inspection; reject artifacts changed during verification.
 - **423:** Recheck inventory directory identity after scanning; fail closed if the root directory was replaced during the scan.
 - **424:** Normalize inventory rejection diagnostics to allow-listed categories; never expose exception messages or filesystem paths in health output.
+
+- **425:** Use a guarded Windows SQLite URI fallback for drive-letter paths while preserving read-only mode; verify paths containing spaces and URI-reserved characters.
+- **426:** Certify that symlink backup paths cannot pass direct verification, not only inventory filtering.
+- **427:** Prove the total-byte budget is applied before hashing candidate contents, bounding I/O as well as SQLite verification.
+- **428:** Verify maintenance health sanitizes inventory permission failures and keeps replay disabled and production readiness false.

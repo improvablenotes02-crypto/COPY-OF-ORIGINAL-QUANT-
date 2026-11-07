@@ -120,10 +120,21 @@ class SQLiteBackgroundJobMaintenance:
         if any(ch not in "0123456789abcdef" for ch in expected_sha256.lower()):
             raise ValueError("backup SHA-256 digest must be hexadecimal")
         # Open backups read-only: verification must never create journals or mutate evidence.
-        # Normalize Windows drive paths into SQLite file URIs consistently.
-        # pathlib emits a correctly escaped file URI on both POSIX and Windows.
-        uri=Path(path).as_uri()+"?mode=ro"
-        c=sqlite3.connect(uri,uri=True)
+        # SQLite URI parsing differs across Windows builds; try canonical pathlib URI
+        # first, then the drive-letter form. Both retain mode=ro.
+        uri_candidates=[Path(path).as_uri()+"?mode=ro"]
+        if os.name=="nt":
+            uri_candidates.append("file:"+Path(path).as_posix()+"?mode=ro")
+        c=None
+        last_error=None
+        for uri in uri_candidates:
+            try:
+                c=sqlite3.connect(uri,uri=True)
+                break
+            except sqlite3.OperationalError as exc:
+                last_error=exc
+        if c is None:
+            raise last_error
         try:
             c.execute("PRAGMA query_only=ON")
             report=self._inspect(c)

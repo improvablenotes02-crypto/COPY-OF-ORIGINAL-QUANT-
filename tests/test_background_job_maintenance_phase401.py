@@ -300,3 +300,48 @@ def test_phase424_inventory_rejection_reasons_are_sanitized_categories(tmp_path)
     assert report["rejected_count"]==1
     assert report["rejection_reasons"].get("invalid_sqlite")==1
     assert all("/" not in key and "\\" not in key for key in report["rejection_reasons"])
+
+
+def test_phase425_inventory_handles_uri_escaped_backup_paths(tmp_path):
+    _,ops=setup(tmp_path);folder=tmp_path/"backup folder #1";folder.mkdir()
+    backup=folder/"valid backup.sqlite3"
+    with bind_authenticated_principal(principal()):
+        receipt=ops.create_backup(backup)
+        report=ops.backup_inventory_report(folder)
+    assert report["verified_count"]==1
+    assert report["receipts"][0].sha256==receipt.sha256
+
+
+def test_phase426_verify_rejects_symlink_backup_paths(tmp_path):
+    _,ops=setup(tmp_path);target=tmp_path/"target.sqlite3"
+    with bind_authenticated_principal(principal()):
+        receipt=ops.create_backup(target)
+        link=tmp_path/"alias.sqlite3"
+        try: link.symlink_to(target)
+        except (OSError,NotImplementedError): pytest.skip("symlink creation unavailable")
+        with pytest.raises((ValueError,OSError)):
+            ops.verify_backup(link,expected_sha256=receipt.sha256)
+
+
+def test_phase427_inventory_byte_budget_precedes_digest_read(tmp_path,monkeypatch):
+    _,ops=setup(tmp_path);folder=tmp_path/"budget";folder.mkdir()
+    with bind_authenticated_principal(principal()): ops.create_backup(folder/"one.sqlite3")
+    called=[];original=ops._digest
+    def tracked(path): called.append(path);return original(path)
+    monkeypatch.setattr(ops,"_digest",tracked)
+    with bind_authenticated_principal(principal()):
+        report=ops.backup_inventory_report(folder,max_total_bytes=1)
+    assert report["verified_count"]==0 and report["truncated"]
+    assert called==[]
+
+
+def test_phase428_health_sanitizes_inventory_failure(tmp_path,monkeypatch):
+    _,ops=setup(tmp_path);folder=tmp_path/"health";folder.mkdir()
+    def fail(*args,**kwargs): raise PermissionError("sensitive path C:/private/backup")
+    monkeypatch.setattr(ops,"backup_inventory_report",fail)
+    with bind_authenticated_principal(principal()): health=ops.maintenance_health(folder)
+    assert health["backup_inventory_error"] is True
+    assert health["verified_backup_count"]==0
+    assert health["automatic_replay_enabled"] is False
+    assert health["production_ready"] is False
+    assert "C:/private" not in repr(health)
