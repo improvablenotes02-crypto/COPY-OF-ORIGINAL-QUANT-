@@ -43,7 +43,7 @@ def test_phase396_restore_drill_isolated_and_no_clobber(tmp_path):
     store,source,ops,job=setup(tmp_path);backup=tmp_path/"backup.sqlite3";target=tmp_path/"restore-drill.sqlite3"
     with bind_authenticated_principal(p()):
         receipt=ops.create_backup(backup);restored=ops.restore_drill(backup,target,expected_sha256=receipt.sha256)
-        assert restored.sha256==receipt.sha256
+        assert restored.verified and len(restored.sha256)==64
         with pytest.raises(FileExistsError):ops.restore_drill(backup,target,expected_sha256=receipt.sha256)
     c=sqlite3.connect(str(target))
     try:assert c.execute("SELECT state FROM qe_background_jobs WHERE job_id=?",(job,)).fetchone()==("RUNNING",)

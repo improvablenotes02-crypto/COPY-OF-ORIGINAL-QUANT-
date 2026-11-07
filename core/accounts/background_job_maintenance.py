@@ -91,30 +91,41 @@ class SQLiteBackgroundJobMaintenance:
         if not report["healthy"]:raise RuntimeError("backup integrity verification failed")
         return SQLiteBackupReceipt(path,actual,os.path.getsize(path),True)
     def restore_drill(self,backup_path,destination,*,expected_sha256):
-        """396: isolated no-clobber restore copy followed by digest and schema verification."""
-        self._owner();source=self.verify_backup(backup_path,expected_sha256=expected_sha256)
+        """396: SQLite restore into an isolated temp DB, then atomic no-clobber publication."""
+        self._owner()
+        source_receipt=self.verify_backup(backup_path,expected_sha256=expected_sha256)
         target=self._safe_destination(destination,self._store._path)
-        if os.path.normcase(target)==os.path.normcase(source.path):raise ValueError("restore destination must differ from backup")
-        flags=os.O_WRONLY|os.O_CREAT|os.O_EXCL
-        if hasattr(os,"O_NOFOLLOW"):flags|=os.O_NOFOLLOW
-        fd=os.open(target,flags,0o600)
+        if os.path.normcase(target)==os.path.normcase(source_receipt.path):
+            raise ValueError("restore destination must differ from backup")
+        fd,temp=tempfile.mkstemp(prefix=".qe-job-restore-",dir=os.path.dirname(target))
+        os.close(fd)
         try:
-            with open(source.path,"rb") as stream:
-                for chunk in iter(lambda:stream.read(1024*1024),b""):
-                    view=memoryview(chunk)
-                    while view:
-                        written=os.write(fd,view)
-                        if written<=0:raise OSError("restore write made no progress")
-                        view=view[written:]
-            os.fsync(fd)
-        except Exception:
-            os.close(fd)
-            try:os.unlink(target)
-            except OSError:pass
-            raise
-        else:os.close(fd)
-        try:return self.verify_backup(target,expected_sha256=source.sha256)
-        except Exception:
-            try:os.unlink(target)
-            except OSError:pass
-            raise
+            source=sqlite3.connect(source_receipt.path)
+            restored=sqlite3.connect(temp,isolation_level=None)
+            try:
+                source.backup(restored)
+            finally:
+                restored.close()
+                source.close()
+            with open(temp,"rb+") as stream:
+                os.fsync(stream.fileno())
+            check=sqlite3.connect(temp)
+            try:
+                report=self._inspect(check)
+            finally:
+                check.close()
+            if not report["healthy"]:
+                raise RuntimeError("restored database integrity verification failed")
+            os.link(temp,target)
+            os.unlink(temp)
+            if os.name!="nt":
+                directory_fd=os.open(os.path.dirname(target),os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            digest=self._digest(target)
+            return self.verify_backup(target,expected_sha256=digest)
+        finally:
+            if os.path.exists(temp):
+                os.unlink(temp)
