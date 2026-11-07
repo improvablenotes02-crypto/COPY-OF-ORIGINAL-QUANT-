@@ -42,6 +42,22 @@ class SQLiteBackgroundJobMaintenance:
                 allowed={"PENDING","RUNNING","SUCCEEDED","FAILED","EXPIRED"}
                 for state,created,claimed,finished,expires in rows:
                     values=(created,expires)+(() if claimed is None else (claimed,))+(() if finished is None else (finished,))
+                    identity=c.execute("SELECT tenant_id,subject_id,session_id,tenant_ids_json,principal_expires_at FROM qe_background_jobs WHERE state=? AND created_at=? AND expires_at=? LIMIT 1",(state,created,expires)).fetchone()
+                    if identity is None:
+                        semantic.append("background_job_identity_unreadable");break
+                    tenant,subject,session,tenant_json,principal_expiry=identity
+                    try:
+                        tenant_ids=__import__("json").loads(tenant_json)
+                        valid_identity=(isinstance(tenant,str) and bool(tenant.strip()) and isinstance(subject,str) and bool(subject.strip())
+                            and isinstance(session,str) and bool(session.strip()) and isinstance(tenant_ids,list)
+                            and tenant_ids==sorted(set(tenant_ids)) and tenant in tenant_ids
+                            and all(isinstance(item,str) and item.strip() for item in tenant_ids)
+                            and isinstance(principal_expiry,(int,float)) and not isinstance(principal_expiry,bool)
+                            and math.isfinite(principal_expiry) and expires<=principal_expiry)
+                    except (TypeError,ValueError):
+                        valid_identity=False
+                    if not valid_identity:
+                        semantic.append("background_job_identity_invariant_failed");break
                     if state not in allowed or any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in values):
                         semantic.append("background_job_timestamp_or_state_invalid");break
                     if expires<created or (claimed is not None and claimed<created) or (finished is not None and ((claimed is not None and finished<claimed) or finished<created)):
@@ -93,7 +109,7 @@ class SQLiteBackgroundJobMaintenance:
             return SQLiteBackupReceipt(target,self._digest(target),os.path.getsize(target),True)
         finally:
             if os.path.exists(temp):os.unlink(temp)
-    def verify_backup(self,backup_path,*,expected_sha256):
+    def verify_backup(self,backup_path,*,expected_sha256,expected_state_counts=None):
         """395: verify backup digest and its SQLite integrity/schema before use."""
         self._owner()
         if not isinstance(backup_path,(str,os.PathLike)) or not isinstance(expected_sha256,str) or len(expected_sha256)!=64:raise ValueError("backup path and SHA-256 digest required")
@@ -105,6 +121,10 @@ class SQLiteBackgroundJobMaintenance:
         try:report=self._inspect(c)
         finally:c.close()
         if not report["healthy"]:raise RuntimeError("backup integrity verification failed")
+        if expected_state_counts is not None:
+            if not isinstance(expected_state_counts,dict) or any(not isinstance(k,str) or isinstance(v,bool) or not isinstance(v,int) or v<0 for k,v in expected_state_counts.items()):
+                raise ValueError("expected state counts must be a non-negative integer mapping")
+            if report["state_counts"]!=expected_state_counts:raise RuntimeError("backup state-count verification failed")
         return SQLiteBackupReceipt(path,actual,os.path.getsize(path),True)
     def restore_drill(self,backup_path,destination,*,expected_sha256):
         """396: SQLite restore into an isolated temp DB, then atomic no-clobber publication."""
