@@ -115,6 +115,14 @@ class SQLiteBackgroundJobMaintenance:
         import stat
         before=os.lstat(path)
         if not stat.S_ISREG(before.st_mode):raise ValueError("backup must be a regular non-symlink file")
+        # A hard link to the live queue is not a backup, even when its digest
+        # and schema are valid. Reject it at the direct verification boundary.
+        try:
+            source_stat=os.lstat(self._store._path)
+        except OSError:
+            source_stat=None
+        if source_stat is not None and (before.st_dev,before.st_ino)==(source_stat.st_dev,source_stat.st_ino):
+            raise ValueError("backup must not alias the live source database")
         actual=self._digest(path)
         if not hmac.compare_digest(actual,expected_sha256.lower()):raise RuntimeError("backup SHA-256 mismatch")
         if any(ch not in "0123456789abcdef" for ch in expected_sha256.lower()):
@@ -122,9 +130,13 @@ class SQLiteBackgroundJobMaintenance:
         # Open backups read-only: verification must never create journals or mutate evidence.
         # SQLite URI parsing differs across Windows builds; try canonical pathlib URI
         # first, then the drive-letter form. Both retain mode=ro.
-        uri_candidates=[Path(path).as_uri()+"?mode=ro"]
+        # On Windows, SQLite can successfully open the canonical file:///C:/ URI
+        # as a different/empty database on some builds. Prefer the drive-letter
+        # URI first so a successful-but-wrong open cannot prevent the fallback.
         if os.name=="nt":
-            uri_candidates.append("file:"+Path(path).as_posix()+"?mode=ro")
+            uri_candidates=["file:"+Path(path).as_posix()+"?mode=ro",Path(path).as_uri()+"?mode=ro"]
+        else:
+            uri_candidates=[Path(path).as_uri()+"?mode=ro"]
         c=None
         last_error=None
         for uri in uri_candidates:

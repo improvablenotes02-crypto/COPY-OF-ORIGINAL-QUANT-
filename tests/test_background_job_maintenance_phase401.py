@@ -345,3 +345,55 @@ def test_phase428_health_sanitizes_inventory_failure(tmp_path,monkeypatch):
     assert health["automatic_replay_enabled"] is False
     assert health["production_ready"] is False
     assert "C:/private" not in repr(health)
+
+
+def test_phase429_readonly_verification_handles_spaces_and_uri_reserved_characters(tmp_path):
+    _,ops=setup(tmp_path);backup=tmp_path/"backup space # percent%.sqlite3"
+    with bind_authenticated_principal(principal()):
+        receipt=ops.create_backup(backup)
+        verified=ops.verify_backup(backup,expected_sha256=receipt.sha256)
+    assert verified.verified and verified.path==str(backup)
+
+
+def test_phase430_direct_verification_rejects_hardlink_to_live_source(tmp_path):
+    store,ops=setup(tmp_path);alias=tmp_path/"source-alias.sqlite3"
+    try:
+        os.link(store._path,alias)
+    except (OSError,NotImplementedError):
+        pytest.skip("hard links unavailable on this platform")
+    with bind_authenticated_principal(principal()):
+        with pytest.raises(ValueError,match="alias the live source"):
+            ops.verify_backup(alias,expected_sha256=ops._digest(alias))
+
+
+def test_phase431_digest_mismatch_fails_before_sqlite_open(tmp_path,monkeypatch):
+    _,ops=setup(tmp_path);backup=tmp_path/"backup.sqlite3"
+    with bind_authenticated_principal(principal()):
+        receipt=ops.create_backup(backup)
+    calls=[]
+    original=sqlite3.connect
+    def spy(*args,**kwargs):
+        calls.append(args[0] if args else None)
+        return original(*args,**kwargs)
+    monkeypatch.setattr(sqlite3,"connect",spy)
+    with bind_authenticated_principal(principal()):
+        with pytest.raises(RuntimeError,match="SHA-256 mismatch"):
+            ops.verify_backup(backup,expected_sha256="0"*64)
+    assert calls==[]
+
+
+def test_phase432_inventory_and_health_never_expose_windows_uri_or_exception_text(tmp_path,monkeypatch):
+    _,ops=setup(tmp_path);folder=tmp_path/"safe";folder.mkdir()
+    def fail(*args,**kwargs):
+        raise sqlite3.OperationalError("unable to open database file C:/private/customer.sqlite3")
+    monkeypatch.setattr(ops,"verify_backup",fail)
+    (folder/"candidate.sqlite3").write_bytes(b"candidate")
+    with bind_authenticated_principal(principal()):
+        report=ops.backup_inventory_report(folder)
+        health=ops.maintenance_health(folder)
+    assert report["verified_count"]==0
+    assert report["rejection_reasons"].get("filesystem_error",0)==0
+    assert "private" not in repr(report).lower()
+    assert health["automatic_replay_enabled"] is False
+    assert health["production_ready"] is False
+    assert "customer.sqlite3" not in repr(health)

@@ -33,3 +33,8 @@ No queue transitions, automatic replay, exactly-once claim, or live authorizatio
 - **426:** Certify that symlink backup paths cannot pass direct verification, not only inventory filtering.
 - **427:** Prove the total-byte budget is applied before hashing candidate contents, bounding I/O as well as SQLite verification.
 - **428:** Verify maintenance health sanitizes inventory permission failures and keeps replay disabled and production readiness false.
+
+- **429:** Prefer the Windows drive-letter SQLite read-only URI before the canonical URI to avoid a successful open of the wrong database on affected SQLite builds; certify paths containing spaces and URI-reserved characters.
+- **430:** Reject direct backup verification of hard-link aliases to the live queue database, closing the gap between inventory filtering and the public verification boundary.
+- **431:** Prove a digest mismatch is rejected before SQLite is opened, avoiding unnecessary parsing of untrusted backup contents.
+- **432:** Verify inventory and health summaries never expose low-level SQLite exception text or private filesystem paths; replay remains disabled.
