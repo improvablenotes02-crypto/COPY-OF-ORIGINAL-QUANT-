@@ -117,8 +117,8 @@ class SQLiteBackgroundJobMaintenance:
         if any(ch not in "0123456789abcdef" for ch in expected_sha256.lower()):
             raise ValueError("backup SHA-256 digest must be hexadecimal")
         # Open backups read-only: verification must never create journals or mutate evidence.
-        from urllib.parse import quote
-        uri="file:"+quote(path,safe="/:\\\\")+"?mode=ro"
+        from pathlib import Path
+        uri=Path(path).as_uri()+"?mode=ro"
         c=sqlite3.connect(uri,uri=True)
         try:
             c.execute("PRAGMA query_only=ON")
