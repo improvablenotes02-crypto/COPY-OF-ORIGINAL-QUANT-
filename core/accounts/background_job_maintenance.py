@@ -1,6 +1,7 @@
 """Owner-only integrity verification and atomic backup/restore drills for the local job queue."""
 from __future__ import annotations
 from dataclasses import dataclass
+from pathlib import Path
 import hashlib,hmac,os,sqlite3,tempfile
 from core.accounts.request_tenant_authorization import AuthenticatedPrincipal
 _REQUIRED=frozenset({"job_id","tenant_id","subject_id","session_id","tenant_ids_json","principal_expires_at","expires_at","created_at","claimed_at","finished_at","state"})
@@ -111,20 +112,40 @@ class SQLiteBackgroundJobMaintenance:
         if any(ch not in "0123456789abcdef" for ch in expected_sha256.lower()):
             raise ValueError("backup SHA-256 digest must be hexadecimal")
         path=os.path.abspath(os.fspath(backup_path))
-        if os.path.islink(path) or not os.path.isfile(path):raise ValueError("backup must be a regular non-symlink file")
+        import stat
+        before=os.lstat(path)
+        if not stat.S_ISREG(before.st_mode):raise ValueError("backup must be a regular non-symlink file")
         actual=self._digest(path)
         if not hmac.compare_digest(actual,expected_sha256.lower()):raise RuntimeError("backup SHA-256 mismatch")
         if any(ch not in "0123456789abcdef" for ch in expected_sha256.lower()):
             raise ValueError("backup SHA-256 digest must be hexadecimal")
         # Open backups read-only: verification must never create journals or mutate evidence.
-        from urllib.parse import quote
-        uri="file:"+quote(path,safe="/:\\\\")+"?mode=ro"
-        c=sqlite3.connect(uri,uri=True)
+        # SQLite URI parsing differs across Windows builds; try canonical pathlib URI
+        # first, then the drive-letter form. Both retain mode=ro.
+        uri_candidates=[Path(path).as_uri()+"?mode=ro"]
+        if os.name=="nt":
+            uri_candidates.append("file:"+Path(path).as_posix()+"?mode=ro")
+        c=None
+        last_error=None
+        for uri in uri_candidates:
+            try:
+                c=sqlite3.connect(uri,uri=True)
+                break
+            except sqlite3.OperationalError as exc:
+                last_error=exc
+        if c is None:
+            raise last_error
         try:
             c.execute("PRAGMA query_only=ON")
             report=self._inspect(c)
         finally:c.close()
         if not report["healthy"]:raise RuntimeError("backup integrity verification failed")
+        after=os.lstat(path)
+        identity=lambda st:(st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns)
+        if not stat.S_ISREG(after.st_mode) or identity(before)!=identity(after):
+            raise RuntimeError("backup changed during verification")
+        if not hmac.compare_digest(self._digest(path),actual):
+            raise RuntimeError("backup changed during verification")
         if expected_state_counts is not None:
             if not isinstance(expected_state_counts,dict) or any(not isinstance(k,str) or isinstance(v,bool) or not isinstance(v,int) or v<0 for k,v in expected_state_counts.items()):
                 raise ValueError("expected state counts must be a non-negative integer mapping")
@@ -186,44 +207,90 @@ class SQLiteBackgroundJobMaintenance:
             if os.path.exists(temp):
                 os.unlink(temp)
 
-    def backup_inventory_report(self,directory,*,max_entries=500):
-        """409-412: bounded, sanitized inventory accounting for verified and rejected backups."""
+    def backup_inventory_report(self,directory,*,max_entries=500,max_total_bytes=256*1024*1024):
+        """413-415: bounded no-follow inventory with byte budget and file-identity recheck."""
         self._owner()
         if isinstance(max_entries,bool) or not isinstance(max_entries,int) or not 1<=max_entries<=5000:
             raise ValueError("max_entries must be between 1 and 5000")
+        if isinstance(max_total_bytes,bool) or not isinstance(max_total_bytes,int) or max_total_bytes<1:
+            raise ValueError("max_total_bytes must be a positive integer")
         if not isinstance(directory,(str,os.PathLike)): raise ValueError("backup directory required")
         root=os.path.abspath(os.fspath(directory))
-        if os.path.islink(root) or not os.path.isdir(root): raise ValueError("backup directory must be a regular directory")
-        results=[];candidates=0;rejected=0;truncated=False
-        for name in sorted(os.listdir(root)):
-            if not name.lower().endswith((".sqlite3",".db")): continue
-            if candidates>=max_entries:
-                truncated=True
-                break
-            candidates+=1
-            path=os.path.join(root,name)
-            try:
-                if os.path.islink(path) or not os.path.isfile(path):
+        root_stat=os.lstat(root)
+        if not __import__("stat").S_ISDIR(root_stat.st_mode): raise ValueError("backup directory must be a regular non-symlink directory")
+        results=[];candidates=0;rejected=0;truncated=False;scanned=0;verified_bytes=0;reasons={}
+        source_stat=None
+        try: source_stat=os.lstat(self._store._path)
+        except OSError: pass
+        # Stop while iterating; do not materialize an attacker-controlled directory.
+        with os.scandir(root) as entries:
+            for entry in entries:
+                if scanned>=max_entries:
+                    truncated=True
+                    break
+                scanned+=1
+                if not entry.name.lower().endswith((".sqlite3",".db")): continue
+                candidates+=1
+                try:
+                    before=entry.stat(follow_symlinks=False)
+                    if not __import__("stat").S_ISREG(before.st_mode):
+                        rejected+=1;reasons["not_regular_file"]=reasons.get("not_regular_file",0)+1
+                        continue
+                    if source_stat is not None and (before.st_dev,before.st_ino)==(source_stat.st_dev,source_stat.st_ino):
+                        rejected+=1;reasons["source_database_alias"]=reasons.get("source_database_alias",0)+1
+                        continue
+                    if before.st_size<1 or before.st_size>max_total_bytes-verified_bytes:
+                        rejected+=1
+                        truncated=True
+                        break
+                    path=os.path.join(root,entry.name)
+                    receipt=self.verify_backup(path,expected_sha256=self._digest(path))
+                    after=os.lstat(path)
+                    identity=lambda st:(st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns)
+                    if not __import__("stat").S_ISREG(after.st_mode) or identity(before)!=identity(after):
+                        rejected+=1
+                        continue
+                    if receipt.size_bytes!=after.st_size or receipt.size_bytes>max_total_bytes-verified_bytes:
+                        rejected+=1
+                        truncated=True
+                        break
+                    results.append(receipt)
+                    verified_bytes+=receipt.size_bytes
+                except (OSError,RuntimeError,ValueError,sqlite3.DatabaseError) as exc:
                     rejected+=1
-                    continue
-                receipt=self.verify_backup(path,expected_sha256=self._digest(path))
-                results.append(receipt)
-            except (OSError,RuntimeError,ValueError,sqlite3.DatabaseError):
-                rejected+=1
+                    if isinstance(exc,PermissionError): reason="permission_denied"
+                    elif isinstance(exc,FileNotFoundError): reason="file_disappeared"
+                    elif isinstance(exc,sqlite3.DatabaseError): reason="invalid_sqlite"
+                    elif isinstance(exc,RuntimeError) and str(exc)=="backup integrity verification failed": reason="invalid_sqlite"
+                    elif isinstance(exc,RuntimeError): reason="verification_failed"
+                    elif isinstance(exc,OSError): reason="filesystem_error"
+                    else: reason="invalid_backup"
+                    reasons[reason]=reasons.get(reason,0)+1
+        root_after=os.lstat(root)
+        root_identity=lambda st:(st.st_dev,st.st_ino,st.st_mode)
+        if root_identity(root_stat)!=root_identity(root_after):
+            raise RuntimeError("backup directory changed during inventory")
         return {"receipts":tuple(results),"candidate_count":candidates,"verified_count":len(results),
-                "rejected_count":rejected,"truncated":truncated,
-                "verified_bytes":sum(item.size_bytes for item in results)}
+                "rejected_count":rejected,"truncated":truncated,"verified_bytes":verified_bytes,
+                "scanned_entry_count":scanned,"max_total_bytes":max_total_bytes,
+                "rejection_reasons":dict(sorted(reasons.items()))}
 
-    def backup_inventory(self,directory,*,max_entries=500):
+    def backup_inventory(self,directory,*,max_entries=500,max_total_bytes=256*1024*1024):
         """398/409: compatibility tuple of verified backups with a bounded scan."""
-        return self.backup_inventory_report(directory,max_entries=max_entries)["receipts"]
+        return self.backup_inventory_report(directory,max_entries=max_entries,max_total_bytes=max_total_bytes)["receipts"]
 
-    def maintenance_health(self,directory,*,max_entries=500):
+    def maintenance_health(self,directory,*,max_entries=500,max_total_bytes=256*1024*1024):
         """399/412: owner-only bounded maintenance health summary."""
         self._owner()
-        source=self.verify_source();inventory=self.backup_inventory_report(directory,max_entries=max_entries)
+        source=self.verify_source()
+        try:
+            inventory=self.backup_inventory_report(directory,max_entries=max_entries,max_total_bytes=max_total_bytes)
+            inventory_error=False
+        except (OSError,RuntimeError,ValueError,sqlite3.DatabaseError):
+            inventory={"verified_count":0,"verified_bytes":0,"candidate_count":0,"rejected_count":0,"truncated":True,"rejection_reasons":{}}
+            inventory_error=True
         return {"source_healthy":source["healthy"],"source_state_counts":source["state_counts"],
                 "verified_backup_count":inventory["verified_count"],"verified_backup_bytes":inventory["verified_bytes"],
                 "backup_candidate_count":inventory["candidate_count"],"rejected_backup_count":inventory["rejected_count"],
-                "backup_inventory_truncated":inventory["truncated"],
+                "backup_inventory_truncated":inventory["truncated"],"backup_inventory_error":inventory_error,
                 "automatic_replay_enabled":False,"production_ready":False}

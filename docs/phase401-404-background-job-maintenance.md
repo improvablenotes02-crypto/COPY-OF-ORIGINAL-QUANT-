@@ -13,3 +13,23 @@ No queue transitions, automatic replay, exactly-once claim, or live authorizatio
 - **410:** Keep backup verification non-mutating by enforcing SQLite query-only mode and read-only URI access.
 - **411:** Add a bounded owner-only inventory report with verified, rejected, candidate and truncation counts; retain the tuple API as a compatibility wrapper.
 - **412:** Extend the maintenance health summary with bounded inventory metrics while preserving explicit replay-disabled and production-not-ready indicators.
+
+- **413:** Replace full directory materialization with incremental scandir; cap every directory entry inspected and reject symlinks/non-regular files without following them.
+- **414:** Add a positive total-byte verification budget; oversized candidates are rejected and the report marks the scan truncated rather than spending unbounded I/O.
+- **415:** Compare no-follow file identity, size and modification time before and after verification; reject candidates that change during the scan. This narrows, but does not eliminate, filesystem TOCTOU risk.
+- **416:** Make maintenance health explicitly degraded when inventory cannot be read; report a sanitized error flag and never disguise the failure as a healthy empty inventory.
+
+- **417:** Normalize Windows drive paths into SQLite read-only file URIs while preserving mode=ro and query-only verification.
+- **418:** Add sanitized per-category rejection counts so operators can distinguish malformed backups, filesystem errors and non-regular entries without exposing paths or exception text.
+- **419:** Exclude hard-link aliases of the live queue database from backup inventory; a live mutable database is not accepted as a backup artifact.
+- **420:** Validate the inventory root using a no-follow filesystem stat and reject symlinked directory roots.
+
+- **421:** Build SQLite read-only backup URIs with pathlib's platform-aware URI encoder; retain explicit mode=ro and query-only enforcement on Windows and POSIX.
+- **422:** Recheck file identity, size, modification time and SHA-256 after SQLite inspection; reject artifacts changed during verification.
+- **423:** Recheck inventory directory identity after scanning; fail closed if the root directory was replaced during the scan.
+- **424:** Normalize inventory rejection diagnostics to allow-listed categories; never expose exception messages or filesystem paths in health output.
+
+- **425:** Use a guarded Windows SQLite URI fallback for drive-letter paths while preserving read-only mode; verify paths containing spaces and URI-reserved characters.
+- **426:** Certify that symlink backup paths cannot pass direct verification, not only inventory filtering.
+- **427:** Prove the total-byte budget is applied before hashing candidate contents, bounding I/O as well as SQLite verification.
+- **428:** Verify maintenance health sanitizes inventory permission failures and keeps replay disabled and production readiness false.
