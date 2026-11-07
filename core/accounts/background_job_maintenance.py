@@ -186,44 +186,70 @@ class SQLiteBackgroundJobMaintenance:
             if os.path.exists(temp):
                 os.unlink(temp)
 
-    def backup_inventory_report(self,directory,*,max_entries=500):
-        """409-412: bounded, sanitized inventory accounting for verified and rejected backups."""
+    def backup_inventory_report(self,directory,*,max_entries=500,max_total_bytes=256*1024*1024):
+        """413-415: bounded no-follow inventory with byte budget and file-identity recheck."""
         self._owner()
         if isinstance(max_entries,bool) or not isinstance(max_entries,int) or not 1<=max_entries<=5000:
             raise ValueError("max_entries must be between 1 and 5000")
+        if isinstance(max_total_bytes,bool) or not isinstance(max_total_bytes,int) or max_total_bytes<1:
+            raise ValueError("max_total_bytes must be a positive integer")
         if not isinstance(directory,(str,os.PathLike)): raise ValueError("backup directory required")
         root=os.path.abspath(os.fspath(directory))
         if os.path.islink(root) or not os.path.isdir(root): raise ValueError("backup directory must be a regular directory")
-        results=[];candidates=0;rejected=0;truncated=False
-        for name in sorted(os.listdir(root)):
-            if not name.lower().endswith((".sqlite3",".db")): continue
-            if candidates>=max_entries:
-                truncated=True
-                break
-            candidates+=1
-            path=os.path.join(root,name)
-            try:
-                if os.path.islink(path) or not os.path.isfile(path):
+        results=[];candidates=0;rejected=0;truncated=False;scanned=0;verified_bytes=0
+        # Stop while iterating; do not materialize an attacker-controlled directory.
+        with os.scandir(root) as entries:
+            for entry in entries:
+                if scanned>=max_entries:
+                    truncated=True
+                    break
+                scanned+=1
+                if not entry.name.lower().endswith((".sqlite3",".db")): continue
+                candidates+=1
+                try:
+                    before=entry.stat(follow_symlinks=False)
+                    if not __import__("stat").S_ISREG(before.st_mode):
+                        rejected+=1
+                        continue
+                    if before.st_size<1 or before.st_size>max_total_bytes-verified_bytes:
+                        rejected+=1
+                        truncated=True
+                        break
+                    path=os.path.join(root,entry.name)
+                    receipt=self.verify_backup(path,expected_sha256=self._digest(path))
+                    after=os.stat(path,follow_symlinks=False)
+                    identity=lambda st:(st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns)
+                    if not __import__("stat").S_ISREG(after.st_mode) or identity(before)!=identity(after):
+                        rejected+=1
+                        continue
+                    if receipt.size_bytes!=after.st_size or receipt.size_bytes>max_total_bytes-verified_bytes:
+                        rejected+=1
+                        truncated=True
+                        break
+                    results.append(receipt)
+                    verified_bytes+=receipt.size_bytes
+                except (OSError,RuntimeError,ValueError,sqlite3.DatabaseError):
                     rejected+=1
-                    continue
-                receipt=self.verify_backup(path,expected_sha256=self._digest(path))
-                results.append(receipt)
-            except (OSError,RuntimeError,ValueError,sqlite3.DatabaseError):
-                rejected+=1
         return {"receipts":tuple(results),"candidate_count":candidates,"verified_count":len(results),
-                "rejected_count":rejected,"truncated":truncated,
-                "verified_bytes":sum(item.size_bytes for item in results)}
+                "rejected_count":rejected,"truncated":truncated,"verified_bytes":verified_bytes,
+                "scanned_entry_count":scanned,"max_total_bytes":max_total_bytes}
 
-    def backup_inventory(self,directory,*,max_entries=500):
+    def backup_inventory(self,directory,*,max_entries=500,max_total_bytes=256*1024*1024):
         """398/409: compatibility tuple of verified backups with a bounded scan."""
-        return self.backup_inventory_report(directory,max_entries=max_entries)["receipts"]
+        return self.backup_inventory_report(directory,max_entries=max_entries,max_total_bytes=max_total_bytes)["receipts"]
 
-    def maintenance_health(self,directory,*,max_entries=500):
+    def maintenance_health(self,directory,*,max_entries=500,max_total_bytes=256*1024*1024):
         """399/412: owner-only bounded maintenance health summary."""
         self._owner()
-        source=self.verify_source();inventory=self.backup_inventory_report(directory,max_entries=max_entries)
+        source=self.verify_source()
+        try:
+            inventory=self.backup_inventory_report(directory,max_entries=max_entries,max_total_bytes=max_total_bytes)
+            inventory_error=False
+        except (OSError,RuntimeError,ValueError,sqlite3.DatabaseError):
+            inventory={"verified_count":0,"verified_bytes":0,"candidate_count":0,"rejected_count":0,"truncated":True}
+            inventory_error=True
         return {"source_healthy":source["healthy"],"source_state_counts":source["state_counts"],
                 "verified_backup_count":inventory["verified_count"],"verified_backup_bytes":inventory["verified_bytes"],
                 "backup_candidate_count":inventory["candidate_count"],"rejected_backup_count":inventory["rejected_count"],
-                "backup_inventory_truncated":inventory["truncated"],
+                "backup_inventory_truncated":inventory["truncated"],"backup_inventory_error":inventory_error,
                 "automatic_replay_enabled":False,"production_ready":False}

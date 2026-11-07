@@ -144,3 +144,62 @@ def test_phase412_health_reports_bounded_inventory_without_replay_authority(tmp_
  assert report["backup_candidate_count"]==1
  assert report["backup_inventory_truncated"] is False
  assert report["automatic_replay_enabled"] is False and report["production_ready"] is False
+
+
+def test_phase413_inventory_does_not_follow_symlinks_or_scan_unbounded_entries(tmp_path):
+    _,ops=setup(tmp_path);folder=tmp_path/"bounded";folder.mkdir()
+    with bind_authenticated_principal(principal()):
+        ops.create_backup(folder/"valid.sqlite3")
+    outside=tmp_path/"outside.sqlite3"
+    with bind_authenticated_principal(principal()):
+        ops.create_backup(outside)
+    try:
+        (folder/"linked.db").symlink_to(outside)
+    except (OSError,NotImplementedError):
+        pytest.skip("symlink creation is unavailable on this platform")
+    (folder/"ignored.txt").write_text("not a backup")
+    with bind_authenticated_principal(principal()):
+        report=ops.backup_inventory_report(folder,max_entries=2)
+    assert report["scanned_entry_count"]==2
+    assert report["candidate_count"]<=2
+    assert report["truncated"] is True
+    assert all(item.path != str(folder/"linked.db") for item in report["receipts"])
+
+
+def test_phase414_inventory_enforces_total_verification_byte_budget(tmp_path):
+    _,ops=setup(tmp_path);folder=tmp_path/"budget";folder.mkdir()
+    with bind_authenticated_principal(principal()):
+        receipt=ops.create_backup(folder/"one.sqlite3")
+        report=ops.backup_inventory_report(folder,max_total_bytes=receipt.size_bytes-1)
+    assert report["verified_count"]==0
+    assert report["rejected_count"]==1 and report["truncated"] is True
+    assert report["verified_bytes"]==0
+    with bind_authenticated_principal(principal()):
+        with pytest.raises(ValueError):ops.backup_inventory_report(folder,max_total_bytes=True)
+
+
+def test_phase415_inventory_rejects_file_replaced_during_verification(tmp_path,monkeypatch):
+    _,ops=setup(tmp_path);folder=tmp_path/"race";folder.mkdir()
+    with bind_authenticated_principal(principal()):
+        ops.create_backup(folder/"one.sqlite3")
+    original=ops.verify_backup
+    def replace_after_verify(path,*,expected_sha256,expected_state_counts=None):
+        result=original(path,expected_sha256=expected_sha256,expected_state_counts=expected_state_counts)
+        os.replace(path,folder/"moved.sqlite3")
+        with open(path,"wb") as stream:stream.write(b"replacement")
+        return result
+    monkeypatch.setattr(ops,"verify_backup",replace_after_verify)
+    with bind_authenticated_principal(principal()):
+        report=ops.backup_inventory_report(folder)
+    assert report["verified_count"]==0 and report["rejected_count"]==1
+
+
+def test_phase416_health_reports_inventory_failure_as_degraded(tmp_path):
+    _,ops=setup(tmp_path)
+    with bind_authenticated_principal(principal()):
+        report=ops.maintenance_health(tmp_path/"missing-directory")
+    assert report["backup_inventory_error"] is True
+    assert report["backup_inventory_truncated"] is True
+    assert report["verified_backup_count"]==0
+    assert report["automatic_replay_enabled"] is False
+    assert report["production_ready"] is False

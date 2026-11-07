@@ -13,3 +13,8 @@ No queue transitions, automatic replay, exactly-once claim, or live authorizatio
 - **410:** Keep backup verification non-mutating by enforcing SQLite query-only mode and read-only URI access.
 - **411:** Add a bounded owner-only inventory report with verified, rejected, candidate and truncation counts; retain the tuple API as a compatibility wrapper.
 - **412:** Extend the maintenance health summary with bounded inventory metrics while preserving explicit replay-disabled and production-not-ready indicators.
+
+- **413:** Replace full directory materialization with incremental scandir; cap every directory entry inspected and reject symlinks/non-regular files without following them.
+- **414:** Add a positive total-byte verification budget; oversized candidates are rejected and the report marks the scan truncated rather than spending unbounded I/O.
+- **415:** Compare no-follow file identity, size and modification time before and after verification; reject candidates that change during the scan. This narrows, but does not eliminate, filesystem TOCTOU risk.
+- **416:** Make maintenance health explicitly degraded when inventory cannot be read; report a sanitized error flag and never disguise the failure as a healthy empty inventory.
