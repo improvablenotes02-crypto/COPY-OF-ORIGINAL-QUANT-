@@ -34,7 +34,23 @@ class SQLiteBackgroundJobMaintenance:
             counts={r[0]:r[1] for r in c.execute("SELECT state,COUNT(*) FROM qe_background_jobs GROUP BY state").fetchall()}
         except sqlite3.DatabaseError:
             problems.append("background_job_schema_unreadable");counts={}
-        return {"healthy":not problems,"quick_check":quick,"problems":tuple(problems),"state_counts":counts}
+        semantic=[]
+        if "background_job_schema_incomplete" not in problems:
+            try:
+                import math
+                rows=c.execute("SELECT state,created_at,claimed_at,finished_at,expires_at FROM qe_background_jobs").fetchall()
+                allowed={"PENDING","RUNNING","SUCCEEDED","FAILED","EXPIRED"}
+                for state,created,claimed,finished,expires in rows:
+                    values=(created,expires)+(() if claimed is None else (claimed,))+(() if finished is None else (finished,))
+                    if state not in allowed or any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in values):
+                        semantic.append("background_job_timestamp_or_state_invalid");break
+                    if expires<created or (claimed is not None and claimed<created) or (finished is not None and ((claimed is not None and finished<claimed) or finished<created)):
+                        semantic.append("background_job_timeline_invalid");break
+                    if (state=="PENDING" and (claimed is not None or finished is not None)) or (state=="RUNNING" and (claimed is None or finished is not None)) or (state in {"SUCCEEDED","FAILED","EXPIRED"} and finished is None):
+                        semantic.append("background_job_state_timestamp_mismatch");break
+            except sqlite3.DatabaseError: semantic.append("background_job_semantics_unreadable")
+        problems.extend(semantic)
+        return {"healthy":not problems,"quick_check":quick,"problems":tuple(problems),"state_counts":counts,"semantic_valid":not semantic}
     def verify_source(self):
         """393: read-only SQLite quick-check, required schema/index and state counts."""
         self._owner();c=self._store._connect()
@@ -129,3 +145,25 @@ class SQLiteBackgroundJobMaintenance:
         finally:
             if os.path.exists(temp):
                 os.unlink(temp)
+
+    def backup_inventory(self,directory):
+        """398: owner-only inventory of verified SQLite backup files."""
+        self._owner()
+        if not isinstance(directory,(str,os.PathLike)): raise ValueError("backup directory required")
+        root=os.path.abspath(os.fspath(directory))
+        if os.path.islink(root) or not os.path.isdir(root): raise ValueError("backup directory must be a regular directory")
+        results=[]
+        for name in sorted(os.listdir(root)):
+            path=os.path.join(root,name)
+            if not name.lower().endswith((".sqlite3",".db")) or os.path.islink(path) or not os.path.isfile(path): continue
+            try: results.append(self.verify_backup(path,expected_sha256=self._digest(path)))
+            except (OSError,RuntimeError,ValueError,sqlite3.DatabaseError): continue
+        return tuple(results)
+
+    def maintenance_health(self,directory):
+        """399: owner-only bounded maintenance health summary."""
+        self._owner()
+        source=self.verify_source();backups=self.backup_inventory(directory)
+        return {"source_healthy":source["healthy"],"source_state_counts":source["state_counts"],
+                "verified_backup_count":len(backups),"verified_backup_bytes":sum(x.size_bytes for x in backups),
+                "automatic_replay_enabled":False,"production_ready":False}
