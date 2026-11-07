@@ -42,3 +42,8 @@ No queue transitions, automatic replay, exactly-once claim, or live authorizatio
 - **434:** Route direct backup verification and inventory hard-link exclusion through the same stable identity primitive.
 - **435:** Fail closed when source/candidate file identity cannot be established at the direct verification boundary.
 - **436:** Verify inventory rejects candidates whose file identity cannot be established and exposes only a sanitized filesystem rejection category.
+
+
+## Cross-platform verification correction
+
+The Windows inventory gate exposed a mismatch between successful backup creation and read-only backup verification. File identity now uses Python's no-follow filesystem stat identity on both Windows and POSIX and rejects unavailable/zero inode identifiers. SQLite verification evaluates each Windows URI candidate independently and accepts only a candidate whose full integrity, schema and semantic checks pass; a syntactically successful open of the wrong/empty database no longer prevents trying the alternate URI. Both paths remain read-only, and inability to establish identity or verify a healthy database still fails closed. The existing Windows inventory regression is the acceptance gate for this correction.

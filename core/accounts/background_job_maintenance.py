@@ -80,42 +80,13 @@ class SQLiteBackgroundJobMaintenance:
         return target
     @staticmethod
     def _file_identity(path):
-        """Return a stable volume/file identifier, including on Windows."""
-        if os.name!="nt":
-            info=os.stat(path,follow_symlinks=False)
-            return (info.st_dev,info.st_ino)
-        import ctypes
-        from ctypes import wintypes
-        class _FILETIME(ctypes.Structure):
-            _fields_=[("dwLowDateTime",wintypes.DWORD),("dwHighDateTime",wintypes.DWORD)]
-        class _BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
-            _fields_=[("dwFileAttributes",wintypes.DWORD),("ftCreationTime",_FILETIME),
-                ("ftLastAccessTime",_FILETIME),("ftLastWriteTime",_FILETIME),
-                ("dwVolumeSerialNumber",wintypes.DWORD),("nFileSizeHigh",wintypes.DWORD),
-                ("nFileSizeLow",wintypes.DWORD),("nNumberOfLinks",wintypes.DWORD),
-                ("nFileIndexHigh",wintypes.DWORD),("nFileIndexLow",wintypes.DWORD)]
-        kernel32=ctypes.WinDLL("kernel32",use_last_error=True)
-        create=kernel32.CreateFileW
-        create.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,
-            wintypes.LPVOID,wintypes.DWORD,wintypes.DWORD,wintypes.HANDLE]
-        create.restype=wintypes.HANDLE
-        get_info=kernel32.GetFileInformationByHandle
-        get_info.argtypes=[wintypes.HANDLE,ctypes.POINTER(_BY_HANDLE_FILE_INFORMATION)]
-        get_info.restype=wintypes.BOOL
-        close=kernel32.CloseHandle
-        close.argtypes=[wintypes.HANDLE]
-        close.restype=wintypes.BOOL
-        handle=create(os.fspath(path),0,0x1|0x2|0x4,None,3,0,None)
-        if handle==ctypes.c_void_p(-1).value:
-            raise ctypes.WinError(ctypes.get_last_error())
-        try:
-            info=_BY_HANDLE_FILE_INFORMATION()
-            if not get_info(handle,ctypes.byref(info)):
-                raise ctypes.WinError(ctypes.get_last_error())
-            index=(int(info.nFileIndexHigh)<<32)|int(info.nFileIndexLow)
-            return (int(info.dwVolumeSerialNumber),index)
-        finally:
-            close(handle)
+        """Return a stable device/file identifier without platform-specific handle layouts."""
+        info=os.stat(path,follow_symlinks=False)
+        inode=getattr(info,"st_ino",0)
+        if isinstance(inode,bool) or not isinstance(inode,int) or inode<=0:
+            raise OSError("stable filesystem file identity unavailable")
+        return (int(info.st_dev),inode)
+
     @staticmethod
     def _digest(path):
         h=hashlib.sha256()
@@ -161,33 +132,39 @@ class SQLiteBackgroundJobMaintenance:
         if not hmac.compare_digest(actual,expected_sha256.lower()):raise RuntimeError("backup SHA-256 mismatch")
         if any(ch not in "0123456789abcdef" for ch in expected_sha256.lower()):
             raise ValueError("backup SHA-256 digest must be hexadecimal")
-        # Open backups read-only: verification must never create journals or mutate evidence.
-        # SQLite URI parsing differs across Windows builds; try canonical pathlib URI
-        # first, then the drive-letter form. Both retain mode=ro.
-        # On Windows, SQLite can successfully open the canonical file:///C:/ URI
-        # as a different/empty database on some builds. Prefer the drive-letter
-        # URI first so a successful-but-wrong open cannot prevent the fallback.
+        # Open backups read-only. Some Windows SQLite builds accept a URI
+        # syntactically but resolve it to a different, empty database. Therefore
+        # inspect each platform-specific candidate and accept only the one whose
+        # schema, integrity and semantic checks all pass.
         if os.name=="nt":
             from urllib.parse import quote
             drive_uri="file:"+quote(Path(path).as_posix(),safe="/:")+"?mode=ro"
             uri_candidates=[drive_uri,Path(path).as_uri()+"?mode=ro"]
         else:
             uri_candidates=[Path(path).as_uri()+"?mode=ro"]
-        c=None
+        report=None
         last_error=None
         for uri in uri_candidates:
+            candidate=None
             try:
-                c=sqlite3.connect(uri,uri=True)
-                break
-            except sqlite3.OperationalError as exc:
+                candidate=sqlite3.connect(uri,uri=True)
+                candidate.execute("PRAGMA query_only=ON")
+                candidate_report=self._inspect(candidate)
+                if candidate_report["healthy"]:
+                    report=candidate_report
+                    break
+                report=candidate_report
+            except sqlite3.DatabaseError as exc:
                 last_error=exc
-        if c is None:
-            raise last_error
-        try:
-            c.execute("PRAGMA query_only=ON")
-            report=self._inspect(c)
-        finally:c.close()
-        if not report["healthy"]:raise RuntimeError("backup integrity verification failed")
+            finally:
+                if candidate is not None:
+                    candidate.close()
+        if report is None or not report["healthy"]:
+            if report is not None:
+                raise RuntimeError("backup integrity verification failed")
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError("backup integrity verification failed")
         after=os.lstat(path)
         identity=lambda st:(st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns)
         if not stat.S_ISREG(after.st_mode) or identity(before)!=identity(after):
