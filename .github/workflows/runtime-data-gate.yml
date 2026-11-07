@@ -128,6 +128,7 @@ jobs:
           tests/test_owner_governance_phase364.py
           tests/test_authenticated_owner_governance_phase366.py
           tests/test_delta_credential_approval_phase367.py
+          tests/test_delta_credential_approval_phase368.py
           tests/test_delta_repository_admission_phase357.py
           tests/test_delta_order_history_phase280.py
           tests/test_venue_history_reconciliation_phase263.py

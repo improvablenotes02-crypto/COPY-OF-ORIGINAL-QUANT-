@@ -189,6 +189,22 @@ class SQLiteOwnerGovernanceRepository:
         return CredentialApproval(row["tenant_id"],row["credential_id"],row["subject_id"],
             row["account_id"],row["fingerprint"],row["status"],row["created_at_ns"],row["updated_at_ns"])
 
+    def credentials_for_account_fingerprint(self, tenant, account, fingerprint):
+        """Return every exact credential tuple match; callers must reject ambiguity."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM qe_credential_approvals "
+                "WHERE tenant_id=? AND account_id=? AND fingerprint=? "
+                "ORDER BY credential_id",
+                (tenant, account, fingerprint),
+            ).fetchall()
+        return [
+            CredentialApproval(row["tenant_id"], row["credential_id"], row["subject_id"],
+                row["account_id"], row["fingerprint"], row["status"],
+                row["created_at_ns"], row["updated_at_ns"])
+            for row in rows
+        ]
+
     def audit_events(self, tenant):
         with self._lock:
             return [dict(r) for r in self._db.execute(
