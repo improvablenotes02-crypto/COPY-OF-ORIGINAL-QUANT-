@@ -64,7 +64,7 @@ class SQLiteBackgroundJobMaintenance:
             source=self._store._connect();snapshot=sqlite3.connect(temp,isolation_level=None)
             try:source.backup(snapshot)
             finally:snapshot.close();source.close()
-            with open(temp,"rb") as f:os.fsync(f.fileno())
+            with open(temp,"rb+") as f:os.fsync(f.fileno())
             c=sqlite3.connect(temp)
             try:report=self._inspect(c)
             finally:c.close()
