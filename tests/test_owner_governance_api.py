@@ -135,7 +135,7 @@ def test_missing_invalid_token_and_tenant_mismatch_fail_closed(api):
     assert _request(server, "POST", "/v1/tenants/tenant-a/members",
                     None, {"subject_id": "x"})[0] == 401
     assert _request(server, "POST", "/v1/tenants/tenant-a/members",
-                    "garbage", {"subject_id": "x"})[0] == 401
+                    "garbage", {"subject_id": "x"})[0] == 403
     assert _request(server, "POST", "/v1/tenants/tenant-b/members",
                     "owner-token", {"subject_id": "x"})[0] == 403
     assert repo.audit_events("tenant-a") == []

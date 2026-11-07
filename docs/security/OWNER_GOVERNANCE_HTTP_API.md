@@ -20,7 +20,10 @@ The API accepts credential identifiers, account identifiers, and a SHA-256
 fingerprint only. It rejects additional fields, including caller-supplied actor
 IDs, roles, API keys, or API secrets. It never returns credential material.
 Responses are non-cacheable; request logging is disabled; internal verifier and
-persistence exceptions are not echoed. The server refuses non-loopback binds.
+persistence exceptions are not echoed. A missing or malformed bearer header is
+401; a token that fails verification or fails the authenticated tenant/owner
+policy is deliberately collapsed to 403 by the facade, avoiding identity-state
+oracle details. The server refuses non-loopback binds.
 
 ## Deployment and limitations
 
