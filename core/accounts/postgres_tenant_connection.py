@@ -30,8 +30,8 @@ class TenantBoundPostgreSQLConnection:
             else: connect = self._connect_factory
             with connect(dsn, connect_timeout=self._connect_timeout, row_factory=dict_row) as connection:
                 with connection.transaction():
-                    row = connection.execute("SELECT public.qe_authenticated_tenant_id()").fetchone()
-                    actual_tenant = row[0] if row else None
+                    row = connection.execute("SELECT public.qe_authenticated_tenant_id() AS tenant_id").fetchone()
+                    actual_tenant = row["tenant_id"] if row else None
                     if actual_tenant != tenant_id:
                         raise PostgreSQLTenantIdentityError("authenticated database tenant does not match requested tenant")
                     yield connection

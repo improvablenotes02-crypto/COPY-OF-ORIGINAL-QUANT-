@@ -12,9 +12,9 @@ class _Connection:
     def transaction(self): return _Transaction()
     def execute(self, sql):
         self.queries.append(sql)
-        assert sql == "SELECT public.qe_authenticated_tenant_id()"
+        assert sql == "SELECT public.qe_authenticated_tenant_id() AS tenant_id"
         return self
-    def fetchone(self): return (self.tenant,)
+    def fetchone(self): return {"tenant_id": self.tenant}
 
 def _factory_for(tenant):
     opened=[]
@@ -28,7 +28,7 @@ def test_tenant_dsn_and_authenticated_identity_checked():
     with router.connect("tenant-a") as conn: assert conn.tenant=="tenant-a"
     assert opened[0][0]=="postgresql://role-for-tenant-a/db" and opened[0][1]==7
     assert opened[0][2] is not None
-    assert opened[0][3].queries==["SELECT public.qe_authenticated_tenant_id()"]
+    assert opened[0][3].queries==["SELECT public.qe_authenticated_tenant_id() AS tenant_id"]
 
 @pytest.mark.parametrize("identity",[None,"tenant-b",""])
 def test_missing_or_mismatched_identity_fails_closed(identity):
