@@ -23,6 +23,16 @@ def principal(tenants=frozenset({"tenant-a"}), expires=9999999999):
     return AuthenticatedPrincipal("subject-1", "session-1", tenants, expires)
 
 
+class _FakeGovernance:
+    def membership(self, tenant, subject): return None
+    def audit_events(self, tenant): return []
+
+
+class _FakeDelta:
+    def __init__(self): self.calls = []
+    def get(self, tenant, account): self.calls.append((tenant, account)); return None
+
+
 def factory():
     source = ContextVarPrincipalSource()
     sessions = SessionValidator()
@@ -40,6 +50,7 @@ def factory():
 def test_factory_only_builds_authenticated_postgres_repositories():
     services, _, _, _ = factory()
     delta = services.delta_repository()
+    services._governance_persistence = lambda: _FakeGovernance()
     governance = services.governance_repository()
     assert delta.tenant_isolation_enforced is True
     assert delta.production_ready is False
@@ -49,6 +60,7 @@ def test_factory_only_builds_authenticated_postgres_repositories():
 
 def test_governance_facade_checks_membership_before_every_operation():
     services, _, _, _ = factory()
+    services._governance_persistence = lambda: _FakeGovernance()
     repo = services.governance_repository()
     with bind_authenticated_principal(principal()):
         with pytest.raises(AccountScopeError, match="not authorized"):
@@ -60,6 +72,7 @@ def test_governance_facade_checks_membership_before_every_operation():
 
 def test_governance_facade_does_not_confuse_membership_with_owner_role():
     services, _, _, _ = factory()
+    services._governance_persistence = lambda: _FakeGovernance()
     repo = services.governance_repository()
     with bind_authenticated_principal(principal()):
         # The tenant guard allows this request to reach domain persistence;
@@ -104,3 +117,15 @@ def test_repository_factory_rejects_untrusted_resolver():
             session_validator=SessionValidator(),
             tenant_dsn_resolver=None,
         )
+
+def test_delta_repository_facade_checks_tenant_before_storage():
+    services, _, _, _ = factory()
+    fake = _FakeDelta()
+    services._resolver = lambda tenant: "unused"
+    from core.accounts.postgres_tenant_services import TenantDeltaAccountRepository
+    guarded = TenantDeltaAccountRepository(fake, services.tenant_authorizer)
+    with bind_authenticated_principal(principal()):
+        assert guarded.get("tenant-a", "acct-a") is None
+        with pytest.raises(AccountScopeError, match="not authorized"):
+            guarded.get("tenant-b", "acct-b")
+    assert fake.calls == [("tenant-a", "acct-a")]

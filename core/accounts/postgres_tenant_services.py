@@ -20,6 +20,52 @@ from core.accounts.request_tenant_authorization import (
 )
 
 
+class TenantDeltaAccountRepository:
+    """Tenant-authorized facade; database identity is independently checked below."""
+    production_ready = False
+    durable_shared_storage = True
+    tenant_isolation_enforced = True
+
+    def __init__(self, repository, authorizer):
+        self._repository = repository
+        self._authorizer = authorizer
+
+    def _require_tenant(self, tenant_id: str) -> None:
+        if self._authorizer.authorize_tenant(tenant_id) is not True:
+            raise AccountScopeError("tenant is not authorized for this operation")
+
+    def save(self, record):
+        self._require_tenant(record.tenant_id)
+        return self._repository.save(record)
+
+    def get(self, tenant_id, account_id):
+        self._require_tenant(tenant_id)
+        return self._repository.get(tenant_id, account_id)
+
+    def list_for_tenant(self, tenant_id):
+        self._require_tenant(tenant_id)
+        return self._repository.list_for_tenant(tenant_id)
+
+    def delete(self, tenant_id, account_id):
+        self._require_tenant(tenant_id)
+        return self._repository.delete(tenant_id, account_id)
+
+    def bind_provider_identity(self, tenant_id, account_id, provider_account_id):
+        self._require_tenant(tenant_id)
+        return self._repository.bind_provider_identity(tenant_id, account_id, provider_account_id)
+
+    def replace_credentials(self, record, *, expected_generation, expected_updated_at_ns):
+        self._require_tenant(record.tenant_id)
+        return self._repository.replace_credentials(
+            record, expected_generation=expected_generation,
+            expected_updated_at_ns=expected_updated_at_ns,
+        )
+
+    def list_credential_rotation_events(self, tenant_id, account_id):
+        self._require_tenant(tenant_id)
+        return self._repository.list_credential_rotation_events(tenant_id, account_id)
+
+
 class TenantGovernanceRepository:
     """Tenant-authorized facade over owner-governance persistence.
 
@@ -99,9 +145,10 @@ class AuthenticatedTenantRepositoryFactory:
         return self._authorizer
 
     def delta_repository(self):
-        return AuthenticatedPostgreSQLDeltaAccountRepository(
+        persistence = AuthenticatedPostgreSQLDeltaAccountRepository(
             self._resolver, connect_timeout=self._timeout
         )
+        return TenantDeltaAccountRepository(persistence, self._authorizer)
 
     def _governance_persistence(self):
         return AuthenticatedPostgreSQLOwnerGovernanceRepository(
