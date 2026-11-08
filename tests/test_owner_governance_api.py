@@ -555,3 +555,37 @@ def test_raw_credential_submission_enforces_field_size_limits_before_vault_write
     assert status == 400
     assert result["error"] == "bad_request"
     assert registry.accounts == {}
+
+def test_owner_can_use_personal_delta_credentials_without_member_setup(api):
+    """The configured owner can use QuantEngine without inviting any members."""
+    server, repo, registry = api
+    status, submitted = _request(
+        server, "POST", "/v1/tenants/tenant-a/credentials", "owner-token",
+        {
+            "label": "Personal Delta account",
+            "region": "global",
+            "environment": "testnet",
+            "api_key": "owner-private-api-key",
+            "api_secret": "owner-private-api-secret",
+        },
+    )
+    assert status == 200
+    assert submitted == {
+        "ok": True, "account_id": "vault-account-1", "status": "PENDING"
+    }
+    assert "owner-private-api-key" not in json.dumps(submitted)
+    assert "owner-private-api-secret" not in json.dumps(submitted)
+    assert repo.membership("tenant-a", "owner-1") is None
+    assert registry.accounts["vault-account-1"]["api_key"] == "owner-private-api-key"
+    assert registry.accounts["vault-account-1"]["api_secret"] == "owner-private-api-secret"
+
+    status, approved = _request(
+        server, "POST",
+        "/v1/tenants/tenant-a/credentials/vault-account-1/decision",
+        "owner-token", {"approve": True},
+    )
+    assert (status, approved) == (200, {"ok": True, "status": "APPROVED"})
+    credential = repo.credential("tenant-a", "vault-account-1")
+    assert credential.status == "APPROVED"
+    assert credential.subject_id == "owner-1"
+

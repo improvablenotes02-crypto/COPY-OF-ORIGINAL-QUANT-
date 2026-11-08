@@ -80,8 +80,11 @@ credentials in the same repository transaction.
 
 ## Member credential submission
 
-An authenticated, approved tenant member submits Delta credentials through
-`POST /v1/tenants/{tenant}/credentials` with exactly these JSON fields:
+The configured owner can submit personal Delta credentials directly through
+`POST /v1/tenants/{tenant}/credentials` without inviting or creating any member.
+The owner then approves that pending credential using the returned account ID.
+Alternatively, an approved tenant member can submit credentials for owner review.
+Both paths use exactly these JSON fields:
 `label`, `region`, `environment`, `api_key`, and `api_secret`.
 The server must be started with a trusted `account_registry` dependency whose
 tenant authorizer is bound to the verified request principal. The registry
