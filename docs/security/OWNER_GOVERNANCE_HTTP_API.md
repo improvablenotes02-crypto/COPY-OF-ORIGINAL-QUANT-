@@ -86,3 +86,7 @@ vault record and returns an error. Plaintext credentials are never included in
 responses or audit metadata. The legacy metadata-only submission shape remains
 available for controlled migration, but cannot create a usable vault account
 by itself.
+
+## PostgreSQL tenant-login deployment
+
+Use the [PostgreSQL tenant-login operations runbook](POSTGRES_TENANT_LOGIN_OPERATIONS.md) to provision one non-privileged database login per tenant, maintain the DBA-owned identity map, configure TLS-verified tenant DSNs, and verify spoof resistance. This database boundary is necessary but does not by itself certify production readiness; deployment identity, session revocation, encryption, background-job storage, and operational recovery evidence remain separate admission requirements.
