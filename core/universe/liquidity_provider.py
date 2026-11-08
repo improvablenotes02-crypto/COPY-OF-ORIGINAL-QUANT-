@@ -80,6 +80,9 @@ class DeltaLiquidityProvider:
         # like DeltaREST or an offline mock.
         if transport is not None:
             self.rest = transport
+        elif fetch is not None:
+            # A fully injected fetch callback needs no network transport.
+            self.rest = None
         else:
             from core.exchanges.delta.delta_environments import configured_public_rest
             self.rest = configured_public_rest()
