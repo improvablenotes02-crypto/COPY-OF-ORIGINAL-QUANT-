@@ -37,6 +37,7 @@ class MarketCapabilities:
     instrument_types: FrozenSet[InstrumentType]
     market_data: bool = False
     historical_data: bool = False
+    account_data: bool = False
     paper_execution: bool = False
     live_orders: bool = False
     live_execution_verified: bool = False

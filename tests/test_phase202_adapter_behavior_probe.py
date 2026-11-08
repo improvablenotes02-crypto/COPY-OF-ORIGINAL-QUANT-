@@ -66,3 +66,33 @@ def test_probe_missing_method_is_fail_closed():
     report = probe_read_only_behavior(Incomplete())
     assert not report.passed
     assert "missing callable read method: get_positions" in report.errors
+
+def test_probe_only_calls_declared_public_market_data_methods():
+    from core.exchanges.market_capabilities import (
+        InstrumentType, MarketCapabilities, MarketFamily,
+    )
+
+    class PublicOnlyAdapter:
+        def __init__(self):
+            self.calls = []
+
+        def get_products(self):
+            self.calls.append("products")
+            return [{"symbol": "NIFTY"}]
+
+    adapter = PublicOnlyAdapter()
+    capabilities = MarketCapabilities(
+        adapter_name="nse-public",
+        venue="nse",
+        market_families=frozenset({MarketFamily.NSE_INDEX}),
+        instrument_types=frozenset({InstrumentType.OPTION}),
+        market_data=True,
+        historical_data=True,
+    )
+    report = probe_read_only_behavior(adapter, "nse-public", capabilities=capabilities)
+    assert report.passed
+    assert report.products_count == 1
+    assert report.balance_type is None
+    assert report.positions_count is None
+    assert adapter.calls == ["products"]
+
