@@ -78,6 +78,36 @@ class OidcTenantPrincipalSource:
             and getattr(self._membership_resolver, "production_ready", False) is True
         )
 
+    def refresh_persisted_principal(
+        self, principal: AuthenticatedPrincipal
+    ) -> AuthenticatedPrincipal:
+        """Refresh tenant membership for a durable worker envelope.
+
+        The token was verified when the job was enqueued; the worker separately
+        rechecks expiry and session revocation. Membership is looked up again so
+        a removed member cannot run a queued job using stale tenant claims.
+        """
+        if not isinstance(principal, AuthenticatedPrincipal):
+            raise PermissionError("authenticated principal unavailable")
+        try:
+            tenant_ids = self._membership_resolver.tenant_ids_for_subject(
+                principal.subject_id
+            )
+            if (
+                not isinstance(tenant_ids, frozenset)
+                or any(not isinstance(item, str) or not item.strip()
+                       for item in tenant_ids)
+            ):
+                raise ValueError("authoritative membership result malformed")
+            return AuthenticatedPrincipal(
+                subject_id=principal.subject_id,
+                session_id=principal.session_id,
+                tenant_ids=tenant_ids,
+                expires_at_epoch=principal.expires_at_epoch,
+            )
+        except Exception:
+            raise PermissionError("authenticated principal unavailable") from None
+
     def current_principal(self) -> AuthenticatedPrincipal | None:
         token = _access_token.get()
         if token is None:

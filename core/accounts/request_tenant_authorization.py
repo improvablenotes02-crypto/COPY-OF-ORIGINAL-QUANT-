@@ -138,6 +138,12 @@ class RequestScopedTenantAuthorizer:
         override = _authorizer_principal_override.get()
         if override is not None and override[0] is self:
             principal = override[1]
+            refresh = getattr(self._principal_source, "refresh_persisted_principal", None)
+            if callable(refresh):
+                try:
+                    principal = refresh(principal)
+                except Exception:
+                    raise AccountScopeError("tenant authorization could not be verified") from None
         else:
             try:
                 principal = self._principal_source.current_principal()

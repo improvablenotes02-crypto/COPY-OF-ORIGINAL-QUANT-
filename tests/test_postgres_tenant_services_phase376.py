@@ -113,6 +113,36 @@ def test_background_task_uses_persisted_principal_with_oidc_request_source(tmp_p
         authorizer.authorize_tenant("tenant-a")
 
 
+def test_background_task_rechecks_current_oidc_membership_before_callback(tmp_path):
+    from core.accounts.oidc_tenant_principal import OidcTenantPrincipalSource, VerifiedAccessToken
+
+    class Verifier:
+        production_ready = True
+        def verify_access_token(self, token):
+            return VerifiedAccessToken("subject-1", "session-1", 9999999999)
+
+    class MutableMembership:
+        production_ready = True
+        tenant_ids = frozenset({"tenant-a"})
+        def tenant_ids_for_subject(self, subject):
+            return self.tenant_ids
+
+    memberships = MutableMembership()
+    source = OidcTenantPrincipalSource(Verifier(), memberships, clock=lambda: 100.0)
+    sessions = SessionValidator()
+    authorizer = RequestScopedTenantAuthorizer(source, sessions, clock=lambda: 100.0)
+    store = SQLiteBackgroundJobStore(str(tmp_path / "membership-recheck.sqlite3"), clock=lambda: 100.0)
+    runner = TenantBackgroundTaskRunner(store, authorizer)
+    queued = principal()
+    job = store.enqueue(queued, "tenant-a")
+    memberships.tenant_ids = frozenset()
+    called = []
+    with pytest.raises(AccountScopeError):
+        runner.run(job, lambda: called.append(True))
+    assert called == []
+    assert store.status(job) == "FAILED"
+
+
 def test_background_task_context_is_restored_after_callback_failure(tmp_path):
     services, _, _, _ = factory()
     store = SQLiteBackgroundJobStore(str(tmp_path / "jobs.sqlite3"), clock=lambda: 100.0)
