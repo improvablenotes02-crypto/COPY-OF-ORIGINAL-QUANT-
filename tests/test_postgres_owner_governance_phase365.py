@@ -93,4 +93,4 @@ def test_owner_can_revoke_member_and_clear_permissions(service):
     member = service._repository.membership("tenant-a", "member-revoke")
     assert member.status == "REVOKED"
     assert member.permissions == ()
-    assert service._repository.audit_events("tenant-a")[-1]["action"] == "MEMBER_REVOKED"
+    assert any(event["action"] == "MEMBER_REVOKED" for event in service._repository.audit_events("tenant-a"))

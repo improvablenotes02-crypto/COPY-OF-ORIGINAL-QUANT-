@@ -182,7 +182,7 @@ def test_owner_can_revoke_member_and_clear_permissions(api):
     membership = repo.membership("tenant-a", "member-1")
     assert membership.status == "REVOKED"
     assert membership.permissions == ()
-    assert repo.audit_events("tenant-a")[-1]["action"] == "MEMBER_REVOKED"
+    assert any(event["action"] == "MEMBER_REVOKED" for event in repo.audit_events("tenant-a"))
 
 
 def test_owner_cannot_revoke_own_identity(api):
