@@ -47,8 +47,9 @@ def validate_adapter_conformance(
 ) -> AdapterConformanceReport:
     """Check required callable methods for declared adapter capabilities.
 
-    Read methods are required for every adapter. Order methods are required
-    only when the adapter declares live order support. Any claim of verified
+    get_products is required for market-data, historical-data, or live-order
+    declarations. Balance and positions are required only when account_data is
+    declared. Order methods are required only for live-order support. Any claim of verified
     live execution must also satisfy the capability object's evidence gate.
     """
     errors: list[str] = []
@@ -88,7 +89,7 @@ def validate_adapter_conformance(
 class AdapterBehaviorProbeReport:
     """Results of explicit, read-only adapter smoke probes.
 
-    This probe invokes only the three shared read methods. It never invokes
+    This probe invokes only the selected read methods. It never invokes
     place_order/cancel_order and cannot certify remote truth or venue safety.
     """
 
