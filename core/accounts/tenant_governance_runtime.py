@@ -144,8 +144,8 @@ class AuthenticatedTenantGovernanceRuntime:
 
     @property
     def production_ready(self) -> bool:
-        # PostgreSQL adapter remains deliberately non-admissible pending
-        # tenant-login provisioning and deployment certification.
+        # Database identity-map enforcement is implemented; production admission
+        # still requires deployment-owned roles, DSN routing, TLS, and evidence.
         return (
             getattr(self._principal_source, "production_ready", False) is True
             and getattr(self._session_validator, "production_ready", False) is True

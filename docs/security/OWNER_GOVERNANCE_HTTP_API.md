@@ -44,8 +44,12 @@ The transport itself does not implement OIDC cryptography, identity provisioning
 TLS termination, rate limiting, or production database isolation. Keep it on
 loopback behind a separately authenticated/TLS-terminating trusted gateway if
 remote operator access is required. The SQLite governance repository remains
-test/development only; the current PostgreSQL tenant-isolation adapter is not
-production-admissible. This API therefore does not certify production readiness.
+test/development only. PostgreSQL production admission still depends on deployed
+per-tenant logins, least-privilege roles, trusted tenant DSN routing, TLS,
+production identity/session adapters, encryption/KMS, and durable background-job
+storage. The authenticated PostgreSQL tenant-login design is implemented and
+integration-tested, but deployment evidence is still required; this API therefore
+does not certify production readiness.
 
 ## Verification
 
@@ -90,3 +94,74 @@ by itself.
 ## PostgreSQL tenant-login deployment
 
 Use the [PostgreSQL tenant-login operations runbook](POSTGRES_TENANT_LOGIN_OPERATIONS.md) to provision one non-privileged database login per tenant, maintain the DBA-owned identity map, configure TLS-verified tenant DSNs, and verify spoof resistance. This database boundary is necessary but does not by itself certify production readiness; deployment identity, session revocation, encryption, background-job storage, and operational recovery evidence remain separate admission requirements.
+
+
+## Minimal owner/member workflow
+
+The workflow is intentionally short. The identity provider must first create or
+recognize the member's login so the owner can use that immutable OIDC
+`subject_id`; this API does not create passwords or provision identity-provider
+accounts.
+
+1. Owner invites the member (`PENDING`).
+2. Owner approves the member.
+3. Member submits broker API credentials (encrypted in the registry; approval is
+   still `PENDING`).
+4. Owner reviews the queue and approves or rejects the credential.
+5. Only that member can use credentials approved for the tenant. The owner can
+   revoke a credential or the member.
+
+Every request requires a verified OIDC bearer token. Replace the placeholders
+with deployment values. Do not put real secrets in shell history or shared
+terminals; use a secret-input mechanism in production.
+
+Invite a member (owner):
+```sh
+curl -fsS -X POST "$BASE/v1/tenants/$TENANT/members" \
+  -H "Authorization: Bearer $OWNER_TOKEN" -H "Content-Type: application/json" \
+  --data '{"subject_id":"'$OIDC_SUBJECT'"}'
+```
+
+Approve the member (owner):
+```sh
+curl -fsS -X POST "$BASE/v1/tenants/$TENANT/members/$OIDC_SUBJECT/decision" \
+  -H "Authorization: Bearer $OWNER_TOKEN" -H "Content-Type: application/json" \
+  --data '{"approve":true}'
+```
+
+Member submits Delta credentials using a protected local file:
+```sh
+curl -fsS -X POST "$BASE/v1/tenants/$TENANT/credentials" \
+  -H "Authorization: Bearer $MEMBER_TOKEN" -H "Content-Type: application/json" \
+  --data-binary @delta-credential-request.json
+```
+
+The file must contain exactly these fields:
+```json
+{
+  "label": "Primary Delta account",
+  "region": "india",
+  "environment": "production",
+  "api_key": "SUPPLY_SECURELY",
+  "api_secret": "SUPPLY_SECURELY"
+}
+```
+
+Owner reviews pending credentials:
+```sh
+curl -fsS "$BASE/v1/tenants/$TENANT/credentials" \
+  -H "Authorization: Bearer $OWNER_TOKEN"
+```
+
+Owner approves a credential using its returned `account_id`:
+```sh
+curl -fsS -X POST "$BASE/v1/tenants/$TENANT/credentials/ACCOUNT_ID/decision" \
+  -H "Authorization: Bearer $OWNER_TOKEN" -H "Content-Type: application/json" \
+  --data '{"approve":true}'
+```
+
+Use `{"approve":false}` to reject. The owner can revoke a credential with
+`DELETE /v1/tenants/{tenant}/credentials/{credential_id}`, or revoke a member
+with `DELETE /v1/tenants/{tenant}/members/{subject_id}`. Member revocation also
+clears permissions and revokes that member's pending/approved credential
+registrations; it does not delete the external identity-provider account.
