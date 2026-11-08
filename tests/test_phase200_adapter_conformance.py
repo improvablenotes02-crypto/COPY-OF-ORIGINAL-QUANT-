@@ -10,6 +10,7 @@ def caps(**kwargs):
         venue="test-venue",
         market_families=frozenset({MarketFamily.CRYPTO}),
         instrument_types=frozenset({InstrumentType.SPOT}),
+        market_data=True,
         account_data=True,
     )
     defaults.update(kwargs)
