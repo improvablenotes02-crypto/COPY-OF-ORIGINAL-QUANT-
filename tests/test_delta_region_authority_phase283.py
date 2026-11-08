@@ -199,3 +199,13 @@ def test_delta_exchange_product_catalog_uses_its_pinned_rest_transport():
     exchange = DeltaExchange(api_key="", api_secret="", rest=rest)
     assert exchange.get_products() == {"result": [{"symbol": "BTCUSD"}]}
     assert rest.calls == [("/v2/products", None)]
+
+def test_default_product_discovery_client_uses_configured_venue():
+    from config import settings as settings_mod
+    from data.delta.product_client import ProductClient
+    with mock.patch.object(settings_mod.settings, "DELTA_REGION", "INDIA"), mock.patch.object(settings_mod.settings, "DELTA_ENVIRONMENT", "PRODUCTION"):
+        client = ProductClient()
+    try:
+        assert client.rest.base_url == "https://api.india.delta.exchange"
+    finally:
+        client.rest.client.close()
