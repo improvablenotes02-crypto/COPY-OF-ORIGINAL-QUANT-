@@ -161,6 +161,20 @@ class SQLiteOwnerGovernanceRepository:
             )
             if cur.rowcount != 1:
                 raise GovernanceConflictError("membership is not approved")
+            credentials = self._db.execute(
+                "SELECT credential_id FROM qe_credential_approvals "
+                "WHERE tenant_id=? AND subject_id=? AND status IN ('PENDING','APPROVED') "
+                "ORDER BY credential_id",
+                (tenant, subject),
+            ).fetchall()
+            self._db.execute(
+                "UPDATE qe_credential_approvals SET status='REVOKED',updated_at_ns=? "
+                "WHERE tenant_id=? AND subject_id=? AND status IN ('PENDING','APPROVED')",
+                (now, tenant, subject),
+            )
+            for credential in credentials:
+                self._audit(tenant, actor, "CREDENTIAL_REVOKED_MEMBER_REMOVAL",
+                            credential["credential_id"], now)
             self._audit(tenant, actor, "MEMBER_REVOKED", subject, now)
 
     def membership(self, tenant, subject):

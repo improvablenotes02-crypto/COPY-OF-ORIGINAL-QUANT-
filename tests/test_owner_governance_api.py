@@ -168,6 +168,11 @@ def test_owner_can_revoke_member_and_clear_permissions(api):
               "owner-token", {"subject_id": "member-1", "permissions": ["read", "trade_paper"]})
     _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
               "owner-token", {"approve": True, "permissions": ["read", "trade_paper"]})
+    _request(server, "POST", "/v1/tenants/tenant-a/credentials", "member-token",
+             {"credential_id": "cred-revoke", "account_id": "acct-revoke",
+              "fingerprint": "f" * 64})
+    _request(server, "POST", "/v1/tenants/tenant-a/credentials/cred-revoke/decision",
+             "owner-token", {"approve": True})
 
     status, _ = _request(
         server, "DELETE", "/v1/tenants/tenant-a/members/member-1", "member-token"
@@ -182,7 +187,15 @@ def test_owner_can_revoke_member_and_clear_permissions(api):
     membership = repo.membership("tenant-a", "member-1")
     assert membership.status == "REVOKED"
     assert membership.permissions == ()
-    assert any(event["action"] == "MEMBER_REVOKED" for event in repo.audit_events("tenant-a"))
+    assert repo.credential("tenant-a", "cred-revoke").status == "REVOKED"
+    from core.accounts.delta_credential_approval import OwnerGovernanceDeltaCredentialApprovalProvider
+    provider = OwnerGovernanceDeltaCredentialApprovalProvider(repo)
+    assert not provider.is_approved(
+        tenant_id="tenant-a", account_id="acct-revoke", fingerprint="f" * 64
+    )
+    actions = [event["action"] for event in repo.audit_events("tenant-a")]
+    assert "CREDENTIAL_REVOKED_MEMBER_REMOVAL" in actions
+    assert "MEMBER_REVOKED" in actions
 
 
 def test_owner_cannot_revoke_own_identity(api):

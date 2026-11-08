@@ -56,6 +56,15 @@ class PostgreSQLOwnerGovernanceRepository:
                 (now,tenant,subject),
             )
             if cur.rowcount!=1: raise GovernanceConflictError("membership is not approved")
+            credentials=c.execute(
+                "UPDATE public.qe_credential_approvals SET status='REVOKED',updated_at_ns=%s "
+                "WHERE tenant_id=%s AND subject_id=%s AND status IN ('PENDING','APPROVED') "
+                "RETURNING credential_id",
+                (now,tenant,subject),
+            ).fetchall()
+            for credential in credentials:
+                self._audit(c,tenant,actor,"CREDENTIAL_REVOKED_MEMBER_REMOVAL",
+                            credential["credential_id"],now)
             self._audit(c,tenant,actor,"MEMBER_REVOKED",subject,now)
     def membership(self,tenant,subject):
         with self._connection(tenant) as c: row=c.execute("SELECT * FROM public.qe_memberships WHERE tenant_id=%s AND subject_id=%s",(tenant,subject)).fetchone()
