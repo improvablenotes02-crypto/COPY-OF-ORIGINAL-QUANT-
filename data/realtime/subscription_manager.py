@@ -288,18 +288,32 @@ class MultiSymbolSubscriptionManager:
     # --------------------------------------------------
 
     def poll(self):
-        """Pump every worker: fire scheduled reconnect attempts and
-        apply STALE transitions. One worker's failure (including
-        ReconnectExhausted) is isolated and recorded."""
+        """Pump the shared transport, then worker reconnect/stale timers.
+
+        Receive failures revoke every affected worker before their bounded
+        reconnect policy runs. Legacy transports without poll() are unchanged.
+        """
+        if self._transport is not None:
+            transport_poll = getattr(self._transport, "poll", None)
+            if callable(transport_poll):
+                try:
+                    transport_poll()
+                except Exception as error:
+                    self.errors.append(("transport", "poll", type(error).__name__))
+                    for worker in list(self._workers.values()):
+                        try:
+                            worker.transport_down()
+                        except Exception as worker_error:
+                            self.errors.append((
+                                getattr(worker, "symbol", "unknown"),
+                                "transport_down",
+                                type(worker_error).__name__,
+                            ))
 
         for symbol, worker in list(self._workers.items()):
-
             try:
-
                 worker.poll()
-
             except Exception as error:
-
                 self.errors.append((symbol, "poll", error))
 
     # --------------------------------------------------

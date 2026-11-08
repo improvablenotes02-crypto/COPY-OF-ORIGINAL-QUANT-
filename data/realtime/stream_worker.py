@@ -163,19 +163,18 @@ class SubscriptionWorker:
 
     # --------------------------------------------------
 
-    def _on_down(self):
-        """Transport signal: this symbol's stream dropped or the
-        underlying connection died. Only a live/current
-        subscription reacts; a stopped one ignores the signal."""
-
-        if self.state.status not in (SubscriptionStatus.LIVE,
-                                     SubscriptionStatus.STALE):
+    def transport_down(self):
+        """Publicly mark this worker disconnected after a shared pump failure."""
+        if self.state.status not in (SubscriptionStatus.LIVE, SubscriptionStatus.STALE):
             return
-
         self.state.reconnect_attempts = 1
         self.state.last_error = "stream disconnected"
         self._set_status(SubscriptionStatus.RECONNECTING)
         self._schedule_retry(self.policy.next_delay(attempt=1))
+
+    def _on_down(self):
+        """Transport callback: only the current live subscription reacts."""
+        self.transport_down()
 
     # --------------------------------------------------
 
