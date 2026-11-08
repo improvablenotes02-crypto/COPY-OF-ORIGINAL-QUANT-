@@ -15,7 +15,10 @@ from core.accounts.owner_governance import (
     OwnerGovernance,
     SQLiteOwnerGovernanceRepository,
 )
-from core.accounts.owner_governance_api import (\n    ProductionAdmissionError, create_owner_governance_server,\n)
+from core.accounts.owner_governance_api import (
+    ProductionAdmissionError,
+    create_owner_governance_server,
+)
 
 
 class _Verifier:
