@@ -477,3 +477,30 @@ def test_get_and_delete_reject_request_bodies(api):
     )
     assert status == 400
     assert result["error"] == "bad_request"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("api_key", 123),
+    ("api_secret", None),
+    ("label", ["account"]),
+    ("region", {"name": "global"}),
+    ("environment", False),
+    ("api_key", "   "),
+    ("api_secret", ""),
+    ("label", ""),
+])
+def test_raw_credential_submission_rejects_invalid_field_types_before_vault_write(api, field, value):
+    server, _repo, registry = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members",
+             "owner-token", {"subject_id": "member-1"})
+    _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
+             "owner-token", {"approve": True})
+    payload = {"label": "Trading account", "region": "global",
+               "environment": "testnet", "api_key": "valid-key",
+               "api_secret": "valid-secret"}
+    payload[field] = value
+    status, result = _request(server, "POST", "/v1/tenants/tenant-a/credentials",
+                              "member-token", payload)
+    assert status == 400
+    assert result["error"] == "bad_request"
+    assert registry.accounts == {}

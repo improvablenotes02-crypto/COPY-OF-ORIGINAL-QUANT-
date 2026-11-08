@@ -205,6 +205,12 @@ def _dispatch(governance, method: str, path: str, body: dict, account_registry=N
         if {"api_key", "api_secret", "label", "region", "environment"} == set(body):
             if account_registry is None:
                 raise LookupError("credential submission is not configured")
+            # Validate untrusted JSON types before hashing or passing values to
+            # the vault. This keeps malformed submissions on the 400 boundary.
+            for field in ("api_key", "api_secret", "label", "region", "environment"):
+                value = body[field]
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"{field} must be a non-empty string")
             fingerprint = delta_credential_fingerprint(body["api_key"], body["api_secret"])
             metadata = account_registry.register_account(
                 tenant_id=tenant, label=body["label"], region=body["region"],
