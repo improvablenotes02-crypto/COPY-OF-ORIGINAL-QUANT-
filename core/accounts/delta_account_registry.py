@@ -59,16 +59,22 @@ class EncryptionProvider(Protocol):
 
 
 class TenantAuthorizationProvider(Protocol):
-    """Server-side tenant authorization bound to the authenticated request principal."""
+    """Server-side tenant and subject authorization bound to the verified principal."""
     production_ready: bool
     def authorize_tenant(self, tenant_id: str) -> bool:
+        ...
+    def current_subject_id(self, tenant_id: str) -> str:
         ...
 
 
 class DeltaCredentialApprovalProvider(Protocol):
-    """Owner-governance lookup for an exact account and credential fingerprint."""
+    """Owner-governance lookup for an exact member/account/fingerprint tuple."""
     production_ready: bool
     def is_approved(self, *, tenant_id: str, account_id: str, fingerprint: str) -> bool:
+        ...
+    def is_approved_for_subject(
+        self, *, tenant_id: str, account_id: str, fingerprint: str, subject_id: str
+    ) -> bool:
         ...
 
 
