@@ -209,6 +209,16 @@ def test_registry_denies_an_approved_credential_to_another_member():
             registry.open_read_only_session(
                 tenant_id="tenant-a", account_id=metadata.account_id,
             )
+
+        # Restore the original verified member, then revoke membership while
+        # the client session is still alive. The governance transition revokes
+        # the member's credential approval, which must invalidate that session.
+        authorizer.subject = "member-a"
+        governance.revoke_member(
+            actor_id="owner-1", tenant_id="tenant-a", subject_id="member-a",
+        )
+        with pytest.raises(CredentialVaultError, match="no longer authorized"):
+            session.get_balance()
         session.close()
     finally:
         account_repo.close()
