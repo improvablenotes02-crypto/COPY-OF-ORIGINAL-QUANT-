@@ -50,7 +50,8 @@ def test_active_handler_limit_returns_retryable_503():
         first = _post_bytes(server.server_address[1])
         assert entered.wait(2)
         with socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=2) as second:
-            second.sendall(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            # Rejection occurs at accept time, before request parsing. Avoid
+            # unread inbound bytes so Windows does not reset the TCP close.
             response = second.recv(1024)
         assert b"503 Service Unavailable" in response
         assert b"Retry-After: 1" in response
