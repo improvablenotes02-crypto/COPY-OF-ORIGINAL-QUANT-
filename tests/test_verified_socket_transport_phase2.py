@@ -13,6 +13,7 @@ from data.delta.verified_socket_transport import (
     GLOBAL_PUBLIC_SOCKET,
     GlobalEvidenceMissing,
     VerifiedSocketTransport,
+    check_global_evidence,
 )
 
 
