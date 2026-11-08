@@ -201,7 +201,6 @@ def test_registry_denies_an_approved_credential_to_another_member():
             tenant_id="tenant-a", account_id=metadata.account_id,
         )
         assert session.get_balance() == {"success": True}
-        session.close()
 
         authorizer.subject = "member-b"
         with pytest.raises(CredentialVaultError, match="no longer authorized"):
@@ -210,6 +209,7 @@ def test_registry_denies_an_approved_credential_to_another_member():
             registry.open_read_only_session(
                 tenant_id="tenant-a", account_id=metadata.account_id,
             )
+        session.close()
     finally:
         account_repo.close()
         governance_repo.close()
