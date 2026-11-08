@@ -114,6 +114,17 @@ key pair. The selected region/environment now pins provider REST hosts,
 contract discovery and the LIVE client factory. Missing or unknown
 selection fails closed instead of silently using Global.
 
+Verify your own configured key pair before running the engine:
+
+```powershell
+python scripts/check_delta_credentials.py
+```
+
+This performs one signed account-identity read only. It does not read
+balances, place orders, or print your API key, secret, or account ID.
+A successful check confirms authentication for the selected region and
+environment; it does not enable live trading.
+
 ### 2.3 PAPER + Delta market data
 
 Delta connectivity is **optional and best-effort**; the runtime still
