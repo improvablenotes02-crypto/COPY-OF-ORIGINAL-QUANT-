@@ -36,6 +36,8 @@ class AuthenticatedTenantGovernanceRuntime:
             raise ValueError("trusted session validator is required")
         self._principal_source = principal_source
         self._session_validator = session_validator
+        self._tenant_dsn_resolver = tenant_dsn_resolver
+        self._connect_timeout = connect_timeout
         self._authorizer = RequestScopedTenantAuthorizer(
             principal_source, session_validator, clock=auth_clock
         )

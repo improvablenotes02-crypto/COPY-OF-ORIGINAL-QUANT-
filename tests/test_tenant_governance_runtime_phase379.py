@@ -62,6 +62,8 @@ def test_runtime_builds_owner_api_with_encrypted_registry_and_shared_tenant_guar
         encryption_provider=encryption_provider, allow_nonproduction=True
     ) is sentinel_server
     assert captured["encryption_provider"] is encryption_provider
+    assert captured["resolver"] is not None
+    assert captured["timeout"] == 5
     assert captured["tenant_authorizer"] is service.tenant_authorizer
     assert captured["repository_authorizer"] is service.tenant_authorizer
     assert captured["credential_approval_provider"] is service.credential_approval_provider
