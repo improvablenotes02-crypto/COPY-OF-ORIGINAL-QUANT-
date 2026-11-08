@@ -82,7 +82,7 @@ def _dispatch(governance, method: str, path: str, body: dict):
         raise LookupError("route not found")
     tenant = _segment(parts[2])
 
-    if method == "GET" and len(parts) == 3:
+    if method == "GET" and len(parts) == 4 and parts[3] == "members":
         members = governance.list_members(tenant_id=tenant)
         return {"members": [
             {"subject_id": item.subject_id, "status": item.status,
