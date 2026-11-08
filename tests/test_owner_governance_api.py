@@ -295,7 +295,8 @@ def test_owner_can_list_members_and_pending_credential_approvals(api):
     assert status == 200 and members["members"][0]["subject_id"] == "member-1"
     status, credentials = _request(server, "GET", "/v1/tenants/tenant-a/credentials", "owner-token")
     assert status == 200 and credentials["credentials"][0]["status"] == "PENDING"
-    assert credentials["credentials"][0]["fingerprint"] == "d" * 64
+    assert credentials["credentials"][0]["account_id"] == "acct-1"
+    assert "fingerprint" not in credentials["credentials"][0]
 
 def test_member_cannot_list_owner_management_views(api):
     server, repo, *_ = api

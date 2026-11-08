@@ -118,7 +118,7 @@ def _dispatch(governance, method: str, path: str, body: dict, account_registry=N
         credentials = governance.list_credentials(tenant_id=tenant)
         return {"credentials": [
             {"credential_id": item.credential_id, "subject_id": item.subject_id,
-             "account_id": item.account_id, "fingerprint": item.fingerprint,
+             "account_id": item.account_id,
              "status": item.status, "created_at_ns": item.created_at_ns,
              "updated_at_ns": item.updated_at_ns}
             for item in credentials

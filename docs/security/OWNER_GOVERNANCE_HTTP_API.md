@@ -11,7 +11,7 @@ authenticated governance adapters.
 Routes:
 
 - `GET /v1/tenants/{tenant}/members` — owner-only member list with status and permissions.
-- `GET /v1/tenants/{tenant}/credentials` — owner-only credential approval queue; metadata and fingerprint only.
+- `GET /v1/tenants/{tenant}/credentials` — owner-only credential approval queue; account, submitter, status, and timestamps only. Credential fingerprints remain internal for exact approval matching.
 
 - `POST /v1/tenants/{tenant}/members` — owner invites a member (PENDING).
 - `POST /v1/tenants/{tenant}/members/{subject}/decision` — owner approves or rejects.
