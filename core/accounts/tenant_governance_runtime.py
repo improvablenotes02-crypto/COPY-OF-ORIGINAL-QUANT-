@@ -58,6 +58,7 @@ class AuthenticatedTenantGovernanceRuntime:
         self._background_job_store = background_job_store
         self._background_runner = TenantBackgroundTaskRunner(background_job_store, self._authorizer) if background_job_store is not None else None
         self._delta_account_registry = None
+        self._encryption_provider = None
 
     @property
     def owner_governance(self) -> AuthenticatedOwnerGovernance:
@@ -94,6 +95,14 @@ class AuthenticatedTenantGovernanceRuntime:
             raise ValueError("an approved credential encryption provider is required")
         if not isinstance(allow_nonproduction, bool):
             raise ValueError("allow_nonproduction must be boolean")
+        if (
+            not allow_nonproduction
+            and getattr(encryption_provider, "production_ready", False) is not True
+        ):
+            from core.accounts.owner_governance_api import ProductionAdmissionError
+            raise ProductionAdmissionError(
+                "production owner API requires an approved credential encryption provider"
+            )
         delta_persistence = AuthenticatedPostgreSQLDeltaAccountRepository(
             self._tenant_dsn_resolver, connect_timeout=self._connect_timeout
         )
@@ -104,6 +113,7 @@ class AuthenticatedTenantGovernanceRuntime:
             delta_repository, encryption_provider,
             tenant_authorizer=self._authorizer,
             credential_approval_provider=self._credential_approval,
+            require_production_security=not allow_nonproduction,
         )
         server = create_owner_governance_server(
             self._owner_governance, host=host, port=port,
@@ -111,6 +121,7 @@ class AuthenticatedTenantGovernanceRuntime:
             allow_nonproduction=allow_nonproduction, account_registry=registry,
         )
         self._delta_account_registry = registry
+        self._encryption_provider = encryption_provider
         return server
 
     def enqueue_background_job(self, tenant_id: str, *, ttl_seconds: float = 300.0) -> str:
@@ -144,4 +155,8 @@ class AuthenticatedTenantGovernanceRuntime:
             and getattr(self._repository, "tenant_isolation_enforced", False) is True
             and self._background_job_store is not None
             and getattr(self._background_job_store, "production_ready", False) is True
+            and self._encryption_provider is not None
+            and getattr(self._encryption_provider, "production_ready", False) is True
+            and self._delta_account_registry is not None
+            and self._delta_account_registry.production_ready is True
         )
