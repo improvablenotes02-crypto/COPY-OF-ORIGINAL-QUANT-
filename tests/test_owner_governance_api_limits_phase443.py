@@ -11,6 +11,7 @@ from core.accounts.owner_governance_api import create_owner_governance_server
 
 
 def _start(governance, **kwargs):
+    kwargs.setdefault("allow_nonproduction", True)
     server = create_owner_governance_server(governance, **kwargs)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -121,7 +122,9 @@ def test_resource_limits_reject_invalid_values(kwargs):
 
 
 def test_localhost_is_verified_after_numeric_bind_resolution():
-    server = create_owner_governance_server(object(), host="localhost")
+    server = create_owner_governance_server(
+        object(), host="localhost", allow_nonproduction=True
+    )
     try:
         assert ipaddress.ip_address(server.server_address[0]).is_loopback
     finally:
