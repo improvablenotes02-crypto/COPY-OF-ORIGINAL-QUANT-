@@ -47,6 +47,36 @@ def factory():
     return services, source, sessions, calls
 
 
+def test_repository_facades_and_credential_approval_propagate_production_contract():
+    from core.accounts.delta_credential_approval import OwnerGovernanceDeltaCredentialApprovalProvider
+    from core.accounts.postgres_tenant_services import TenantDeltaAccountRepository, TenantGovernanceRepository
+
+    class ReadyAuthorizer:
+        production_ready = True
+        def authorize_tenant(self, tenant_id): return True
+
+    class ReadyPersistence:
+        production_ready = True
+        durable_shared_storage = True
+        tenant_isolation_enforced = True
+        def credentials_for_account_fingerprint(self, tenant, account, fingerprint):
+            return []
+
+    authorizer = ReadyAuthorizer()
+    persistence = ReadyPersistence()
+    governance = TenantGovernanceRepository(persistence, authorizer)
+    delta = TenantDeltaAccountRepository(persistence, authorizer)
+    approval = OwnerGovernanceDeltaCredentialApprovalProvider(governance)
+    assert governance.production_ready is True
+    assert governance.durable_shared_storage is True
+    assert governance.tenant_isolation_enforced is True
+    assert delta.production_ready is True
+    assert approval.production_ready is True
+
+    untrusted = TenantGovernanceRepository(persistence, ContextVarPrincipalSource())
+    assert untrusted.production_ready is False
+
+
 def test_factory_only_builds_authenticated_postgres_repositories():
     services, _, _, _ = factory()
     delta = services.delta_repository()
