@@ -135,6 +135,84 @@ def test_subject_bound_approval_only_allows_original_submitter():
     repository.close()
 
 
+def test_registry_denies_an_approved_credential_to_another_member():
+    import hashlib
+    from core.accounts.delta_account_registry import (
+        CiphertextEnvelope, CredentialVaultError, DeltaAccountRegistry,
+        SQLiteDeltaAccountRepository, delta_credential_fingerprint,
+    )
+
+    class Crypto:
+        def encrypt(self, plaintext, *, associated_data):
+            tag = hashlib.sha256(associated_data).digest()[:16]
+            return CiphertextEnvelope("test-key", "TEST-ONLY", tag + bytes(x ^ 165 for x in plaintext))
+        def decrypt(self, envelope, *, associated_data):
+            tag = hashlib.sha256(associated_data).digest()[:16]
+            if not envelope.ciphertext.startswith(tag):
+                raise ValueError("context")
+            return bytes(x ^ 165 for x in envelope.ciphertext[16:])
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        def get_balance(self): return {"success": True}
+        def close(self): pass
+
+    class Authorizer:
+        production_ready = False
+        subject = "member-a"
+        def authorize_tenant(self, tenant_id): return tenant_id == "tenant-a"
+        def current_subject_id(self, tenant_id):
+            if not self.authorize_tenant(tenant_id):
+                raise RuntimeError("tenant denied")
+            return self.subject
+
+    governance_repo, governance, _ = setup()
+    account_repo = SQLiteDeltaAccountRepository()
+    authorizer = Authorizer()
+    try:
+        registry = DeltaAccountRegistry(
+            account_repo, Crypto(), exchange_factory=Client,
+            tenant_authorizer=authorizer,
+            credential_approval_provider=OwnerGovernanceDeltaCredentialApprovalProvider(governance_repo),
+        )
+        metadata = registry.register_account(
+            tenant_id="tenant-a", label="member account", region="INDIA",
+            environment="SANDBOX", api_key="member-key", api_secret="member-secret",
+        )
+        fingerprint = delta_credential_fingerprint("member-key", "member-secret")
+        governance.invite_member(
+            actor_id="owner-1", tenant_id="tenant-a", subject_id="member-a",
+            permissions=["read"],
+        )
+        governance.decide_member(
+            actor_id="owner-1", tenant_id="tenant-a", subject_id="member-a",
+            approve=True, permissions=["read"],
+        )
+        governance.submit_credential(
+            actor_id="member-a", tenant_id="tenant-a",
+            credential_id="member-credential", account_id=metadata.account_id,
+            fingerprint=fingerprint,
+        )
+        governance.decide_credential(
+            actor_id="owner-1", tenant_id="tenant-a",
+            credential_id="member-credential", approve=True,
+        )
+        session = registry.open_read_only_session(
+            tenant_id="tenant-a", account_id=metadata.account_id,
+        )
+        assert session.get_balance() == {"success": True}
+        session.close()
+
+        authorizer.subject = "member-b"
+        with pytest.raises(CredentialVaultError, match="not owner-approved"):
+            registry.open_read_only_session(
+                tenant_id="tenant-a", account_id=metadata.account_id,
+            )
+    finally:
+        account_repo.close()
+        governance_repo.close()
+
+
 def test_provider_never_claims_production_readiness():
     repository, _governance, provider = setup()
     assert provider.production_ready is False
