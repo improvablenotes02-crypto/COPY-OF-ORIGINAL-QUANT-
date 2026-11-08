@@ -146,10 +146,30 @@ def _dispatch(governance, method: str, path: str, body: dict, account_registry=N
     if method == "DELETE" and len(parts) == 5 and parts[3] == "members":
         if body:
             raise ValueError("DELETE request body must be empty")
-        governance.revoke_member(
-            tenant_id=tenant, subject_id=_segment(parts[4])
-        )
-        return {"ok": True, "status": "REVOKED"}
+        subject_id = _segment(parts[4])
+        member_credentials = [
+            item for item in governance.list_credentials(tenant_id=tenant)
+            if item.subject_id == subject_id
+        ]
+        governance.revoke_member(tenant_id=tenant, subject_id=subject_id)
+        vault_deleted = 0
+        vault_cleanup_pending = 0
+        if account_registry is not None:
+            for item in member_credentials:
+                try:
+                    if account_registry.delete_account(
+                        tenant_id=tenant, account_id=item.account_id
+                    ):
+                        vault_deleted += 1
+                except Exception:
+                    # Membership and credential approval are already revoked;
+                    # a failed vault cleanup cannot restore access.
+                    vault_cleanup_pending += 1
+        return {
+            "ok": True, "status": "REVOKED",
+            "vault_deleted": vault_deleted,
+            "vault_cleanup_pending": vault_cleanup_pending,
+        }
 
     if method == "POST" and len(parts) == 4 and parts[3] == "credentials":
         if {"api_key", "api_secret", "label", "region", "environment"} == set(body):

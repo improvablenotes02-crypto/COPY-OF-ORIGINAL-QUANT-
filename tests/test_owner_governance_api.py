@@ -364,6 +364,34 @@ def test_owner_credential_revocation_deletes_encrypted_vault_record(api):
     assert status == 200 and repeated["status"] == "REVOKED"
 
 
+def test_member_revocation_deletes_all_submitted_vault_credentials(api):
+    server, repo, registry = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members",
+             "owner-token", {"subject_id": "member-1"})
+    _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
+             "owner-token", {"approve": True})
+    status, submitted = _request(
+        server, "POST", "/v1/tenants/tenant-a/credentials", "member-token",
+        {"label": "Member trading account", "region": "global",
+         "environment": "testnet", "api_key": "member-key",
+         "api_secret": "member-secret"},
+    )
+    assert status == 200
+    account_id = submitted["account_id"]
+    assert account_id in registry.accounts
+
+    status, result = _request(
+        server, "DELETE", "/v1/tenants/tenant-a/members/member-1", "owner-token"
+    )
+    assert status == 200
+    assert result["status"] == "REVOKED"
+    assert result["vault_deleted"] == 1
+    assert result["vault_cleanup_pending"] == 0
+    assert repo.membership("tenant-a", "member-1").status == "REVOKED"
+    assert repo.credential("tenant-a", account_id).status == "REVOKED"
+    assert account_id not in registry.accounts
+
+
 def test_raw_credential_submission_rolls_back_vault_record_when_membership_not_approved(api):
     server, _repo, registry = api
     status, result = _request(
