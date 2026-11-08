@@ -103,6 +103,26 @@ def _request(server, method, path, token=None, body=None):
         return exc.code, json.loads(exc.read())
 
 
+def test_request_json_rejects_duplicate_keys_and_non_finite_numbers():
+    import io
+    from email.message import Message
+    from types import SimpleNamespace
+    from core.accounts.owner_governance_api import _object_body
+
+    def parse(raw):
+        headers = Message()
+        headers["Content-Type"] = "application/json"
+        headers["Content-Length"] = str(len(raw))
+        return _object_body(SimpleNamespace(headers=headers, rfile=io.BytesIO(raw)))
+
+    with pytest.raises(ValueError, match="invalid JSON body"):
+        parse(b'{"subject_id":"safe","subject_id":"attacker"}')
+    with pytest.raises(ValueError, match="invalid JSON body"):
+        parse(b'{"amount":NaN}')
+    with pytest.raises(ValueError, match="invalid JSON body"):
+        parse(b'{"amount":1e999}')
+
+
 def test_owner_invites_and_approves_member_using_verified_actor(api):
     server, repo, *_ = api
     status, result = _request(
@@ -275,7 +295,8 @@ def test_owner_can_list_members_and_pending_credential_approvals(api):
     assert status == 200 and members["members"][0]["subject_id"] == "member-1"
     status, credentials = _request(server, "GET", "/v1/tenants/tenant-a/credentials", "owner-token")
     assert status == 200 and credentials["credentials"][0]["status"] == "PENDING"
-    assert credentials["credentials"][0]["fingerprint"] == "d" * 64
+    assert credentials["credentials"][0]["account_id"] == "acct-1"
+    assert "fingerprint" not in credentials["credentials"][0]
 
 def test_member_cannot_list_owner_management_views(api):
     server, repo, *_ = api
@@ -304,6 +325,71 @@ def test_member_submits_raw_delta_credentials_to_encrypted_registry_for_owner_ap
     approval = repo.credential("tenant-a", "vault-account-1")
     assert approval.status == "PENDING"
     assert approval.account_id == "vault-account-1"
+
+
+def test_owner_credential_revocation_deletes_encrypted_vault_record(api):
+    server, repo, registry = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members",
+             "owner-token", {"subject_id": "member-1"})
+    _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
+             "owner-token", {"approve": True})
+    status, submitted = _request(
+        server, "POST", "/v1/tenants/tenant-a/credentials", "member-token",
+        {"label": "Trading account", "region": "global", "environment": "testnet",
+         "api_key": "revoke-key", "api_secret": "revoke-secret"},
+    )
+    assert status == 200 and submitted["status"] == "PENDING"
+    account_id = submitted["account_id"]
+    assert account_id in registry.accounts
+    status, approved = _request(
+        server, "POST", f"/v1/tenants/tenant-a/credentials/{account_id}/decision",
+        "owner-token", {"approve": True},
+    )
+    assert status == 200 and approved["status"] == "APPROVED"
+
+    status, revoked = _request(
+        server, "DELETE", f"/v1/tenants/tenant-a/credentials/{account_id}",
+        "owner-token",
+    )
+    assert status == 200
+    assert revoked == {"ok": True, "status": "REVOKED", "vault_deleted": True}
+    assert repo.credential("tenant-a", account_id).status == "REVOKED"
+    assert account_id not in registry.accounts
+
+    # A retry safely completes cleanup if the first delete failed after revocation.
+    status, repeated = _request(
+        server, "DELETE", f"/v1/tenants/tenant-a/credentials/{account_id}",
+        "owner-token",
+    )
+    assert status == 200 and repeated["status"] == "REVOKED"
+
+
+def test_member_revocation_deletes_all_submitted_vault_credentials(api):
+    server, repo, registry = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members",
+             "owner-token", {"subject_id": "member-1"})
+    _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
+             "owner-token", {"approve": True})
+    status, submitted = _request(
+        server, "POST", "/v1/tenants/tenant-a/credentials", "member-token",
+        {"label": "Member trading account", "region": "global",
+         "environment": "testnet", "api_key": "member-key",
+         "api_secret": "member-secret"},
+    )
+    assert status == 200
+    account_id = submitted["account_id"]
+    assert account_id in registry.accounts
+
+    status, result = _request(
+        server, "DELETE", "/v1/tenants/tenant-a/members/member-1", "owner-token"
+    )
+    assert status == 200
+    assert result["status"] == "REVOKED"
+    assert result["vault_deleted"] == 1
+    assert result["vault_cleanup_pending"] == 0
+    assert repo.membership("tenant-a", "member-1").status == "REVOKED"
+    assert repo.credential("tenant-a", account_id).status == "REVOKED"
+    assert account_id not in registry.accounts
 
 
 def test_raw_credential_submission_rolls_back_vault_record_when_membership_not_approved(api):

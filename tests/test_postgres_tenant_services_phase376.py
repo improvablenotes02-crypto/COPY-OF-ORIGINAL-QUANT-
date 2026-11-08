@@ -47,6 +47,36 @@ def factory():
     return services, source, sessions, calls
 
 
+def test_repository_facades_and_credential_approval_propagate_production_contract():
+    from core.accounts.delta_credential_approval import OwnerGovernanceDeltaCredentialApprovalProvider
+    from core.accounts.postgres_tenant_services import TenantDeltaAccountRepository, TenantGovernanceRepository
+
+    class ReadyAuthorizer:
+        production_ready = True
+        def authorize_tenant(self, tenant_id): return True
+
+    class ReadyPersistence:
+        production_ready = True
+        durable_shared_storage = True
+        tenant_isolation_enforced = True
+        def credentials_for_account_fingerprint(self, tenant, account, fingerprint):
+            return []
+
+    authorizer = ReadyAuthorizer()
+    persistence = ReadyPersistence()
+    governance = TenantGovernanceRepository(persistence, authorizer)
+    delta = TenantDeltaAccountRepository(persistence, authorizer)
+    approval = OwnerGovernanceDeltaCredentialApprovalProvider(governance)
+    assert governance.production_ready is True
+    assert governance.durable_shared_storage is True
+    assert governance.tenant_isolation_enforced is True
+    assert delta.production_ready is True
+    assert approval.production_ready is True
+
+    untrusted = TenantGovernanceRepository(persistence, ContextVarPrincipalSource())
+    assert untrusted.production_ready is False
+
+
 def test_factory_only_builds_authenticated_postgres_repositories():
     services, _, _, _ = factory()
     delta = services.delta_repository()
@@ -96,6 +126,51 @@ def test_background_task_revalidates_tenant_and_session(tmp_path):
     sessions.active = False
     with pytest.raises(AccountScopeError):
         runner.run(revoked_job, lambda: "must not run")
+
+
+def test_background_task_uses_persisted_principal_with_oidc_request_source(tmp_path):
+    class EmptyOidcSource:
+        production_ready = True
+        def current_principal(self): return None
+
+    sessions = SessionValidator()
+    authorizer = RequestScopedTenantAuthorizer(EmptyOidcSource(), sessions)
+    store = SQLiteBackgroundJobStore(str(tmp_path / "oidc-worker.sqlite3"), clock=lambda: 100.0)
+    runner = TenantBackgroundTaskRunner(store, authorizer)
+    job = store.enqueue(principal(), "tenant-a")
+    assert runner.run(job, lambda: authorizer.authorize_tenant("tenant-a")) is True
+    with pytest.raises(AccountScopeError):
+        authorizer.authorize_tenant("tenant-a")
+
+
+def test_background_task_rechecks_current_oidc_membership_before_callback(tmp_path):
+    from core.accounts.oidc_tenant_principal import OidcTenantPrincipalSource, VerifiedAccessToken
+
+    class Verifier:
+        production_ready = True
+        def verify_access_token(self, token):
+            return VerifiedAccessToken("subject-1", "session-1", 9999999999)
+
+    class MutableMembership:
+        production_ready = True
+        tenant_ids = frozenset({"tenant-a"})
+        def tenant_ids_for_subject(self, subject):
+            return self.tenant_ids
+
+    memberships = MutableMembership()
+    source = OidcTenantPrincipalSource(Verifier(), memberships, clock=lambda: 100.0)
+    sessions = SessionValidator()
+    authorizer = RequestScopedTenantAuthorizer(source, sessions, clock=lambda: 100.0)
+    store = SQLiteBackgroundJobStore(str(tmp_path / "membership-recheck.sqlite3"), clock=lambda: 100.0)
+    runner = TenantBackgroundTaskRunner(store, authorizer)
+    queued = principal()
+    job = store.enqueue(queued, "tenant-a")
+    memberships.tenant_ids = frozenset()
+    called = []
+    with pytest.raises(AccountScopeError):
+        runner.run(job, lambda: called.append(True))
+    assert called == []
+    assert store.status(job) == "FAILED"
 
 
 def test_background_task_context_is_restored_after_callback_failure(tmp_path):

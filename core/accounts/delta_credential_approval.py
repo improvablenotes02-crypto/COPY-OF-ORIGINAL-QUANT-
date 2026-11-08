@@ -9,14 +9,21 @@ from __future__ import annotations
 class OwnerGovernanceDeltaCredentialApprovalProvider:
     """Bind runtime credential fingerprints to exactly one approved governance row."""
 
-    production_ready = False
-
     def __init__(self, repository):
         if repository is None or not callable(
             getattr(repository, "credentials_for_account_fingerprint", None)
         ):
             raise ValueError("credential governance repository lookup is required")
         self._repository = repository
+
+    @property
+    def production_ready(self) -> bool:
+        """Delegate admission to the guarded, durable tenant repository."""
+        return (
+            getattr(self._repository, "production_ready", False) is True
+            and getattr(self._repository, "durable_shared_storage", False) is True
+            and getattr(self._repository, "tenant_isolation_enforced", False) is True
+        )
 
     def is_approved(self, *, tenant_id: str, account_id: str, fingerprint: str) -> bool:
         for value in (tenant_id, account_id):

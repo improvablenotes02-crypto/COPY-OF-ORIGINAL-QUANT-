@@ -831,6 +831,17 @@ class DeltaAccountRegistry:
             self._provider_conformance_provider_id = id(self._encryption_provider)
         return provider_algorithm
 
+    @property
+    def production_ready(self) -> bool:
+        """Report production admission only after the full security contract passes."""
+        if not self._require_production_security:
+            return False
+        try:
+            self._assert_production_security_contract()
+            return True
+        except Exception:
+            return False
+
     def _authorize_tenant(self, tenant_id: str) -> None:
         """Fail closed unless trusted server-side identity authorizes this tenant."""
         authorizer = self._tenant_authorizer

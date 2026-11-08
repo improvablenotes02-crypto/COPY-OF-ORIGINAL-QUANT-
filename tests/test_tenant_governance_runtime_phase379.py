@@ -39,10 +39,13 @@ def test_runtime_builds_owner_api_with_encrypted_registry_and_shared_tenant_guar
     captured = {}
     class FakeDeltaPersistence: pass
     class FakeRegistry:
-        def __init__(self, repository, encryption_provider, *, tenant_authorizer, credential_approval_provider):
+        production_ready = False
+        def __init__(self, repository, encryption_provider, *, tenant_authorizer,
+                     credential_approval_provider, require_production_security):
             captured.update(repository=repository, encryption_provider=encryption_provider,
                             tenant_authorizer=tenant_authorizer,
-                            credential_approval_provider=credential_approval_provider)
+                            credential_approval_provider=credential_approval_provider,
+                            require_production_security=require_production_security)
     sentinel_server = object()
     def fake_persistence(resolver, *, connect_timeout):
         captured.update(resolver=resolver, timeout=connect_timeout)
@@ -67,9 +70,19 @@ def test_runtime_builds_owner_api_with_encrypted_registry_and_shared_tenant_guar
     assert captured["tenant_authorizer"] is service.tenant_authorizer
     assert captured["repository_authorizer"] is service.tenant_authorizer
     assert captured["credential_approval_provider"] is service.credential_approval_provider
+    assert captured["require_production_security"] is False
     assert captured["governance"] is service.owner_governance
     assert captured["server_kwargs"]["account_registry"] is service.delta_account_registry
     assert captured["server_kwargs"]["allow_nonproduction"] is True
+
+def test_runtime_refuses_unapproved_encryption_provider_in_production_mode(runtime):
+    from core.accounts.owner_governance_api import ProductionAdmissionError
+    service, *_ = runtime
+    with pytest.raises(ProductionAdmissionError, match="approved credential encryption provider"):
+        service.create_owner_governance_server(
+            encryption_provider=object(), allow_nonproduction=False
+        )
+
 
 def test_phase379_composes_owner_only_governance_over_tenant_guard(runtime):
     service, _source, _sessions, repositories = runtime

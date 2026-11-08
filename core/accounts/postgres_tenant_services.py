@@ -29,13 +29,27 @@ from core.accounts.request_tenant_authorization import (
 
 class TenantDeltaAccountRepository:
     """Tenant-authorized facade; database identity is independently checked below."""
-    production_ready = False
-    durable_shared_storage = True
-    tenant_isolation_enforced = True
 
     def __init__(self, repository, authorizer):
         self._repository = repository
         self._authorizer = authorizer
+
+    @property
+    def durable_shared_storage(self):
+        return getattr(self._repository, "durable_shared_storage", False) is True
+
+    @property
+    def tenant_isolation_enforced(self):
+        return getattr(self._repository, "tenant_isolation_enforced", False) is True
+
+    @property
+    def production_ready(self):
+        return (
+            getattr(self._repository, "production_ready", False) is True
+            and self.durable_shared_storage
+            and self.tenant_isolation_enforced
+            and getattr(self._authorizer, "production_ready", False) is True
+        )
 
     def _require_tenant(self, tenant_id: str) -> None:
         if self._authorizer.authorize_tenant(tenant_id) is not True:
@@ -79,11 +93,27 @@ class TenantGovernanceRepository:
     This enforces tenant membership, not owner permissions. The governance
     domain service must still enforce owner-only decisions and audit semantics.
     """
-    production_ready = False
 
     def __init__(self, repository, authorizer):
         self._repository = repository
         self._authorizer = authorizer
+
+    @property
+    def durable_shared_storage(self):
+        return getattr(self._repository, "durable_shared_storage", False) is True
+
+    @property
+    def tenant_isolation_enforced(self):
+        return getattr(self._repository, "tenant_isolation_enforced", False) is True
+
+    @property
+    def production_ready(self):
+        return (
+            getattr(self._repository, "production_ready", False) is True
+            and self.durable_shared_storage
+            and self.tenant_isolation_enforced
+            and getattr(self._authorizer, "production_ready", False) is True
+        )
 
     def _require_tenant(self, tenant_id: str) -> None:
         if self._authorizer.authorize_tenant(tenant_id) is not True:
@@ -328,7 +358,7 @@ class TenantBackgroundTaskRunner:
             SQLiteBackgroundJobStore._validate_principal(envelope.principal)
             if envelope.tenant_id not in envelope.principal.tenant_ids:
                 raise AccountScopeError("background task tenant is not authorized")
-            with bind_authenticated_principal(envelope.principal):
+            with self._authorizer.bind_verified_principal(envelope.principal):
                 if self._authorizer.authorize_tenant(envelope.tenant_id) is not True:
                     raise AccountScopeError("background task tenant is not authorized")
                 result=callback(*args,**kwargs)
