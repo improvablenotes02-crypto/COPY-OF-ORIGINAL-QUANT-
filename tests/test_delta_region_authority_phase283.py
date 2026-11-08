@@ -209,3 +209,17 @@ def test_default_product_discovery_client_uses_configured_venue():
         assert client.rest.base_url == "https://api.india.delta.exchange"
     finally:
         client.rest.client.close()
+
+def test_default_delta_history_and_products_use_selected_venue():
+    from config import settings as settings_mod
+    from core.exchanges.delta.delta_history import DeltaHistory
+    from core.exchanges.delta.delta_products import DeltaProducts
+    with mock.patch.object(settings_mod.settings, "DELTA_REGION", "INDIA"), mock.patch.object(settings_mod.settings, "DELTA_ENVIRONMENT", "SANDBOX"):
+        history = DeltaHistory()
+        products = DeltaProducts()
+    try:
+        assert history.rest.base_url == "https://cdn-ind.testnet.deltaex.org"
+        assert products.rest.base_url == "https://cdn-ind.testnet.deltaex.org"
+    finally:
+        history.rest.client.close()
+        products.rest.client.close()

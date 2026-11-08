@@ -56,6 +56,8 @@ jobs:
           python -m pytest
           tests/test_delta_region_authority_phase283.py
           tests/test_provider_plumbing_9pd.py
+          tests/test_delta_history.py
+          tests/test_delta_products.py
           -q
       - name: Certify bounded evidence-gated Delta socket polling (Phase 455)
         run: python -m pytest tests/test_verified_socket_transport_phase2.py -q
