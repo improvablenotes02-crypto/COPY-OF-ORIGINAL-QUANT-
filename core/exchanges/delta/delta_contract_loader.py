@@ -31,7 +31,7 @@ class ContractLoadError(RuntimeError):
 
 class DeltaContractLoader:
 
-    def load(self, contract_types=None):
+    def load(self, contract_types=None, *, rest=None):
         """
         Build a registry of Delta contracts.
 
@@ -45,7 +45,7 @@ class DeltaContractLoader:
         registry = ContractRegistry()
 
         try:
-            downloaded = DeltaProducts().download()
+            downloaded = DeltaProducts(rest=rest).download()
         except ContractLoadError:
             raise
         except Exception as error:

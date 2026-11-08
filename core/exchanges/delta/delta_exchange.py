@@ -109,7 +109,8 @@ class DeltaExchange(BaseExchange):
 
     def get_products(self):
 
-        return DeltaProducts().download()
+        # Reuse this exchange's region/environment-pinned transport.
+        return DeltaProducts(rest=self.rest).download()
 
     # -------------------------------------------------
     # Account
