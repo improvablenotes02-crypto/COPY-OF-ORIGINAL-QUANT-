@@ -26,25 +26,44 @@ class OwnerGovernanceDeltaCredentialApprovalProvider:
         )
 
     def is_approved(self, *, tenant_id: str, account_id: str, fingerprint: str) -> bool:
+        """Legacy tenant-wide check; retained for offline compatibility only."""
+        record = self._matching_record(tenant_id, account_id, fingerprint)
+        return record is not None and record.status == "APPROVED"
+
+    def is_approved_for_subject(
+        self, *, tenant_id: str, account_id: str, fingerprint: str, subject_id: str
+    ) -> bool:
+        """Admit a credential only to its verified submitting member."""
+        if not isinstance(subject_id, str) or not subject_id.strip() or len(subject_id) > 256:
+            return False
+        record = self._matching_record(tenant_id, account_id, fingerprint)
+        return (
+            record is not None
+            and record.subject_id == subject_id
+            and record.status == "APPROVED"
+        )
+
+    def _matching_record(self, tenant_id: str, account_id: str, fingerprint: str):
         for value in (tenant_id, account_id):
             if not isinstance(value, str) or not value.strip() or len(value) > 256:
-                return False
+                return None
         if (
             not isinstance(fingerprint, str)
             or len(fingerprint) != 64
             or any(char not in "0123456789abcdef" for char in fingerprint)
         ):
-            return False
+            return None
         records = self._repository.credentials_for_account_fingerprint(
             tenant_id, account_id, fingerprint
         )
         # Ambiguous duplicate registrations fail closed, even if one is approved.
         if not isinstance(records, list) or len(records) != 1:
-            return False
+            return None
         record = records[0]
-        return (
-            record.tenant_id == tenant_id
-            and record.account_id == account_id
-            and record.fingerprint == fingerprint
-            and record.status == "APPROVED"
-        )
+        if (
+            record.tenant_id != tenant_id
+            or record.account_id != account_id
+            or record.fingerprint != fingerprint
+        ):
+            return None
+        return record

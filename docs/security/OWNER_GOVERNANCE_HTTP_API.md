@@ -111,7 +111,7 @@ accounts.
 3. Member submits broker API credentials (encrypted in the registry; approval is
    still `PENDING`).
 4. Owner reviews the queue and approves or rejects the credential.
-5. Only that member can use credentials approved for the tenant. The owner can
+5. Credential admission is bound to the verified submitting member as well as the tenant, account, fingerprint, and owner-approved status. The owner can
    revoke a credential or the member.
 
 Every request requires a verified OIDC bearer token. Replace the placeholders

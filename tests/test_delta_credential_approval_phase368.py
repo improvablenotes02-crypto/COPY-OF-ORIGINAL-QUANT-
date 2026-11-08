@@ -106,6 +106,35 @@ def test_repository_failure_propagates_for_runtime_fail_closed_handling():
         )
 
 
+def test_subject_bound_approval_only_allows_original_submitter():
+    repository, governance, provider = setup()
+    governance.invite_member(
+        actor_id="owner-1", tenant_id="tenant-a", subject_id="member-a",
+        permissions=["read"],
+    )
+    governance.decide_member(
+        actor_id="owner-1", tenant_id="tenant-a", subject_id="member-a",
+        approve=True, permissions=["read"],
+    )
+    governance.submit_credential(
+        actor_id="member-a", tenant_id="tenant-a", credential_id="member-credential",
+        account_id="account-a", fingerprint="a" * 64,
+    )
+    governance.decide_credential(
+        actor_id="owner-1", tenant_id="tenant-a",
+        credential_id="member-credential", approve=True,
+    )
+    assert provider.is_approved_for_subject(
+        tenant_id="tenant-a", account_id="account-a",
+        fingerprint="a" * 64, subject_id="member-a",
+    )
+    assert not provider.is_approved_for_subject(
+        tenant_id="tenant-a", account_id="account-a",
+        fingerprint="a" * 64, subject_id="member-b",
+    )
+    repository.close()
+
+
 def test_provider_never_claims_production_readiness():
     repository, _governance, provider = setup()
     assert provider.production_ready is False
