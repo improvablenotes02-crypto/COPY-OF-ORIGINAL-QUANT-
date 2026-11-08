@@ -116,6 +116,24 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
             "tenant-a", "credential-created"
         ).status == "APPROVED"
 
+        # Repeated timestamps must still produce a strictly ordered,
+        # verifiable append-only audit chain.
+        governance_repo.invite(
+            "tenant-a", "same-time-one", ("read",), "owner-a", 20
+        )
+        governance_repo.invite(
+            "tenant-a", "same-time-two", ("read",), "owner-a", 20
+        )
+        audit_events = governance_repo.audit_events("tenant-a")
+        assert all(
+            current["occurred_at_ns"] > previous["occurred_at_ns"]
+            for previous, current in zip(audit_events, audit_events[1:])
+        )
+        assert all(
+            current["previous_event_hash"] == previous["event_hash"]
+            for previous, current in zip(audit_events, audit_events[1:])
+        )
+
         # The resolver is deliberately pinned to tenant A's database login.
         # A caller cannot switch it to tenant B by choosing another tenant ID.
         with pytest.raises(RuntimeError, match="operation failed"):

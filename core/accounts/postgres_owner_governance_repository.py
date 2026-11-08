@@ -33,8 +33,16 @@ class PostgreSQLOwnerGovernanceRepository:
     @staticmethod
     def _audit(conn,tenant,actor,action,target,now):
         conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",(tenant,))
-        row=conn.execute("SELECT event_hash FROM public.qe_governance_audit WHERE tenant_id=%s ORDER BY occurred_at_ns DESC,event_id DESC LIMIT 1",(tenant,)).fetchone()
+        row=conn.execute(
+            "SELECT event_hash,occurred_at_ns FROM public.qe_governance_audit "
+            "WHERE tenant_id=%s ORDER BY occurred_at_ns DESC,event_id DESC LIMIT 1",
+            (tenant,),
+        ).fetchone()
         previous=row["event_hash"] if row else "0"*64
+        if row is not None:
+            # Keep the append-only hash chain in the same order used by reads,
+            # even when two domain events share a wall-clock timestamp.
+            now=max(now,row["occurred_at_ns"]+1)
         event=str(uuid.uuid4())
         payload=json.dumps([event,tenant,actor,action,target,now,previous],separators=(",",":"),ensure_ascii=False)
         digest=hashlib.sha256(payload.encode()).hexdigest()
