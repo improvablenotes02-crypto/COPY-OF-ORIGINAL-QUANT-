@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
 
 from core.accounts.oidc_tenant_principal import bind_access_token
+from core.accounts.delta_account_registry import delta_credential_fingerprint
 from core.accounts.owner_governance import (
     GovernanceConflictError,
     OwnerAuthorizationError,
@@ -76,11 +77,30 @@ def _bearer(handler) -> str:
     return value.strip()
 
 
-def _dispatch(governance, method: str, path: str, body: dict):
+def _dispatch(governance, method: str, path: str, body: dict, account_registry=None):
     parts = [p for p in path.split("/") if p]
     if len(parts) < 3 or parts[:2] != ["v1", "tenants"]:
         raise LookupError("route not found")
     tenant = _segment(parts[2])
+
+    if method == "GET" and len(parts) == 4 and parts[3] == "members":
+        members = governance.list_members(tenant_id=tenant)
+        return {"members": [
+            {"subject_id": item.subject_id, "status": item.status,
+             "permissions": list(item.permissions), "created_at_ns": item.created_at_ns,
+             "updated_at_ns": item.updated_at_ns}
+            for item in members
+        ]}
+
+    if method == "GET" and len(parts) == 4 and parts[3] == "credentials":
+        credentials = governance.list_credentials(tenant_id=tenant)
+        return {"credentials": [
+            {"credential_id": item.credential_id, "subject_id": item.subject_id,
+             "account_id": item.account_id, "fingerprint": item.fingerprint,
+             "status": item.status, "created_at_ns": item.created_at_ns,
+             "updated_at_ns": item.updated_at_ns}
+            for item in credentials
+        ]}
 
     if method == "POST" and len(parts) == 4 and parts[3] == "members":
         _only_fields(body, {"subject_id"}, {"permissions"})
@@ -116,12 +136,32 @@ def _dispatch(governance, method: str, path: str, body: dict):
         return {"ok": True, "status": "REVOKED"}
 
     if method == "POST" and len(parts) == 4 and parts[3] == "credentials":
+        if {"api_key", "api_secret", "label", "region", "environment"} == set(body):
+            if account_registry is None:
+                raise LookupError("credential submission is not configured")
+            fingerprint = delta_credential_fingerprint(body["api_key"], body["api_secret"])
+            metadata = account_registry.register_account(
+                tenant_id=tenant, label=body["label"], region=body["region"],
+                environment=body["environment"], api_key=body["api_key"],
+                api_secret=body["api_secret"],
+            )
+            account_id = metadata.account_id
+            try:
+                governance.submit_credential(
+                    tenant_id=tenant, credential_id=account_id,
+                    account_id=account_id, fingerprint=fingerprint,
+                )
+            except Exception:
+                try:
+                    account_registry.delete_account(tenant_id=tenant, account_id=account_id)
+                except Exception:
+                    pass
+                raise
+            return {"ok": True, "account_id": account_id, "status": "PENDING"}
         _only_fields(body, {"credential_id", "account_id", "fingerprint"})
         governance.submit_credential(
-            tenant_id=tenant,
-            credential_id=body["credential_id"],
-            account_id=body["account_id"],
-            fingerprint=body["fingerprint"],
+            tenant_id=tenant, credential_id=body["credential_id"],
+            account_id=body["account_id"], fingerprint=body["fingerprint"],
         )
         return {"ok": True, "status": "PENDING"}
 
@@ -192,6 +232,7 @@ def create_owner_governance_server(
     max_workers: int = 16,
     request_timeout: float = 10.0,
     allow_nonproduction: bool = False,
+    account_registry=None,
 ):
     """Create a bounded loopback server; caller owns lifecycle and OIDC adapters."""
     if not isinstance(host, str) or host not in {"127.0.0.1", "::1", "localhost"}:
@@ -235,7 +276,7 @@ def create_owner_governance_server(
                 path = urlsplit(self.path).path
                 body = _object_body(self) if method == "POST" else {}
                 with bind_access_token(token):
-                    result = _dispatch(governance, method, path, body)
+                    result = _dispatch(governance, method, path, body, account_registry)
                 self._reply(200, result)
             except PermissionError:
                 self._reply(401, {"error": "unauthorized"})
@@ -256,6 +297,9 @@ def create_owner_governance_server(
 
         def do_DELETE(self):
             self._handle("DELETE")
+
+        def do_GET(self):
+            self._handle("GET")
 
         def log_message(self, *_args):
             pass

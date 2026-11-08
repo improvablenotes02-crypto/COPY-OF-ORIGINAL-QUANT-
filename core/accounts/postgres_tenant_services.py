@@ -101,6 +101,14 @@ class TenantGovernanceRepository:
         self._require_tenant(tenant)
         return self._repository.membership(tenant, *args, **kwargs)
 
+    def list_members(self, tenant):
+        self._require_tenant(tenant)
+        return self._repository.list_members(tenant)
+
+    def list_credentials(self, tenant):
+        self._require_tenant(tenant)
+        return self._repository.list_credentials(tenant)
+
     def submit_credential(self, tenant, *args, **kwargs):
         self._require_tenant(tenant)
         return self._repository.submit_credential(tenant, *args, **kwargs)

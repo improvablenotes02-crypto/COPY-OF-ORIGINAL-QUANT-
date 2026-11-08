@@ -8,6 +8,10 @@ from core.accounts.postgres_owner_governance_repository import AuthenticatedPost
 from core.accounts.postgres_tenant_services import TenantGovernanceRepository
 from core.accounts.request_tenant_authorization import RequestScopedTenantAuthorizer, SessionStatusValidator, TrustedPrincipalSource
 from core.accounts.postgres_tenant_services import TenantBackgroundTaskRunner, TrustedBackgroundJobStore
+from core.accounts.postgres_tenant_services import TenantDeltaAccountRepository
+from core.accounts.postgres_delta_account_repository import AuthenticatedPostgreSQLDeltaAccountRepository
+from core.accounts.delta_account_registry import DeltaAccountRegistry, EncryptionProvider
+from core.accounts.owner_governance_api import create_owner_governance_server
 
 class AuthenticatedTenantGovernanceRuntime:
     """Compose owner-only governance and credential admission over one tenant guard.
@@ -32,6 +36,8 @@ class AuthenticatedTenantGovernanceRuntime:
             raise ValueError("trusted session validator is required")
         self._principal_source = principal_source
         self._session_validator = session_validator
+        self._tenant_dsn_resolver = tenant_dsn_resolver
+        self._connect_timeout = connect_timeout
         self._authorizer = RequestScopedTenantAuthorizer(
             principal_source, session_validator, clock=auth_clock
         )
@@ -51,6 +57,7 @@ class AuthenticatedTenantGovernanceRuntime:
         )
         self._background_job_store = background_job_store
         self._background_runner = TenantBackgroundTaskRunner(background_job_store, self._authorizer) if background_job_store is not None else None
+        self._delta_account_registry = None
 
     @property
     def owner_governance(self) -> AuthenticatedOwnerGovernance:
@@ -65,6 +72,46 @@ class AuthenticatedTenantGovernanceRuntime:
     @property
     def tenant_authorizer(self) -> RequestScopedTenantAuthorizer:
         return self._authorizer
+
+    @property
+    def delta_account_registry(self) -> DeltaAccountRegistry | None:
+        """Registry owned by this runtime after API composition."""
+        return self._delta_account_registry
+
+    def create_owner_governance_server(
+        self, *, encryption_provider: EncryptionProvider,
+        host: str = "127.0.0.1", port: int = 0,
+        allow_nonproduction: bool = False, max_workers: int = 16,
+        request_timeout: float = 10.0,
+    ):
+        """Build the owner API and encrypted Delta registry with shared auth guards.
+
+        principal_source must be the OIDC source used by bind_access_token.
+        Encryption and tenant routing remain deployment-owned dependencies.
+        Non-production mode is still loopback-only and must be explicitly opted in.
+        """
+        if encryption_provider is None:
+            raise ValueError("an approved credential encryption provider is required")
+        if not isinstance(allow_nonproduction, bool):
+            raise ValueError("allow_nonproduction must be boolean")
+        delta_persistence = AuthenticatedPostgreSQLDeltaAccountRepository(
+            self._tenant_dsn_resolver, connect_timeout=self._connect_timeout
+        )
+        delta_repository = TenantDeltaAccountRepository(
+            delta_persistence, self._authorizer
+        )
+        registry = DeltaAccountRegistry(
+            delta_repository, encryption_provider,
+            tenant_authorizer=self._authorizer,
+            credential_approval_provider=self._credential_approval,
+        )
+        server = create_owner_governance_server(
+            self._owner_governance, host=host, port=port,
+            max_workers=max_workers, request_timeout=request_timeout,
+            allow_nonproduction=allow_nonproduction, account_registry=registry,
+        )
+        self._delta_account_registry = registry
+        return server
 
     def enqueue_background_job(self, tenant_id: str, *, ttl_seconds: float = 300.0) -> str:
         """Create a durable job envelope from the current verified request context."""

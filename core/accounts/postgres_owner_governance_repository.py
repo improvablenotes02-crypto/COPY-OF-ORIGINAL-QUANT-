@@ -70,6 +70,14 @@ class PostgreSQLOwnerGovernanceRepository:
         with self._connection(tenant) as c: row=c.execute("SELECT * FROM public.qe_memberships WHERE tenant_id=%s AND subject_id=%s",(tenant,subject)).fetchone()
         if row is None:return None
         return Membership(row["tenant_id"],row["subject_id"],row["status"],tuple(row["permissions_json"]),row["created_at_ns"],row["updated_at_ns"])
+    def list_members(self,tenant):
+        with self._connection(tenant) as c:
+            rows=c.execute("SELECT * FROM public.qe_memberships WHERE tenant_id=%s ORDER BY created_at_ns,subject_id",(tenant,)).fetchall()
+        return [Membership(r["tenant_id"],r["subject_id"],r["status"],tuple(r["permissions_json"]),r["created_at_ns"],r["updated_at_ns"]) for r in rows]
+    def list_credentials(self,tenant):
+        with self._connection(tenant) as c:
+            rows=c.execute("SELECT * FROM public.qe_credential_approvals WHERE tenant_id=%s ORDER BY created_at_ns,credential_id",(tenant,)).fetchall()
+        return [CredentialApproval(r["tenant_id"],r["credential_id"],r["subject_id"],r["account_id"],r["fingerprint"],r["status"],r["created_at_ns"],r["updated_at_ns"]) for r in rows]
     def submit_credential(self,tenant,credential,subject,account,fingerprint,now):
         with self._connection(tenant) as c:
             c.execute("INSERT INTO public.qe_credential_approvals VALUES(%s,%s,%s,%s,%s,'PENDING',%s,%s)",(tenant,credential,subject,account,fingerprint,now,now))

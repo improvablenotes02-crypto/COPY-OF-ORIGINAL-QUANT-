@@ -10,16 +10,17 @@ authenticated governance adapters.
 
 Routes:
 
+- `GET /v1/tenants/{tenant}/members` — owner-only member list with status and permissions.
+- `GET /v1/tenants/{tenant}/credentials` — owner-only credential approval queue; metadata and fingerprint only.
+
 - `POST /v1/tenants/{tenant}/members` — owner invites a member (PENDING).
 - `POST /v1/tenants/{tenant}/members/{subject}/decision` — owner approves or rejects.
 - `DELETE /v1/tenants/{tenant}/members/{subject}` — owner revokes an approved member, clears permissions, and atomically revokes that member's pending and approved credential registrations; the configured owner cannot revoke their own identity.
-- `POST /v1/tenants/{tenant}/credentials` — approved member submits credential metadata.
+- `POST /v1/tenants/{tenant}/credentials` — approved member submits Delta API credentials to the encrypted vault for owner approval.
 - `POST /v1/tenants/{tenant}/credentials/{credential}/decision` — owner approves/rejects.
-- `DELETE /v1/tenants/{tenant}/credentials/{credential}` — owner revokes an approved credential.\n- `DELETE /v1/tenants/{tenant}/members/{subject}` — owner revokes a member and all that member’s pending/approved credentials.
+- `DELETE /v1/tenants/{tenant}/credentials/{credential}` — owner revokes an approved credential.
 
-The API accepts credential identifiers, account identifiers, and a SHA-256
-fingerprint only. It rejects additional fields, including caller-supplied actor
-IDs, roles, API keys, or API secrets. It never returns credential material.
+The API accepts either the legacy metadata-only migration shape or the raw Delta submission shape (`label`, `region`, `environment`, `api_key`, `api_secret`). For raw submissions, it writes secrets only through the injected encrypted Delta registry, then creates a pending owner-approval record. Secrets are never returned, logged, or stored in governance audit metadata. Unrelated fields, including caller-supplied actor IDs and roles, are rejected.
 Responses are non-cacheable; request logging is disabled; internal verifier and
 persistence exceptions are not echoed. A missing or malformed bearer header is
 401; a token that fails verification or fails the authenticated tenant/owner
@@ -68,3 +69,20 @@ the database connection identity. Consequently the current runtime composition
 cannot yet start this API in production mode. Member revocation is exposed as an
 owner-only operation and atomically revokes the member's pending/approved
 credentials in the same repository transaction.
+
+
+## Member credential submission
+
+An authenticated, approved tenant member submits Delta credentials through
+`POST /v1/tenants/{tenant}/credentials` with exactly these JSON fields:
+`label`, `region`, `environment`, `api_key`, and `api_secret`.
+The server must be started with a trusted `account_registry` dependency whose
+tenant authorizer is bound to the verified request principal. The registry
+encrypts and persists the credentials; the API computes the canonical SHA-256
+fingerprint and creates a pending owner-approval record tied to the returned
+account ID. The response contains only the account ID and `PENDING` status.
+If governance submission fails, the API attempts to delete the newly-created
+vault record and returns an error. Plaintext credentials are never included in
+responses or audit metadata. The legacy metadata-only submission shape remains
+available for controlled migration, but cannot create a usable vault account
+by itself.
