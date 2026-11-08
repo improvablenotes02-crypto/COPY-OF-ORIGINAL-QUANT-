@@ -55,9 +55,31 @@ def _object_body(handler) -> dict:
     raw = handler.rfile.read(length)
     if len(raw) != length:
         raise ValueError("incomplete request body")
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate JSON object key")
+            value[key] = item
+        return value
+
+    def finite_float(value):
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("non-finite JSON number")
+        return number
+
+    def reject_constant(_value):
+        raise ValueError("non-standard JSON numeric constant")
+
     try:
-        value = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=unique_object,
+            parse_float=finite_float,
+            parse_constant=reject_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         raise ValueError("invalid JSON body") from None
     if not isinstance(value, dict):
         raise ValueError("JSON body must be an object")
@@ -110,12 +132,6 @@ def _dispatch(governance, method: str, path: str, body: dict, account_registry=N
             permissions=body.get("permissions", ()),
         )
         return {"ok": True, "status": "PENDING"}
-
-    if method == "DELETE" and len(parts) == 5 and parts[3] == "members":
-        if body:
-            raise ValueError("DELETE request body must be empty")
-        governance.revoke_member(tenant_id=tenant, subject_id=_segment(parts[4]))
-        return {"ok": True, "status": "REVOKED"}
 
     if method == "POST" and len(parts) == 6 and parts[3] == "members" and parts[5] == "decision":
         _only_fields(body, {"approve"}, {"permissions"})

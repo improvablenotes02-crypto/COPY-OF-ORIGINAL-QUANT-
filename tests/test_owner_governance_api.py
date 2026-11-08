@@ -103,6 +103,26 @@ def _request(server, method, path, token=None, body=None):
         return exc.code, json.loads(exc.read())
 
 
+def test_request_json_rejects_duplicate_keys_and_non_finite_numbers():
+    import io
+    from email.message import Message
+    from types import SimpleNamespace
+    from core.accounts.owner_governance_api import _object_body
+
+    def parse(raw):
+        headers = Message()
+        headers["Content-Type"] = "application/json"
+        headers["Content-Length"] = str(len(raw))
+        return _object_body(SimpleNamespace(headers=headers, rfile=io.BytesIO(raw)))
+
+    with pytest.raises(ValueError, match="invalid JSON body"):
+        parse(b'{"subject_id":"safe","subject_id":"attacker"}')
+    with pytest.raises(ValueError, match="invalid JSON body"):
+        parse(b'{"amount":NaN}')
+    with pytest.raises(ValueError, match="invalid JSON body"):
+        parse(b'{"amount":1e999}')
+
+
 def test_owner_invites_and_approves_member_using_verified_actor(api):
     server, repo, *_ = api
     status, result = _request(
