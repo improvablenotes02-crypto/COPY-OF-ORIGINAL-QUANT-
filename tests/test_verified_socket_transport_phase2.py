@@ -89,6 +89,86 @@ def _candle(cst, ts, *, symbol="BTCUSDT", volume=5, extra=None):
 
 
 class TestVerifiedSocketTransport(unittest.TestCase):
+    def test_poll_drains_frames_and_delivers_only_closed_verified_candle(self):
+        path = _write_bundle(_synthetic_verified_bundle())
+        try:
+            delivered = []
+            class QueueSocket(FakeSocket):
+                def __init__(self, frames):
+                    super().__init__()
+                    self.frames = list(frames)
+
+                def recv(self, timeout=None):
+                    if self.frames:
+                        return self.frames.pop(0)
+                    raise TimeoutError()
+
+            first = _candle(T, T + 1_000_000)
+            rollover = _candle(T + 60_000_000, T + 60_000_001)
+            socket = QueueSocket([json.dumps(first), json.dumps(rollover)])
+            transport = VerifiedSocketTransport(
+                ["BTCUSDT"], delivered.append, evidence_bundle=path,
+                socket_factory=lambda endpoint: socket,
+            )
+            transport.connect()
+            report = transport.poll(max_frames=8, timeout=0.001)
+            self.assertEqual(report, {
+                "frames_received": 2, "delivered": 1, "connected": True,
+            })
+            self.assertEqual(len(delivered), 1)
+            self.assertTrue(delivered[0].closed)
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    def test_poll_is_bounded_and_malformed_frames_are_counted(self):
+        path = _write_bundle(_synthetic_verified_bundle())
+        try:
+            class QueueSocket(FakeSocket):
+                def __init__(self, frames):
+                    super().__init__()
+                    self.frames = list(frames)
+
+                def recv(self, timeout=None):
+                    if self.frames:
+                        return self.frames.pop(0)
+                    raise TimeoutError()
+
+            socket = QueueSocket(["not-json", json.dumps({"type": "heartbeat"}), "{}"])
+            transport = VerifiedSocketTransport(
+                ["BTCUSDT"], lambda candle: None, evidence_bundle=path,
+                socket_factory=lambda endpoint: socket,
+            )
+            transport.connect()
+            report = transport.poll(max_frames=2)
+            self.assertEqual(report["frames_received"], 2)
+            self.assertEqual(len(socket.frames), 1)
+            self.assertEqual(transport.stats()["malformed_frames"], 1)
+            with self.assertRaises(ValueError):
+                transport.poll(max_frames=1025)
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    def test_poll_receive_failure_closes_and_revokes_session(self):
+        path = _write_bundle(_synthetic_verified_bundle())
+        try:
+            class BrokenSocket(FakeSocket):
+                def recv(self, timeout=None):
+                    raise OSError("private endpoint or payload details")
+
+            transport = VerifiedSocketTransport(
+                ["BTCUSDT"], lambda candle: None, evidence_bundle=path,
+                socket_factory=lambda endpoint: BrokenSocket(),
+            )
+            transport.connect()
+            with self.assertRaisesRegex(RuntimeError, "OSError"):
+                transport.poll()
+            self.assertFalse(transport.connected)
+            gate = transport.stats()["gates"]["BTCUSDT"]
+            self.assertFalse(gate["connected"])
+            self.assertFalse(gate["ready"])
+        finally:
+            Path(path).unlink(missing_ok=True)
+
     def test_connect_refuses_without_evidence(self):
         delivered = []
         transport = VerifiedSocketTransport(
