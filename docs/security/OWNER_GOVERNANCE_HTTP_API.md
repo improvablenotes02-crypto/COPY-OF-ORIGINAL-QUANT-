@@ -66,11 +66,13 @@ database isolation, or live trading authorization.
 Server construction now rejects a governance facade unless its
 `production_ready` property is exactly true. The explicit
 `allow_nonproduction=True` escape hatch exists for isolated tests and local
-development only; it must not be enabled in a deployed environment. The current
-PostgreSQL governance adapter intentionally reports non-production-ready because
-its database tenant context remains caller-settable rather than authenticated by
-the database connection identity. Consequently the current runtime composition
-cannot yet start this API in production mode. Member revocation is exposed as an
+development only; it must not be enabled in a deployed environment. The PostgreSQL tenant boundary now derives tenant identity from the authenticated
+`session_user` mapping rather than a caller-controlled setting, and the integration
+tests cover unmapped logins and cross-tenant access denial. Production admission
+still requires deployment evidence for per-tenant least-privilege logins, trusted
+DSN routing, TLS, identity/session adapters, encryption/KMS, durable background
+jobs, and operational recovery. Until those deployment controls are certified,
+this API does not certify production readiness. Member revocation is exposed as an
 owner-only operation and atomically revokes the member's pending/approved
 credentials in the same repository transaction.
 
