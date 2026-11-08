@@ -34,6 +34,41 @@ def runtime(monkeypatch):
     yield service, source, sessions, repositories
     for repository in repositories: repository.close()
 
+def test_runtime_builds_owner_api_with_encrypted_registry_and_shared_tenant_guard(runtime, monkeypatch):
+    service, _source, _sessions, _repositories = runtime
+    captured = {}
+    class FakeDeltaPersistence: pass
+    class FakeRegistry:
+        def __init__(self, repository, encryption_provider, *, tenant_authorizer, credential_approval_provider):
+            captured.update(repository=repository, encryption_provider=encryption_provider,
+                            tenant_authorizer=tenant_authorizer,
+                            credential_approval_provider=credential_approval_provider)
+    sentinel_server = object()
+    def fake_persistence(resolver, *, connect_timeout):
+        captured.update(resolver=resolver, timeout=connect_timeout)
+        return FakeDeltaPersistence()
+    def fake_repository(repository, authorizer):
+        captured.update(persistence=repository, repository_authorizer=authorizer)
+        return object()
+    def fake_server(governance, **kwargs):
+        captured.update(governance=governance, server_kwargs=kwargs)
+        return sentinel_server
+    monkeypatch.setattr(runtime_module, "AuthenticatedPostgreSQLDeltaAccountRepository", fake_persistence)
+    monkeypatch.setattr(runtime_module, "TenantDeltaAccountRepository", fake_repository)
+    monkeypatch.setattr(runtime_module, "DeltaAccountRegistry", FakeRegistry)
+    monkeypatch.setattr(runtime_module, "create_owner_governance_server", fake_server)
+    encryption_provider = object()
+    assert service.create_owner_governance_server(
+        encryption_provider=encryption_provider, allow_nonproduction=True
+    ) is sentinel_server
+    assert captured["encryption_provider"] is encryption_provider
+    assert captured["tenant_authorizer"] is service.tenant_authorizer
+    assert captured["repository_authorizer"] is service.tenant_authorizer
+    assert captured["credential_approval_provider"] is service.credential_approval_provider
+    assert captured["governance"] is service.owner_governance
+    assert captured["server_kwargs"]["account_registry"] is service.delta_account_registry
+    assert captured["server_kwargs"]["allow_nonproduction"] is True
+
 def test_phase379_composes_owner_only_governance_over_tenant_guard(runtime):
     service, _source, _sessions, repositories = runtime
     with bind_authenticated_principal(principal()):
