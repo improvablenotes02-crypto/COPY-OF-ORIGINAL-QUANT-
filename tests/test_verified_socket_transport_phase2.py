@@ -169,6 +169,16 @@ class TestVerifiedSocketTransport(unittest.TestCase):
         finally:
             Path(path).unlink(missing_ok=True)
 
+    def test_single_symbol_bundle_cannot_authorize_multi_symbol_subscription(self):
+        path = _write_bundle(_synthetic_verified_bundle())
+        try:
+            with self.assertRaisesRegex(GlobalEvidenceMissing, "one symbol per bundle"):
+                check_global_evidence(
+                    path, symbols=("BTCUSDT", "ETHUSDT"), resolution="1m"
+                )
+        finally:
+            Path(path).unlink(missing_ok=True)
+
     def test_connect_refuses_without_evidence(self):
         delivered = []
         transport = VerifiedSocketTransport(
