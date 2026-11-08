@@ -192,10 +192,25 @@ def _dispatch(governance, method: str, path: str, body: dict, account_registry=N
     if method == "DELETE" and len(parts) == 5 and parts[3] == "credentials":
         if body:
             raise ValueError("DELETE request body must be empty")
-        governance.revoke_credential(
-            tenant_id=tenant, credential_id=_segment(parts[4])
-        )
-        return {"ok": True, "status": "REVOKED"}
+        credential_id = _segment(parts[4])
+        # Revoke approval first so the credential becomes unusable immediately.
+        # If vault deletion later fails, a repeated DELETE can finish cleanup.
+        records = governance.list_credentials(tenant_id=tenant)
+        record = next((item for item in records if item.credential_id == credential_id), None)
+        if record is None:
+            raise LookupError("credential not found")
+        if record.status == "APPROVED":
+            governance.revoke_credential(
+                tenant_id=tenant, credential_id=credential_id
+            )
+        elif record.status != "REVOKED":
+            raise GovernanceConflictError("credential is not approved")
+        vault_deleted = False
+        if account_registry is not None:
+            vault_deleted = account_registry.delete_account(
+                tenant_id=tenant, account_id=record.account_id
+            )
+        return {"ok": True, "status": "REVOKED", "vault_deleted": vault_deleted}
 
     raise LookupError("route not found")
 
