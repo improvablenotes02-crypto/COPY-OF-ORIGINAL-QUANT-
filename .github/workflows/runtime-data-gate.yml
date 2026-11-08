@@ -59,7 +59,6 @@ jobs:
           tests/test_safety_guards_11a.py
           tests/test_submission_journal_phase278.py
           tests/test_submission_journal_phase279.py
-          tests/test_submission_journal_phase279.py
           tests/test_account_risk_process_crash_recovery_phase323.py
           tests/test_delta_account_session_revocation_phase335.py
           tests/test_owner_governance_phase364.py
