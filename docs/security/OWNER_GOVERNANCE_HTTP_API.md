@@ -15,7 +15,7 @@ Routes:
 - `DELETE /v1/tenants/{tenant}/members/{subject}` — owner revokes an approved member, clears permissions, and atomically revokes that member's pending and approved credential registrations; the configured owner cannot revoke their own identity.
 - `POST /v1/tenants/{tenant}/credentials` — approved member submits credential metadata.
 - `POST /v1/tenants/{tenant}/credentials/{credential}/decision` — owner approves/rejects.
-- `DELETE /v1/tenants/{tenant}/credentials/{credential}` — owner revokes an approved credential.
+- `DELETE /v1/tenants/{tenant}/credentials/{credential}` — owner revokes an approved credential.\n- `DELETE /v1/tenants/{tenant}/members/{subject}` — owner revokes a member and all that member’s pending/approved credentials.
 
 The API accepts credential identifiers, account identifiers, and a SHA-256
 fingerprint only. It rejects additional fields, including caller-supplied actor
@@ -55,3 +55,16 @@ field rejection, loopback-only binding, bounded concurrency, overload response,
 stalled-request timeout recovery, and owner-only member revocation with permission clearing and cascading credential-registration revocation. These are transport tests using
 injected test verifiers and SQLite, not evidence of a deployed identity provider,
 database isolation, or live trading authorization.
+
+## Production admission gate
+
+Server construction now rejects a governance facade unless its
+`production_ready` property is exactly true. The explicit
+`allow_nonproduction=True` escape hatch exists for isolated tests and local
+development only; it must not be enabled in a deployed environment. The current
+PostgreSQL governance adapter intentionally reports non-production-ready because
+its database tenant context remains caller-settable rather than authenticated by
+the database connection identity. Consequently the current runtime composition
+cannot yet start this API in production mode. Member revocation is exposed as an
+owner-only operation and atomically revokes the member's pending/approved
+credentials in the same repository transaction.

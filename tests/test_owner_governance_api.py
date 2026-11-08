@@ -15,7 +15,7 @@ from core.accounts.owner_governance import (
     OwnerGovernance,
     SQLiteOwnerGovernanceRepository,
 )
-from core.accounts.owner_governance_api import create_owner_governance_server
+from core.accounts.owner_governance_api import (\n    ProductionAdmissionError, create_owner_governance_server,\n)
 
 
 class _Verifier:
@@ -50,7 +50,7 @@ def api(tmp_path):
     facade = AuthenticatedOwnerGovernance(
         domain, source, _Sessions(), clock=lambda: 1
     )
-    server = create_owner_governance_server(facade)
+    server = create_owner_governance_server(facade, allow_nonproduction=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -204,3 +204,38 @@ def test_owner_cannot_revoke_own_identity(api):
         server, "DELETE", "/v1/tenants/tenant-a/members/owner-1", "owner-token"
     )
     assert status == 403
+
+
+
+def test_member_revocation_cascades_to_credentials_and_is_audited(api):
+    server, repo = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members",
+             "owner-token", {"subject_id": "member-1", "permissions": ["read"]})
+    _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
+             "owner-token", {"approve": True})
+    _request(server, "POST", "/v1/tenants/tenant-a/credentials", "member-token",
+             {"credential_id": "cred-member", "account_id": "acct-1",
+              "fingerprint": "c" * 64})
+    _request(server, "POST", "/v1/tenants/tenant-a/credentials/cred-member/decision",
+             "owner-token", {"approve": True})
+    status, result = _request(
+        server, "DELETE", "/v1/tenants/tenant-a/members/member-1", "owner-token"
+    )
+    assert (status, result["status"]) == (200, "REVOKED")
+    assert repo.membership("tenant-a", "member-1").status == "REVOKED"
+    assert repo.credential("tenant-a", "cred-member").status == "REVOKED"
+    actions = [event["action"] for event in repo.audit_events("tenant-a")]
+    assert "MEMBER_REVOKED" in actions
+    assert "CREDENTIAL_REVOKED_MEMBER_REMOVAL" in actions
+
+
+def test_nonproduction_composition_requires_explicit_opt_in(tmp_path):
+    repo = SQLiteOwnerGovernanceRepository(tmp_path / "local.sqlite")
+    domain = OwnerGovernance(repo, owner_subject_id="owner-1")
+    facade = AuthenticatedOwnerGovernance(
+        domain, OidcTenantPrincipalSource(_Verifier(), _Membership()),
+        _Sessions(),
+    )
+    with pytest.raises(ProductionAdmissionError, match="not production-admissible"):
+        create_owner_governance_server(facade)
+    repo.close()
