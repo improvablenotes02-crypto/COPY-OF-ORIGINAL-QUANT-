@@ -1,6 +1,7 @@
 """HTTP integration tests for the OIDC-bound owner governance API."""
 import json
 import threading
+from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -45,6 +46,22 @@ class _Sessions:
         return principal.session_id in {"session-owner-1", "session-member-1"}
 
 
+class _AccountRegistry:
+    def __init__(self):
+        self.accounts = {}
+
+    def register_account(self, *, tenant_id, label, region, environment, api_key, api_secret):
+        account_id = "vault-account-1"
+        self.accounts[account_id] = {
+            "tenant_id": tenant_id, "label": label, "region": region,
+            "environment": environment, "api_key": api_key, "api_secret": api_secret,
+        }
+        return SimpleNamespace(account_id=account_id)
+
+    def delete_account(self, *, tenant_id, account_id):
+        return self.accounts.pop(account_id, None) is not None
+
+
 @pytest.fixture
 def api(tmp_path):
     repo = SQLiteOwnerGovernanceRepository(tmp_path / "governance.sqlite")
@@ -53,11 +70,14 @@ def api(tmp_path):
     facade = AuthenticatedOwnerGovernance(
         domain, source, _Sessions(), clock=lambda: 1
     )
-    server = create_owner_governance_server(facade, allow_nonproduction=True)
+    account_registry = _AccountRegistry()
+    server = create_owner_governance_server(
+        facade, allow_nonproduction=True, account_registry=account_registry
+    )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield server, repo
+        yield server, repo, account_registry
     finally:
         server.shutdown()
         server.server_close()
@@ -84,7 +104,7 @@ def _request(server, method, path, token=None, body=None):
 
 
 def test_owner_invites_and_approves_member_using_verified_actor(api):
-    server, repo = api
+    server, repo, *_ = api
     status, result = _request(
         server, "POST", "/v1/tenants/tenant-a/members",
         "owner-token", {"subject_id": "member-1", "permissions": ["read"]},
@@ -263,3 +283,37 @@ def test_member_cannot_list_owner_management_views(api):
     _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision", "owner-token", {"approve": True})
     assert _request(server, "GET", "/v1/tenants/tenant-a/members", "member-token")[0] == 403
     assert _request(server, "GET", "/v1/tenants/tenant-a/credentials", "member-token")[0] == 403
+
+def test_member_submits_raw_delta_credentials_to_encrypted_registry_for_owner_approval(api):
+    server, repo, registry = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members",
+             "owner-token", {"subject_id": "member-1"})
+    _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
+             "owner-token", {"approve": True})
+    status, result = _request(
+        server, "POST", "/v1/tenants/tenant-a/credentials", "member-token",
+        {"label": "My Delta account", "region": "global",
+         "environment": "testnet", "api_key": "private-api-key",
+         "api_secret": "private-api-secret"},
+    )
+    assert status == 200
+    assert result == {"ok": True, "account_id": "vault-account-1", "status": "PENDING"}
+    assert "private-api-key" not in json.dumps(result)
+    assert "private-api-secret" not in json.dumps(result)
+    assert registry.accounts["vault-account-1"]["api_secret"] == "private-api-secret"
+    approval = repo.credential("tenant-a", "vault-account-1")
+    assert approval.status == "PENDING"
+    assert approval.account_id == "vault-account-1"
+
+
+def test_raw_credential_submission_rolls_back_vault_record_when_membership_not_approved(api):
+    server, _repo, registry = api
+    status, result = _request(
+        server, "POST", "/v1/tenants/tenant-a/credentials", "member-token",
+        {"label": "My Delta account", "region": "global",
+         "environment": "testnet", "api_key": "private-api-key",
+         "api_secret": "private-api-secret"},
+    )
+    assert status == 403
+    assert result == {"error": "forbidden"}
+    assert registry.accounts == {}
