@@ -292,21 +292,26 @@ class OwnerGovernance:
             raise ValueError(f"{name} must be non-empty and at most 256 characters")
         return value.strip()
 
+    @staticmethod
+    def _permissions(value):
+        allowed = {"read", "trade_paper", "manage_strategies"}
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("permissions must be a list of supported permission names")
+        if any(not isinstance(item, str) or item not in allowed for item in value):
+            raise ValueError("permissions contain an unsupported value")
+        return tuple(sorted(set(value)))
+
     def invite_member(self, *, actor_id, tenant_id, subject_id, permissions=()):
         self._owner_only(actor_id)
         tenant=self._text(tenant_id,"tenant_id"); subject=self._text(subject_id,"subject_id")
-        allowed={"read","trade_paper","manage_strategies"}
-        perms=tuple(sorted(set(permissions)))
-        if any(p not in allowed for p in perms): raise ValueError("unsupported permission")
+        perms = self._permissions(permissions)
         self._repository.invite(tenant,subject,perms,actor_id,self._clock())
 
     def decide_member(self, *, actor_id, tenant_id, subject_id, approve, permissions=()):
         self._owner_only(actor_id)
         if not isinstance(approve,bool): raise ValueError("approve must be boolean")
         tenant=self._text(tenant_id,"tenant_id"); subject=self._text(subject_id,"subject_id")
-        allowed={"read","trade_paper","manage_strategies"}
-        perms=tuple(sorted(set(permissions)))
-        if any(p not in allowed for p in perms): raise ValueError("unsupported permission")
+        perms = self._permissions(permissions)
         self._repository.decide_membership(tenant,subject,"APPROVED" if approve else "REJECTED",
                                            perms if approve else (),actor_id,self._clock())
 

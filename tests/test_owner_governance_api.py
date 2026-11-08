@@ -459,6 +459,33 @@ def test_member_revocation_reports_and_allows_retry_of_failed_vault_cleanup(api)
     assert attempts == [account_id, account_id]
 
 
+@pytest.mark.parametrize("permissions", [
+    None, "read", {"read": True}, [None], [["read"]], [1], ["unknown"],
+])
+def test_owner_member_permissions_reject_malformed_values_without_mutation(api, permissions):
+    server, repo, _registry = api
+    status, result = _request(
+        server, "POST", "/v1/tenants/tenant-a/members", "owner-token",
+        {"subject_id": "member-invalid-permissions", "permissions": permissions},
+    )
+    assert status == 400
+    assert result["error"] == "bad_request"
+    assert repo.membership("tenant-a", "member-invalid-permissions") is None
+
+
+def test_owner_member_permissions_accept_supported_values_and_deduplicate(api):
+    server, repo, _registry = api
+    status, result = _request(
+        server, "POST", "/v1/tenants/tenant-a/members", "owner-token",
+        {"subject_id": "member-valid-permissions",
+         "permissions": ["read", "trade_paper", "read"]},
+    )
+    assert status == 200
+    assert result["status"] == "PENDING"
+    member = repo.membership("tenant-a", "member-valid-permissions")
+    assert member.permissions == ("read", "trade_paper")
+
+
 def test_get_and_delete_reject_request_bodies(api):
     server, repo, *_ = api
     _request(server, "POST", "/v1/tenants/tenant-a/members",
