@@ -122,10 +122,13 @@ class SQLiteOwnerGovernanceRepository:
 
     def _audit(self, tenant, actor, action, target, now):
         previous = self._db.execute(
-            "SELECT event_hash FROM qe_governance_audit WHERE tenant_id=? "
+            "SELECT event_hash,occurred_at_ns FROM qe_governance_audit WHERE tenant_id=? "
             "ORDER BY occurred_at_ns DESC,event_id DESC LIMIT 1", (tenant,)
         ).fetchone()
         previous_hash = previous["event_hash"] if previous else "0" * 64
+        if previous is not None:
+            # Ensure audit read order always matches append/hash-chain order.
+            now = max(now, previous["occurred_at_ns"] + 1)
         event_id = str(uuid.uuid4())
         payload = json.dumps([event_id,tenant,actor,action,target,now,previous_hash],
                              separators=(",",":"),ensure_ascii=False)

@@ -66,6 +66,20 @@ def test_tenant_scope_and_no_secret_material_in_audit(setup):
     assert "api_key" not in str(events).lower()
 
 
+def test_audit_chain_remains_monotonic_when_clock_repeats(setup):
+    service, repo = setup
+    service.invite_member(
+        actor_id="owner-1", tenant_id="tenant-a", subject_id="member-a"
+    )
+    service.invite_member(
+        actor_id="owner-1", tenant_id="tenant-a", subject_id="member-b"
+    )
+    events = repo.audit_events("tenant-a")
+    assert len(events) == 2
+    assert events[1]["occurred_at_ns"] > events[0]["occurred_at_ns"]
+    assert events[1]["previous_hash"] == events[0]["event_hash"]
+
+
 def test_owner_identity_is_required_and_sqlite_never_production_ready(tmp_path):
     repo=SQLiteOwnerGovernanceRepository(tmp_path/"g.sqlite3")
     with pytest.raises(ValueError):
