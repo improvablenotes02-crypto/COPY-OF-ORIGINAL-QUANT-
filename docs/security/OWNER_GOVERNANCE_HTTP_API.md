@@ -18,7 +18,7 @@ Routes:
 - `DELETE /v1/tenants/{tenant}/members/{subject}` — owner revokes an approved member, clears permissions, and atomically revokes that member's pending and approved credential registrations; the configured owner cannot revoke their own identity.
 - `POST /v1/tenants/{tenant}/credentials` — approved member submits Delta API credentials to the encrypted vault for owner approval.
 - `POST /v1/tenants/{tenant}/credentials/{credential}/decision` — owner approves/rejects.
-- `DELETE /v1/tenants/{tenant}/credentials/{credential}` — owner revokes an approved credential.\n- `DELETE /v1/tenants/{tenant}/members/{subject}` — owner revokes a member and all that member’s pending/approved credentials.
+- `DELETE /v1/tenants/{tenant}/credentials/{credential}` — owner revokes an approved credential.
 
 The API accepts either the legacy metadata-only migration shape or the raw Delta submission shape (`label`, `region`, `environment`, `api_key`, `api_secret`). For raw submissions, it writes secrets only through the injected encrypted Delta registry, then creates a pending owner-approval record. Secrets are never returned, logged, or stored in governance audit metadata. Unrelated fields, including caller-supplied actor IDs and roles, are rejected.
 Responses are non-cacheable; request logging is disabled; internal verifier and
