@@ -7,6 +7,14 @@ Run from the repository root after configuring the local .env file:
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Support direct script execution from the repository root.
+_PROJECT_ROOT = str(Path(__file__).resolve().parents[1])
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 from config.settings import settings
 from core.exchanges.delta.delta_environments import configured_client
 
