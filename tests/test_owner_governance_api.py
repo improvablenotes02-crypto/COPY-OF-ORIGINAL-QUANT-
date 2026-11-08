@@ -403,3 +403,57 @@ def test_raw_credential_submission_rolls_back_vault_record_when_membership_not_a
     assert status == 403
     assert result == {"error": "forbidden"}
     assert registry.accounts == {}
+
+
+def test_member_revocation_reports_and_allows_retry_of_failed_vault_cleanup(api):
+    server, repo, registry = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members",
+             "owner-token", {"subject_id": "member-1"})
+    _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
+             "owner-token", {"approve": True})
+    status, submitted = _request(
+        server, "POST", "/v1/tenants/tenant-a/credentials", "member-token",
+        {"label": "Retry cleanup", "region": "global", "environment": "testnet",
+         "api_key": "cleanup-key", "api_secret": "cleanup-secret"},
+    )
+    assert status == 200
+    account_id = submitted["account_id"]
+    original_delete = registry.delete_account
+    attempts = []
+
+    def fail_once(*, tenant_id, account_id):
+        attempts.append(account_id)
+        if len(attempts) == 1:
+            raise OSError("temporary vault outage")
+        return original_delete(tenant_id=tenant_id, account_id=account_id)
+
+    registry.delete_account = fail_once
+    status, result = _request(
+        server, "DELETE", "/v1/tenants/tenant-a/members/member-1", "owner-token"
+    )
+    assert status == 200
+    assert result["status"] == "REVOKED"
+    assert result["vault_deleted"] == 0
+    assert result["vault_cleanup_pending"] == 1
+    assert repo.membership("tenant-a", "member-1").status == "REVOKED"
+    assert repo.credential("tenant-a", account_id).status == "REVOKED"
+    assert account_id in registry.accounts
+
+    # The owner can locate the revoked record and retry its idempotent cleanup.
+    status, queue = _request(
+        server, "GET", "/v1/tenants/tenant-a/credentials", "owner-token"
+    )
+    assert status == 200
+    credential = next(item for item in queue["credentials"]
+                      if item["account_id"] == account_id)
+    assert credential["status"] == "REVOKED"
+    status, cleanup = _request(
+        server, "DELETE",
+        f"/v1/tenants/tenant-a/credentials/{credential['credential_id']}",
+        "owner-token",
+    )
+    assert status == 200
+    assert cleanup["status"] == "REVOKED"
+    assert cleanup["vault_deleted"] is True
+    assert account_id not in registry.accounts
+    assert attempts == [account_id, account_id]

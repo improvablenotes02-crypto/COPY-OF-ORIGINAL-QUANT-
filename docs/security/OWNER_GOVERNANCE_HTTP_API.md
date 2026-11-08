@@ -167,3 +167,12 @@ Use `{"approve":false}` to reject. The owner can revoke a credential with
 with `DELETE /v1/tenants/{tenant}/members/{subject_id}`. Member revocation also
 clears permissions and revokes that member's pending/approved credential
 registrations; it does not delete the external identity-provider account.
+
+
+If member removal returns a nonzero `vault_cleanup_pending`, membership and
+credential approvals are already revoked (so access remains disabled), but one
+or more encrypted vault deletions need retry. The owner can list the credential
+queue, locate each affected `REVOKED` record by its `account_id`/`credential_id`,
+and repeat `DELETE /v1/tenants/{tenant}/credentials/{credential_id}`. This
+cleanup route is idempotent and can finish deletion after a temporary vault
+failure; it never re-approves a credential.
