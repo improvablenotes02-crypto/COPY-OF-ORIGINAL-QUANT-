@@ -57,7 +57,11 @@ class DeltaHistoryProvider:
         # `history`: anything with .candles(symbol, resolution,
         #   days=...) -> list[Candle]; defaults to the real
         #   DeltaHistory. Injected by tests to script a count.
-        self.history = history if history is not None else DeltaHistory()
+        if history is not None:
+            self.history = history
+        else:
+            from core.exchanges.delta.delta_environments import configured_public_rest
+            self.history = DeltaHistory(rest=configured_public_rest())
         self.lookback_days = lookback_days
         self.errors = []
 
