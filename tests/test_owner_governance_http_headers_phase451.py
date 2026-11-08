@@ -35,3 +35,24 @@ def test_post_requires_exactly_one_content_type_header(values):
 
 def test_post_accepts_json_content_type_with_charset():
     assert _object_body(_handler(content_types=("application/json; charset=utf-8",))) == {}
+
+@pytest.mark.parametrize("header", [
+    "Bearer owner-token extra",
+    "Bearer owner token",
+    "Bearer owner-token,attacker-token",
+    "Bearer owner-token\\t",
+    "Basic owner-token",
+    "Bearer",
+])
+def test_bearer_rejects_invalid_or_ambiguous_token_syntax(header):
+    with pytest.raises(PermissionError, match="verified bearer token"):
+        _bearer(_handler(authorization=(header,)))
+
+@pytest.mark.parametrize("header", [
+    "Bearer owner-token",
+    "bearer owner-token",
+    "Bearer  owner-token",
+    "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJvd25lciJ9.signature==",
+])
+def test_bearer_accepts_rfc6750_bearer_token_characters(header):
+    assert _bearer(_handler(authorization=(header,))) == header.split()[-1]

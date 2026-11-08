@@ -22,8 +22,9 @@ Routes:
 
 The API accepts either the legacy metadata-only migration shape or the raw Delta submission shape (`label`, `region`, `environment`, `api_key`, `api_secret`). For raw submissions, it writes secrets only through the injected encrypted Delta registry, then creates a pending owner-approval record. Secrets are never returned, logged, or stored in governance audit metadata. Unrelated fields, including caller-supplied actor IDs and roles, are rejected.
 Responses are non-cacheable; request logging is disabled; internal verifier and
-persistence exceptions are not echoed. A missing or malformed bearer header is
-401; a token that fails verification or fails the authenticated tenant/owner
+persistence exceptions are not echoed. A missing, duplicated, or syntactically malformed bearer header is
+401; bearer credentials must contain one RFC 6750 token value (no embedded
+whitespace, comma-combined values, or extra credentials). A token that fails verification or fails the authenticated tenant/owner
 policy is deliberately collapsed to 403 by the facade, avoiding identity-state
 oracle details. The server refuses non-loopback binds and verifies the numeric address returned
 by the completed bind, including when the configured host is `localhost`.

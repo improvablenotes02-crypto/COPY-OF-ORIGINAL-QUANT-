@@ -123,10 +123,10 @@ def _bearer(handler) -> str:
     if len(values) != 1:
         raise PermissionError("exactly one bearer authorization header required")
     header = values[0]
-    scheme, separator, value = header.partition(" ")
-    if not separator or scheme.lower() != "bearer" or not value.strip():
+    match = re.fullmatch(r"(?i:Bearer) +([A-Za-z0-9._~+/-]+=*)", header)
+    if match is None:
         raise PermissionError("verified bearer token required")
-    return value.strip()
+    return match.group(1)
 
 
 def _dispatch(governance, method: str, path: str, body: dict, account_registry=None):
