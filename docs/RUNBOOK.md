@@ -90,7 +90,31 @@ credentials, and an explicit symbol universe.
 | `PAPER_MODE` | `True`          | PAPER runtime (do not set false) |
 | `UNIVERSE` | `explicit`        | See 2.3                            |
 
-### 2.2 PAPER + Delta market data
+### 2.2 Delta venue and personal API credentials
+
+Select the exact Delta region and environment before using private
+clients or provider-backed data. For an India account, for example:
+
+```dotenv
+DELTA_REGION=INDIA
+DELTA_ENVIRONMENT=SANDBOX
+DELTA_INDIA_SANDBOX_API_KEY=your-personal-key
+DELTA_INDIA_SANDBOX_API_SECRET=your-personal-secret
+```
+
+For India production use `DELTA_ENVIRONMENT=PRODUCTION` with
+`DELTA_INDIA_API_KEY` / `DELTA_INDIA_API_SECRET`. Global accounts use
+their matching Global pair. Never copy keys between regions or
+environments. Keep actual values only in the local `.env` file or
+secret store; never commit them or paste them into source files.
+
+Paper trading does not require private credentials; public market data
+is sufficient. Private account reads require the matching personal
+key pair. The selected region/environment now pins provider REST hosts,
+contract discovery and the LIVE client factory. Missing or unknown
+selection fails closed instead of silently using Global.
+
+### 2.3 PAPER + Delta market data
 
 Delta connectivity is **optional and best-effort**; the runtime still
 starts safely when Delta is unreachable (see Troubleshooting).
@@ -108,7 +132,7 @@ Data honesty: when `UNIVERSE=provider`, a symbol with missing / zero /
 unparseable liquidity or history is **DENIED**, never assumed eligible.
 An empty eligible universe is a valid state, not an error.
 
-### 2.3 Control API
+### 2.4 Control API
 
 The Control & Monitoring API binds to **127.0.0.1 only** and is **OFF
 by default**. It fails **closed**: if enabled without a token, it refuses
@@ -124,7 +148,7 @@ to start at all.
 
 The API is read-only except the four allowlisted PAPER lifecycle verbs.
 
-### 2.4 Desktop client
+### 2.5 Desktop client
 
 The client reads its own env variables (not the server's).
 
