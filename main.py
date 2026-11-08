@@ -165,7 +165,9 @@ async def main():
             )
         )
         print("=" * 60)
-        print("Waiting for live candles...\n")
+        print("Strategy candle feed: FAIL-CLOSED (no production-wired verified feed)")
+        print("Ticker marks are reference-only; no strategy candles are synthesized.")
+        print("Waiting for a venue-verified traded-candle transport...\n")
 
         # Phase 9P-g: the PAPER entrypoint drives the engine through
         # an authoritative EngineLifecycle (which owns the poll loop)

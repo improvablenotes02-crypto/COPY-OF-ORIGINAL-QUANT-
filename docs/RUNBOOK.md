@@ -143,6 +143,15 @@ Data honesty: when `UNIVERSE=provider`, a symbol with missing / zero /
 unparseable liquidity or history is **DENIED**, never assumed eligible.
 An empty eligible universe is a valid state, not an error.
 
+**Current strategy-feed limitation:** the canonical PAPER runtime still
+fails closed at the strategy-candle subscription seam. Legacy ticker marks
+are reference-only and are never converted into traded OHLCV. The verified
+Global socket transport is tested but not yet wired into the canonical
+PAPER engine; India capture classifications remain advisory-only. Therefore
+starting PAPER mode does not yet mean exchange candles are reaching strategy
+engines. Use verified historical datasets for research/backtests until the
+venue-specific live-candle integration is separately certified.
+
 ### 2.4 Control API
 
 The Control & Monitoring API binds to **127.0.0.1 only** and is **OFF
