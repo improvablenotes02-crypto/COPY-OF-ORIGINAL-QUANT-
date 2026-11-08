@@ -44,6 +44,10 @@ _current_principal: ContextVar[AuthenticatedPrincipal | None] = ContextVar(
     "quantengine_authenticated_principal", default=None
 )
 
+_authorizer_principal_override: ContextVar[tuple[object, AuthenticatedPrincipal] | None] = ContextVar(
+    "quantengine_authorizer_principal_override", default=None
+)
+
 
 @contextmanager
 def bind_authenticated_principal(
@@ -87,11 +91,23 @@ class RequestScopedTenantAuthorizer:
             and getattr(self._session_validator, "production_ready", False) is True
         )
 
-    def authorize_tenant(self, tenant_id: str) -> bool:
+    @contextmanager
+    def bind_verified_principal(self, principal: AuthenticatedPrincipal) -> Iterator[None]:
+        """Temporarily authorize a trusted worker using its claimed durable envelope.
+
+        This is an internal trust boundary: callers must obtain the principal
+        from the trusted job store, never from request payloads.
+        """
+        token = _authorizer_principal_override.set((self, principal))
+        try:
+            yield
+        finally:
+            _authorizer_principal_override.reset(token)
+
+    def authorize_principal(self, tenant_id: str, principal: AuthenticatedPrincipal) -> bool:
         if not isinstance(tenant_id, str) or not tenant_id.strip():
             raise AccountScopeError("tenant authorization could not be verified")
         try:
-            principal = self._principal_source.current_principal()
             if not isinstance(principal, AuthenticatedPrincipal):
                 raise ValueError("principal missing")
             if (
@@ -100,10 +116,8 @@ class RequestScopedTenantAuthorizer:
                 or not isinstance(principal.session_id, str)
                 or not principal.session_id.strip()
                 or not isinstance(principal.tenant_ids, frozenset)
-                or any(
-                    not isinstance(item, str) or not item.strip()
-                    for item in principal.tenant_ids
-                )
+                or any(not isinstance(item, str) or not item.strip()
+                       for item in principal.tenant_ids)
                 or isinstance(principal.expires_at_epoch, bool)
                 or not isinstance(principal.expires_at_epoch, (int, float))
                 or not math.isfinite(principal.expires_at_epoch)
@@ -118,6 +132,15 @@ class RequestScopedTenantAuthorizer:
         except AccountScopeError:
             raise
         except Exception:
-            raise AccountScopeError(
-                "tenant authorization could not be verified"
-            ) from None
+            raise AccountScopeError("tenant authorization could not be verified") from None
+
+    def authorize_tenant(self, tenant_id: str) -> bool:
+        override = _authorizer_principal_override.get()
+        if override is not None and override[0] is self:
+            principal = override[1]
+        else:
+            try:
+                principal = self._principal_source.current_principal()
+            except Exception:
+                raise AccountScopeError("tenant authorization could not be verified") from None
+        return self.authorize_principal(tenant_id, principal)

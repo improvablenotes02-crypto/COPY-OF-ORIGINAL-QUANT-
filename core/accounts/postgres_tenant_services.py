@@ -328,7 +328,7 @@ class TenantBackgroundTaskRunner:
             SQLiteBackgroundJobStore._validate_principal(envelope.principal)
             if envelope.tenant_id not in envelope.principal.tenant_ids:
                 raise AccountScopeError("background task tenant is not authorized")
-            with bind_authenticated_principal(envelope.principal):
+            with self._authorizer.bind_verified_principal(envelope.principal):
                 if self._authorizer.authorize_tenant(envelope.tenant_id) is not True:
                     raise AccountScopeError("background task tenant is not authorized")
                 result=callback(*args,**kwargs)

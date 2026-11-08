@@ -98,6 +98,20 @@ def test_background_task_revalidates_tenant_and_session(tmp_path):
         runner.run(revoked_job, lambda: "must not run")
 
 
+def test_background_task_uses_persisted_principal_with_oidc_request_source(tmp_path):
+    class EmptyOidcSource:
+        production_ready = True
+        def current_principal(self): return None
+
+    sessions = SessionValidator()
+    authorizer = RequestScopedTenantAuthorizer(EmptyOidcSource(), sessions)
+    store = SQLiteBackgroundJobStore(str(tmp_path / "oidc-worker.sqlite3"), clock=lambda: 100.0)
+    runner = TenantBackgroundTaskRunner(store, authorizer)
+    job = store.enqueue(principal(), "tenant-a")
+    assert runner.run(job, lambda: authorizer.authorize_tenant("tenant-a")) is True
+    assert authorizer.authorize_tenant("tenant-a") is False
+
+
 def test_background_task_context_is_restored_after_callback_failure(tmp_path):
     services, _, _, _ = factory()
     store = SQLiteBackgroundJobStore(str(tmp_path / "jobs.sqlite3"), clock=lambda: 100.0)
