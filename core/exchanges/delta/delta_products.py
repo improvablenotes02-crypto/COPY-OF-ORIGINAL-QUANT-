@@ -13,10 +13,13 @@ class DeltaProducts:
 
     def __init__(self, rest=None):
 
-        # Same environment-separation seam as DeltaHistory: an
-        # explicit transport may be injected; default preserves
-        # the legacy endpoint for existing callers.
-        self.rest = rest if rest is not None else DeltaREST()
+        # Public product discovery must use the operator-selected venue.
+        # Tests and specialized callers can still inject an explicit transport.
+        if rest is not None:
+            self.rest = rest
+        else:
+            from core.exchanges.delta.delta_environments import configured_public_rest
+            self.rest = configured_public_rest()
 
     # -------------------------------------------------
 

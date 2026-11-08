@@ -44,8 +44,7 @@ class TestDeltaHistorySmoke(unittest.TestCase):
     """Offline history: stubbed REST, no network."""
 
     def test_canned_payload_maps_to_candles(self):
-        history = DeltaHistory()
-        history.rest = _FakeRest(_rows())
+        history = DeltaHistory(rest=_FakeRest(_rows()))
         candles = history.candles("BTCUSDT", "1m", days=1)
         self.assertEqual(len(candles), 5)
         self.assertEqual(candles[0].timestamp, 1700000000)
