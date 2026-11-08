@@ -48,6 +48,15 @@ class PostgreSQLOwnerGovernanceRepository:
             cur=c.execute("UPDATE public.qe_memberships SET status=%s,permissions_json=%s::jsonb,updated_at_ns=%s WHERE tenant_id=%s AND subject_id=%s AND status='PENDING'",(status,json.dumps(sorted(permissions)),now,tenant,subject))
             if cur.rowcount!=1: raise GovernanceConflictError("membership is not pending")
             self._audit(c,tenant,actor,"MEMBERSHIP_"+status,subject,now)
+    def revoke_membership(self,tenant,subject,actor,now):
+        with self._connection(tenant) as c:
+            cur=c.execute(
+                "UPDATE public.qe_memberships SET status='REVOKED',permissions_json='[]'::jsonb,updated_at_ns=%s "
+                "WHERE tenant_id=%s AND subject_id=%s AND status='APPROVED'",
+                (now,tenant,subject),
+            )
+            if cur.rowcount!=1: raise GovernanceConflictError("membership is not approved")
+            self._audit(c,tenant,actor,"MEMBER_REVOKED",subject,now)
     def membership(self,tenant,subject):
         with self._connection(tenant) as c: row=c.execute("SELECT * FROM public.qe_memberships WHERE tenant_id=%s AND subject_id=%s",(tenant,subject)).fetchone()
         if row is None:return None

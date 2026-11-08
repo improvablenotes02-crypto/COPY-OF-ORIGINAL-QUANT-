@@ -80,3 +80,17 @@ def test_delta_approval_adapter_uses_exact_postgres_tuple_and_live_revocation(se
     assert not provider.is_approved(
         tenant_id="tenant-a", account_id="delta-account", fingerprint="e" * 64
     )
+
+
+def test_owner_can_revoke_member_and_clear_permissions(service):
+    service.invite_member(actor_id="owner-1", tenant_id="tenant-a",
+                          subject_id="member-revoke", permissions=("read", "trade_paper"))
+    service.decide_member(actor_id="owner-1", tenant_id="tenant-a",
+                          subject_id="member-revoke", approve=True,
+                          permissions=("read", "trade_paper"))
+    service.revoke_member(actor_id="owner-1", tenant_id="tenant-a",
+                          subject_id="member-revoke")
+    member = service._repository.membership("tenant-a", "member-revoke")
+    assert member.status == "REVOKED"
+    assert member.permissions == ()
+    assert service._repository.audit_events("tenant-a")[-1]["action"] == "MEMBER_REVOKED"

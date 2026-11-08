@@ -160,3 +160,34 @@ def test_endpoint_rejects_spoofed_actor_and_raw_api_secret(api):
 def test_server_refuses_non_loopback_binding():
     with pytest.raises(ValueError, match="loopback"):
         create_owner_governance_server(object(), host="0.0.0.0")
+
+
+def test_owner_can_revoke_member_and_clear_permissions(api):
+    server, repo = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members",
+              "owner-token", {"subject_id": "member-1", "permissions": ["read", "trade_paper"]})
+    _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
+              "owner-token", {"approve": True, "permissions": ["read", "trade_paper"]})
+
+    status, _ = _request(
+        server, "DELETE", "/v1/tenants/tenant-a/members/member-1", "member-token"
+    )
+    assert status == 403
+    assert repo.membership("tenant-a", "member-1").status == "APPROVED"
+
+    status, result = _request(
+        server, "DELETE", "/v1/tenants/tenant-a/members/member-1", "owner-token"
+    )
+    assert (status, result["status"]) == (200, "REVOKED")
+    membership = repo.membership("tenant-a", "member-1")
+    assert membership.status == "REVOKED"
+    assert membership.permissions == ()
+    assert repo.audit_events("tenant-a")[-1]["action"] == "MEMBER_REVOKED"
+
+
+def test_owner_cannot_revoke_own_identity(api):
+    server, _repo = api
+    status, _ = _request(
+        server, "DELETE", "/v1/tenants/tenant-a/members/owner-1", "owner-token"
+    )
+    assert status == 403

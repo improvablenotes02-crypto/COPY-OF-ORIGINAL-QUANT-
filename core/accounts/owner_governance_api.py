@@ -97,6 +97,14 @@ def _dispatch(governance, method: str, path: str, body: dict):
         )
         return {"ok": True, "status": "APPROVED" if body["approve"] else "REJECTED"}
 
+    if method == "DELETE" and len(parts) == 5 and parts[3] == "members":
+        if body:
+            raise ValueError("DELETE request body must be empty")
+        governance.revoke_member(
+            tenant_id=tenant, subject_id=_segment(parts[4])
+        )
+        return {"ok": True, "status": "REVOKED"}
+
     if method == "POST" and len(parts) == 4 and parts[3] == "credentials":
         _only_fields(body, {"credential_id", "account_id", "fingerprint"})
         governance.submit_credential(
