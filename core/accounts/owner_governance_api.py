@@ -207,10 +207,19 @@ def _dispatch(governance, method: str, path: str, body: dict, account_registry=N
                 raise LookupError("credential submission is not configured")
             # Validate untrusted JSON types before hashing or passing values to
             # the vault. This keeps malformed submissions on the 400 boundary.
-            for field in ("api_key", "api_secret", "label", "region", "environment"):
+            field_limits = {
+                "api_key": 4096,
+                "api_secret": 4096,
+                "label": 80,
+                "region": 32,
+                "environment": 32,
+            }
+            for field, maximum in field_limits.items():
                 value = body[field]
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError(f"{field} must be a non-empty string")
+                if len(value) > maximum:
+                    raise ValueError(f"{field} exceeds the {maximum}-character limit")
             fingerprint = delta_credential_fingerprint(body["api_key"], body["api_secret"])
             metadata = account_registry.register_account(
                 tenant_id=tenant, label=body["label"], region=body["region"],

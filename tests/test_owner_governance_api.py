@@ -504,3 +504,27 @@ def test_raw_credential_submission_rejects_invalid_field_types_before_vault_writ
     assert status == 400
     assert result["error"] == "bad_request"
     assert registry.accounts == {}
+
+
+@pytest.mark.parametrize("field,maximum", [
+    ("api_key", 4096),
+    ("api_secret", 4096),
+    ("label", 80),
+    ("region", 32),
+    ("environment", 32),
+])
+def test_raw_credential_submission_enforces_field_size_limits_before_vault_write(api, field, maximum):
+    server, _repo, registry = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members",
+             "owner-token", {"subject_id": "member-1"})
+    _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
+             "owner-token", {"approve": True})
+    payload = {"label": "Trading account", "region": "global",
+               "environment": "testnet", "api_key": "valid-key",
+               "api_secret": "valid-secret"}
+    payload[field] = "x" * (maximum + 1)
+    status, result = _request(server, "POST", "/v1/tenants/tenant-a/credentials",
+                              "member-token", payload)
+    assert status == 400
+    assert result["error"] == "bad_request"
+    assert registry.accounts == {}
