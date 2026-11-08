@@ -61,6 +61,8 @@ jobs:
           -q
       - name: Certify bounded evidence-gated Delta socket polling (Phase 455)
         run: python -m pytest tests/test_verified_socket_transport_phase2.py -q
+      - name: Certify read-only personal Delta credential verification (Phase 456)
+        run: python -m pytest tests/test_delta_credentials_check_phase456.py -q
       - name: Certify OIDC-authenticated owner governance HTTP API
         run: python -m pytest tests/test_owner_governance_api.py -q
       - name: Certify strict owner governance HTTP framing headers (Phase 450)
