@@ -1232,6 +1232,14 @@ class DeltaAccountRegistry:
             if not approval_required: return True
             if approval_provider is None: return False
             try:
+                if self._tenant_authorizer is not None:
+                    subject_reader = getattr(self._tenant_authorizer, "current_subject_id", None)
+                    if not callable(subject_reader) or subject_id is None:
+                        return False
+                    # Revalidate the live principal and session on every use,
+                    # not only when the session object is first constructed.
+                    if subject_reader(tenant) != subject_id:
+                        return False
                 subject_check = getattr(approval_provider, "is_approved_for_subject", None)
                 if subject_id is not None and callable(subject_check):
                     return subject_check(

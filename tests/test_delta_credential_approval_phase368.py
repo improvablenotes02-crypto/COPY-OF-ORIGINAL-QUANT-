@@ -204,6 +204,8 @@ def test_registry_denies_an_approved_credential_to_another_member():
         session.close()
 
         authorizer.subject = "member-b"
+        with pytest.raises(CredentialVaultError, match="no longer authorized"):
+            session.get_balance()
         with pytest.raises(CredentialVaultError, match="not owner-approved"):
             registry.open_read_only_session(
                 tenant_id="tenant-a", account_id=metadata.account_id,
