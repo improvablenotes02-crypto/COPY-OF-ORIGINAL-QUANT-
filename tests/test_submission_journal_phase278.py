@@ -50,5 +50,17 @@ class TestUnknownResolutionEvidencePhase278(unittest.TestCase):
         self.assertEqual(self.journal.get("QE-278-dispatch")["state"], DISPATCHING)
 
 
+
+    def test_transition_timestamp_remains_monotonic_when_wall_clock_moves_backwards(self):
+        from unittest.mock import patch
+
+        self.journal.reserve("QE-278-clock", {"symbol": "BTC"})
+        before = self.journal.get("QE-278-clock")["updated_at_ns"]
+        with patch("core.execution.submission_journal.time.time_ns", return_value=before - 10_000):
+            self.journal.transition("QE-278-clock", DISPATCHING)
+        after = self.journal.get("QE-278-clock")["updated_at_ns"]
+        self.assertGreater(after, before)
+        self.assertTrue(self.journal.validate_integrity())
+
 if __name__ == "__main__":
     unittest.main()

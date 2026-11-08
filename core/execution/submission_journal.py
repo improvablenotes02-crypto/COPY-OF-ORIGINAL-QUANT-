@@ -212,13 +212,13 @@ class SQLiteOrderSubmissionJournal:
             db.execute("BEGIN IMMEDIATE")
             self._validate_integrity(db)
             row = db.execute(
-                "SELECT state FROM order_submissions WHERE client_order_id = ?",
+                "SELECT state, updated_at_ns FROM order_submissions WHERE client_order_id = ?",
                 (str(client_order_id),),
             ).fetchone()
             if row is None:
                 db.execute("ROLLBACK")
                 raise SubmissionJournalError("submission reservation not found")
-            current = row[0]
+            current, previous_updated_at_ns = row
             if current == UNKNOWN and target != UNKNOWN:
                 valid_digest = (
                     isinstance(evidence_sha256, str)
@@ -236,10 +236,15 @@ class SQLiteOrderSubmissionJournal:
                 raise SubmissionJournalError(
                     f"invalid submission transition {current} -> {target}"
                 )
+            # Wall clocks can move backwards (NTP correction, VM restore,
+            # manual clock change). Keep persisted lifecycle timestamps monotonic
+            # so a valid transition cannot make the journal fail its own integrity
+            # check or appear older than the preceding durable state.
+            updated_at_ns = max(time.time_ns(), previous_updated_at_ns + 1)
             db.execute(
                 """UPDATE order_submissions SET state = ?, detail = ?,
                    updated_at_ns = ? WHERE client_order_id = ?""",
-                (target, str(detail)[:500], time.time_ns(), str(client_order_id)),
+                (target, str(detail)[:500], updated_at_ns, str(client_order_id)),
             )
             db.execute("COMMIT")
 
