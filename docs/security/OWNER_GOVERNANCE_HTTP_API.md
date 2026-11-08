@@ -23,7 +23,16 @@ Responses are non-cacheable; request logging is disabled; internal verifier and
 persistence exceptions are not echoed. A missing or malformed bearer header is
 401; a token that fails verification or fails the authenticated tenant/owner
 policy is deliberately collapsed to 403 by the facade, avoiding identity-state
-oracle details. The server refuses non-loopback binds.
+oracle details. The server refuses non-loopback binds and verifies the numeric address returned
+by the completed bind, including when the configured host is `localhost`.
+Active request handlers are bounded by `max_workers` (default 16, allowed range
+1-128); excess connections receive `503 Service Unavailable` with
+`Retry-After: 1`. Each accepted socket has a finite I/O timeout (default 10
+seconds, maximum 120 seconds). A client that stops sending bytes cannot retain
+a worker beyond this idle timeout. It is not an absolute request deadline: a
+slow-trickle client may still occupy one of the bounded slots. These controls
+bound local handler resource use; they are not per-principal rate limits or
+distributed denial-of-service protection.
 
 ## Deployment and limitations
 
@@ -41,6 +50,7 @@ production-admissible. This API therefore does not certify production readiness.
 The integration tests exercise verified owner and member identities, invite
 and approval transitions, credential metadata submission/approval/revocation,
 missing and invalid bearer tokens, tenant mismatch, actor spoofing, raw secret
-field rejection, and loopback-only binding. These are transport tests using
+field rejection, loopback-only binding, bounded concurrency, overload response,
+and stalled-request timeout recovery. These are transport tests using
 injected test verifiers and SQLite, not evidence of a deployed identity provider,
 database isolation, or live trading authorization.

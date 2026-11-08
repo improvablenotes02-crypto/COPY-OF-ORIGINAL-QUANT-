@@ -45,6 +45,8 @@ jobs:
         run: python -m pytest tests/test_tenant_background_jobs_phase382.py -q
       - name: Certify OIDC-authenticated owner governance HTTP API
         run: python -m pytest tests/test_owner_governance_api.py -q
+      - name: Certify owner governance HTTP resource limits (Phase 443)
+        run: python -m pytest tests/test_owner_governance_api_limits_phase443.py -q
       - name: Run focused runtime and tenant regression gate
         run: >-
           python -m pytest

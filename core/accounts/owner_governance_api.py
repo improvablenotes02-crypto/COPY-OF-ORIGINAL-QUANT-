@@ -7,8 +7,11 @@ No route accepts actor IDs, roles, API keys, or API secrets from the caller.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
+import math
 import re
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
 
@@ -123,15 +126,67 @@ def _dispatch(governance, method: str, path: str, body: dict):
     raise LookupError("route not found")
 
 
+
+class _BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """Threaded HTTP server with a hard cap on active handlers."""
+
+    daemon_threads = True
+    _OVERLOAD_RESPONSE = (
+        b"HTTP/1.1 503 Service Unavailable\r\n"
+        b"Connection: close\r\n"
+        b"Content-Length: 0\r\n"
+        b"Retry-After: 1\r\n\r\n"
+    )
+
+    def __init__(self, address, handler, *, max_workers: int, request_timeout: float):
+        self._request_slots = threading.BoundedSemaphore(max_workers)
+        self._request_timeout = request_timeout
+        super().__init__(address, handler)
+
+    def process_request(self, request, client_address):
+        if not self._request_slots.acquire(blocking=False):
+            try:
+                request.sendall(self._OVERLOAD_RESPONSE)
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            request.settimeout(self._request_timeout)
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
+
+
 def create_owner_governance_server(
     governance,
     *,
     host: str = "127.0.0.1",
     port: int = 0,
+    max_workers: int = 16,
+    request_timeout: float = 10.0,
 ):
-    """Create a loopback-only server; caller owns lifecycle and OIDC adapters."""
-    if host not in {"127.0.0.1", "::1", "localhost"}:
+    """Create a bounded loopback server; caller owns lifecycle and OIDC adapters."""
+    if not isinstance(host, str) or host not in {"127.0.0.1", "::1", "localhost"}:
         raise ValueError("owner governance API must bind to loopback")
+    if isinstance(max_workers, bool) or not isinstance(max_workers, int) or not 1 <= max_workers <= 128:
+        raise ValueError("max_workers must be an integer from 1 to 128")
+    if isinstance(request_timeout, bool) or not isinstance(request_timeout, (int, float)):
+        raise ValueError("request_timeout must be finite and in (0, 120] seconds")
+    try:
+        timeout_value = float(request_timeout)
+    except (OverflowError, ValueError):
+        raise ValueError("request_timeout must be finite and in (0, 120] seconds") from None
+    if not math.isfinite(timeout_value) or not 0 < timeout_value <= 120:
+        raise ValueError("request_timeout must be finite and in (0, 120] seconds")
     if governance is None:
         raise ValueError("authenticated owner governance facade is required")
 
@@ -180,4 +235,18 @@ def create_owner_governance_server(
         def log_message(self, *_args):
             pass
 
-    return ThreadingHTTPServer((host, int(port)), Handler)
+    server = _BoundedThreadingHTTPServer(
+        (host, int(port)),
+        Handler,
+        max_workers=max_workers,
+        request_timeout=timeout_value,
+    )
+    try:
+        bound_address = ipaddress.ip_address(server.server_address[0].split("%", 1)[0])
+    except ValueError:
+        server.server_close()
+        raise ValueError("resolved bind address must be a numeric loopback address") from None
+    if not bound_address.is_loopback:
+        server.server_close()
+        raise ValueError("resolved bind address must be loopback")
+    return server
