@@ -129,3 +129,41 @@ def test_localhost_is_verified_after_numeric_bind_resolution():
         assert ipaddress.ip_address(server.server_address[0]).is_loopback
     finally:
         server.server_close()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"subject_id":"first","subject_id":"second"}',
+        b'{"subject_id":"x","nested":{"role":"member","role":"owner"}}',
+        b'{"subject_id":"x","score":NaN}',
+        b'{"subject_id":"x","score":Infinity}',
+        b'{"subject_id":"x","score":-Infinity}',
+        b'{"subject_id":"x","score":1e999}',
+        b'{"subject_id":"x","score":',
+    ],
+)
+def test_ambiguous_or_non_finite_json_is_rejected_before_dispatch(body):
+    calls = []
+
+    class NoopGovernance:
+        def invite_member(self, **kwargs):
+            calls.append(kwargs)
+
+    server, thread = _start(NoopGovernance())
+    try:
+        with _post_bytes(server.server_address[1], body) as sock:
+            chunks = []
+            while True:
+                part = sock.recv(4096)
+                if not part:
+                    break
+                chunks.append(part)
+        response = b"".join(chunks)
+        assert b"400 Bad Request" in response
+        assert b'"error":"bad_request"' in response
+        assert calls == []
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
