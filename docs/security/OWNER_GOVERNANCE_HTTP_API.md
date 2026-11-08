@@ -73,3 +73,20 @@ the database connection identity. Consequently the current runtime composition
 cannot yet start this API in production mode. Member revocation is exposed as an
 owner-only operation and atomically revokes the member's pending/approved
 credentials in the same repository transaction.
+
+
+## Member credential submission
+
+An authenticated, approved tenant member submits Delta credentials through
+`POST /v1/tenants/{tenant}/credentials` with exactly these JSON fields:
+`label`, `region`, `environment`, `api_key`, and `api_secret`.
+The server must be started with a trusted `account_registry` dependency whose
+tenant authorizer is bound to the verified request principal. The registry
+encrypts and persists the credentials; the API computes the canonical SHA-256
+fingerprint and creates a pending owner-approval record tied to the returned
+account ID. The response contains only the account ID and `PENDING` status.
+If governance submission fails, the API attempts to delete the newly-created
+vault record and returns an error. Plaintext credentials are never included in
+responses or audit metadata. The legacy metadata-only submission shape remains
+available for controlled migration, but cannot create a usable vault account
+by itself.
