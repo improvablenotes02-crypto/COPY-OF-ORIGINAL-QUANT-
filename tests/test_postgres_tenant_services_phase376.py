@@ -109,7 +109,8 @@ def test_background_task_uses_persisted_principal_with_oidc_request_source(tmp_p
     runner = TenantBackgroundTaskRunner(store, authorizer)
     job = store.enqueue(principal(), "tenant-a")
     assert runner.run(job, lambda: authorizer.authorize_tenant("tenant-a")) is True
-    assert authorizer.authorize_tenant("tenant-a") is False
+    with pytest.raises(AccountScopeError):
+        authorizer.authorize_tenant("tenant-a")
 
 
 def test_background_task_context_is_restored_after_callback_failure(tmp_path):
