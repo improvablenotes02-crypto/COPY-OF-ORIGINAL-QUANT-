@@ -38,18 +38,33 @@ def _segment(value: str) -> str:
     return decoded
 
 
-def _object_body(handler) -> dict:
-    raw_length = handler.headers.get("Content-Length")
-    if raw_length is None:
-        raise ValueError("Content-Length is required")
+def _content_length(handler, *, required: bool) -> int | None:
+    values = handler.headers.get_all("Content-Length", [])
+    if len(values) > 1:
+        raise ValueError("duplicate Content-Length is not supported")
+    if not values:
+        if required:
+            raise ValueError("Content-Length is required")
+        return None
+    raw_length = values[0]
+    if not re.fullmatch(r"[0-9]+", raw_length):
+        raise ValueError("invalid Content-Length")
     try:
-        length = int(raw_length)
-    except (TypeError, ValueError):
+        return int(raw_length)
+    except (TypeError, ValueError, OverflowError):
         raise ValueError("invalid Content-Length") from None
+
+
+def _reject_transfer_encoding(handler) -> None:
+    if handler.headers.get_all("Transfer-Encoding", []):
+        raise ValueError("transfer encoding is not supported")
+
+
+def _object_body(handler) -> dict:
+    length = _content_length(handler, required=True)
     if length < 0 or length > _MAX_BODY_BYTES:
         raise ValueError("request body exceeds limit")
-    if handler.headers.get("Transfer-Encoding"):
-        raise ValueError("transfer encoding is not supported")
+    _reject_transfer_encoding(handler)
     if handler.headers.get_content_type() != "application/json":
         raise ValueError("application/json is required")
     raw = handler.rfile.read(length)
@@ -93,16 +108,9 @@ def _only_fields(body: dict, required: set[str], optional: set[str] = frozenset(
 
 def _empty_body(handler) -> dict:
     """Reject bodies on GET/DELETE so ignored bytes cannot hide extra input."""
-    if handler.headers.get("Transfer-Encoding"):
-        raise ValueError("transfer encoding is not supported")
-    raw_length = handler.headers.get("Content-Length")
-    if raw_length is None:
-        return {}
-    try:
-        length = int(raw_length)
-    except (TypeError, ValueError):
-        raise ValueError("invalid Content-Length") from None
-    if length != 0:
+    _reject_transfer_encoding(handler)
+    length = _content_length(handler, required=False)
+    if length is not None and length != 0:
         raise ValueError("request body must be empty")
     return {}
 
