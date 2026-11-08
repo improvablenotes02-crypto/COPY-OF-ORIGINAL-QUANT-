@@ -82,6 +82,25 @@ def _dispatch(governance, method: str, path: str, body: dict):
         raise LookupError("route not found")
     tenant = _segment(parts[2])
 
+    if method == "GET" and len(parts) == 3:
+        members = governance.list_members(tenant_id=tenant)
+        return {"members": [
+            {"subject_id": item.subject_id, "status": item.status,
+             "permissions": list(item.permissions), "created_at_ns": item.created_at_ns,
+             "updated_at_ns": item.updated_at_ns}
+            for item in members
+        ]}
+
+    if method == "GET" and len(parts) == 4 and parts[3] == "credentials":
+        credentials = governance.list_credentials(tenant_id=tenant)
+        return {"credentials": [
+            {"credential_id": item.credential_id, "subject_id": item.subject_id,
+             "account_id": item.account_id, "fingerprint": item.fingerprint,
+             "status": item.status, "created_at_ns": item.created_at_ns,
+             "updated_at_ns": item.updated_at_ns}
+            for item in credentials
+        ]}
+
     if method == "POST" and len(parts) == 4 and parts[3] == "members":
         _only_fields(body, {"subject_id"}, {"permissions"})
         governance.invite_member(
@@ -256,6 +275,9 @@ def create_owner_governance_server(
 
         def do_DELETE(self):
             self._handle("DELETE")
+
+        def do_GET(self):
+            self._handle("GET")
 
         def log_message(self, *_args):
             pass

@@ -186,6 +186,20 @@ class SQLiteOwnerGovernanceRepository:
                           tuple(json.loads(row["permissions_json"])),
                           row["created_at_ns"],row["updated_at_ns"])
 
+    def list_members(self, tenant):
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM qe_memberships WHERE tenant_id=? ORDER BY created_at_ns,subject_id", (tenant,)).fetchall()
+        return [Membership(row["tenant_id"], row["subject_id"], row["status"],
+                           tuple(json.loads(row["permissions_json"])), row["created_at_ns"], row["updated_at_ns"])
+                for row in rows]
+
+    def list_credentials(self, tenant):
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM qe_credential_approvals WHERE tenant_id=? ORDER BY created_at_ns,credential_id", (tenant,)).fetchall()
+        return [CredentialApproval(row["tenant_id"], row["credential_id"], row["subject_id"],
+                                   row["account_id"], row["fingerprint"], row["status"],
+                                   row["created_at_ns"], row["updated_at_ns"]) for row in rows]
+
     def submit_credential(self, tenant, credential, subject, account, fingerprint, now):
         with self._lock, self._db:
             self._db.execute(
@@ -300,6 +314,14 @@ class OwnerGovernance:
         if subject == self._owner:
             raise OwnerAuthorizationError("the configured owner cannot be revoked")
         self._repository.revoke_membership(tenant, subject, actor_id, self._clock())
+
+    def list_members(self, *, actor_id, tenant_id):
+        self._owner_only(actor_id)
+        return self._repository.list_members(self._text(tenant_id, "tenant_id"))
+
+    def list_credentials(self, *, actor_id, tenant_id):
+        self._owner_only(actor_id)
+        return self._repository.list_credentials(self._text(tenant_id, "tenant_id"))
 
     def submit_credential(self, *, actor_id, tenant_id, credential_id, account_id, fingerprint):
         actor=self._text(actor_id,"actor_id")
@@ -436,6 +458,14 @@ class AuthenticatedOwnerGovernance:
         self._governance.revoke_member(
             actor_id=actor, tenant_id=tenant, subject_id=subject_id
         )
+
+    def list_members(self, *, tenant_id):
+        tenant, actor = self._identity(tenant_id)
+        return self._governance.list_members(actor_id=actor, tenant_id=tenant)
+
+    def list_credentials(self, *, tenant_id):
+        tenant, actor = self._identity(tenant_id)
+        return self._governance.list_credentials(actor_id=actor, tenant_id=tenant)
 
     def submit_credential(
         self, *, tenant_id, credential_id, account_id, fingerprint

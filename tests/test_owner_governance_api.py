@@ -242,3 +242,24 @@ def test_nonproduction_composition_requires_explicit_opt_in(tmp_path):
     with pytest.raises(ProductionAdmissionError, match="not production-admissible"):
         create_owner_governance_server(facade)
     repo.close()
+
+def test_owner_can_list_members_and_pending_credential_approvals(api):
+    server, repo = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members",
+             "owner-token", {"subject_id": "member-1", "permissions": ["read"]})
+    _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
+             "owner-token", {"approve": True, "permissions": ["read"]})
+    _request(server, "POST", "/v1/tenants/tenant-a/credentials", "member-token",
+             {"credential_id": "cred-pending", "account_id": "acct-1", "fingerprint": "d" * 64})
+    status, members = _request(server, "GET", "/v1/tenants/tenant-a/members", "owner-token")
+    assert status == 200 and members["members"][0]["subject_id"] == "member-1"
+    status, credentials = _request(server, "GET", "/v1/tenants/tenant-a/credentials", "owner-token")
+    assert status == 200 and credentials["credentials"][0]["status"] == "PENDING"
+    assert credentials["credentials"][0]["fingerprint"] == "d" * 64
+
+def test_member_cannot_list_owner_management_views(api):
+    server, repo = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members", "owner-token", {"subject_id": "member-1"})
+    _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision", "owner-token", {"approve": True})
+    assert _request(server, "GET", "/v1/tenants/tenant-a/members", "member-token")[0] == 403
+    assert _request(server, "GET", "/v1/tenants/tenant-a/credentials", "member-token")[0] == 403

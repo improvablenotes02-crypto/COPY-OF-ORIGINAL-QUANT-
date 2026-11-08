@@ -10,6 +10,9 @@ authenticated governance adapters.
 
 Routes:
 
+- `GET /v1/tenants/{tenant}/members` — owner-only member list with status and permissions.
+- `GET /v1/tenants/{tenant}/credentials` — owner-only credential approval queue; metadata and fingerprint only.
+
 - `POST /v1/tenants/{tenant}/members` — owner invites a member (PENDING).
 - `POST /v1/tenants/{tenant}/members/{subject}/decision` — owner approves or rejects.
 - `DELETE /v1/tenants/{tenant}/members/{subject}` — owner revokes an approved member, clears permissions, and atomically revokes that member's pending and approved credential registrations; the configured owner cannot revoke their own identity.
@@ -17,8 +20,10 @@ Routes:
 - `POST /v1/tenants/{tenant}/credentials/{credential}/decision` — owner approves/rejects.
 - `DELETE /v1/tenants/{tenant}/credentials/{credential}` — owner revokes an approved credential.\n- `DELETE /v1/tenants/{tenant}/members/{subject}` — owner revokes a member and all that member’s pending/approved credentials.
 
-The API accepts credential identifiers, account identifiers, and a SHA-256
-fingerprint only. It rejects additional fields, including caller-supplied actor
+The governance API accepts credential identifiers, account identifiers, and a SHA-256
+fingerprint only. Actual broker key/secret material belongs in the encrypted Delta account
+registry, protected at rest by an injected encryption provider; this approval API never
+receives or returns raw key material. It rejects additional fields, including caller-supplied actor
 IDs, roles, API keys, or API secrets. It never returns credential material.
 Responses are non-cacheable; request logging is disabled; internal verifier and
 persistence exceptions are not echoed. A missing or malformed bearer header is
