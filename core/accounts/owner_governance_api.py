@@ -232,6 +232,7 @@ def create_owner_governance_server(
     max_workers: int = 16,
     request_timeout: float = 10.0,
     allow_nonproduction: bool = False,
+    account_registry=None,
 ):
     """Create a bounded loopback server; caller owns lifecycle and OIDC adapters."""
     if not isinstance(host, str) or host not in {"127.0.0.1", "::1", "localhost"}:
