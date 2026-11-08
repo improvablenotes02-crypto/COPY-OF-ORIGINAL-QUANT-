@@ -139,8 +139,7 @@ def test_example_env_uses_exact_runtime_credential_names():
 
 def test_configured_public_rest_uses_selected_region_and_environment():
     from config import settings as settings_mod
-    with mock.patch.object(settings_mod.settings, "DELTA_REGION", "INDIA"), \\
-         mock.patch.object(settings_mod.settings, "DELTA_ENVIRONMENT", "SANDBOX"):
+    with mock.patch.object(settings_mod.settings, "DELTA_REGION", "INDIA"), mock.patch.object(settings_mod.settings, "DELTA_ENVIRONMENT", "SANDBOX"):
         rest = env.configured_public_rest()
     try:
         assert rest.base_url == "https://cdn-ind.testnet.deltaex.org"
@@ -151,8 +150,7 @@ def test_configured_public_rest_uses_selected_region_and_environment():
 def test_default_liquidity_provider_uses_configured_public_rest():
     from config import settings as settings_mod
     from core.universe.liquidity_provider import DeltaLiquidityProvider
-    with mock.patch.object(settings_mod.settings, "DELTA_REGION", "INDIA"), \\
-         mock.patch.object(settings_mod.settings, "DELTA_ENVIRONMENT", "PRODUCTION"):
+    with mock.patch.object(settings_mod.settings, "DELTA_REGION", "INDIA"), mock.patch.object(settings_mod.settings, "DELTA_ENVIRONMENT", "PRODUCTION"):
         provider = DeltaLiquidityProvider()
     try:
         assert provider.rest.base_url == "https://api.india.delta.exchange"
@@ -163,8 +161,7 @@ def test_default_liquidity_provider_uses_configured_public_rest():
 def test_default_history_provider_uses_configured_public_rest():
     from config import settings as settings_mod
     from core.universe.history_provider import DeltaHistoryProvider
-    with mock.patch.object(settings_mod.settings, "DELTA_REGION", "INDIA"), \\
-         mock.patch.object(settings_mod.settings, "DELTA_ENVIRONMENT", "SANDBOX"):
+    with mock.patch.object(settings_mod.settings, "DELTA_REGION", "INDIA"), mock.patch.object(settings_mod.settings, "DELTA_ENVIRONMENT", "SANDBOX"):
         provider = DeltaHistoryProvider()
     try:
         assert provider.history.rest.base_url == "https://cdn-ind.testnet.deltaex.org"
@@ -175,8 +172,7 @@ def test_default_history_provider_uses_configured_public_rest():
 def test_region_scoped_personal_credentials_feed_live_gate_inputs():
     from config import settings as settings_mod
     from core.execution.live_safety_gate import ExecutionMode, LiveSafetyGate
-    with mock.patch.object(settings_mod.settings, "INDIA_API_KEY", "india-personal-key"), \\
-         mock.patch.object(settings_mod.settings, "INDIA_API_SECRET", "india-personal-secret"):
+    with mock.patch.object(settings_mod.settings, "INDIA_API_KEY", "india-personal-key"), mock.patch.object(settings_mod.settings, "INDIA_API_SECRET", "india-personal-secret"):
         key, secret = env.credentials_for("PRODUCTION", "INDIA")
         inputs = LiveSafetyGate.from_settings(
             mode=ExecutionMode.LIVE, api_key=key, api_secret=secret
