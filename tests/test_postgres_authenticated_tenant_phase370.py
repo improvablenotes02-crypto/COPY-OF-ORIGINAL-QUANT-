@@ -68,6 +68,13 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
                 db.execute("SELECT set_config('quantengine.tenant_id','tenant-b',true)")
                 assert db.execute("SELECT account_id FROM public.delta_accounts").fetchall() == [("acct-a",)]
                 assert db.execute("SELECT subject_id FROM public.qe_memberships").fetchall() == [("member-a",)]
+                # Tenant logins cannot read or mutate the DBA-owned identity map.
+                with pytest.raises(psycopg.Error):
+                    with db.transaction():
+                        db.execute(
+                            "INSERT INTO public.qe_tenant_login_map(login_role,tenant_id) "
+                            "VALUES ('spoofed-login','tenant-b')"
+                        )
                 with pytest.raises(psycopg.Error):
                     with db.transaction():
                         db.execute(
@@ -81,6 +88,21 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
             assert db.execute("SELECT public.qe_authenticated_tenant_id()").fetchone()[0] == "tenant-b"
             assert db.execute("SELECT account_id FROM public.delta_accounts").fetchall() == [("acct-b",)]
             assert db.execute("SELECT subject_id FROM public.qe_memberships").fetchall() == [("member-b",)]
+        # An unmapped database login is denied by NULL RLS predicates.
+        with psycopg.connect(ADMIN, autocommit=True) as db:
+            db.execute("DELETE FROM public.qe_tenant_login_map WHERE login_role=%s", (ROLE_B,))
+        with psycopg.connect(_dsn(ROLE_B, PASSWORD_B)) as db:
+            assert db.execute("SELECT public.qe_authenticated_tenant_id()").fetchone()[0] is None
+            assert db.execute("SELECT account_id FROM public.delta_accounts").fetchall() == []
+            with pytest.raises(psycopg.Error):
+                with db.transaction():
+                    db.execute(
+                        "INSERT INTO public.delta_accounts "
+                        "(account_id,tenant_id,venue,region,environment,label,key_id,algorithm,ciphertext,"
+                        "created_at_ns,updated_at_ns,credential_generation) "
+                        "VALUES ('unmapped','tenant-b','delta','INDIA','SANDBOX','unmapped','k1','AES-256-GCM',%s,3,3,1)",
+                        (b"synthetic",),
+                    )
 
         from core.accounts.postgres_delta_account_repository import AuthenticatedPostgreSQLDeltaAccountRepository
         from core.accounts.postgres_owner_governance_repository import AuthenticatedPostgreSQLOwnerGovernanceRepository
