@@ -33,3 +33,27 @@ No queue transitions, automatic replay, exactly-once claim, or live authorizatio
 - **426:** Certify that symlink backup paths cannot pass direct verification, not only inventory filtering.
 - **427:** Prove the total-byte budget is applied before hashing candidate contents, bounding I/O as well as SQLite verification.
 - **428:** Verify maintenance health sanitizes inventory permission failures and keeps replay disabled and production readiness false.
+
+- **429:** Prefer the Windows drive-letter SQLite read-only URI before the canonical URI to avoid a successful open of the wrong database on affected SQLite builds; certify paths containing spaces and URI-reserved characters.
+- **430:** Reject direct backup verification of hard-link aliases to the live queue database, closing the gap between inventory filtering and the public verification boundary.
+- **431:** Prove a digest mismatch is rejected before SQLite is opened, avoiding unnecessary parsing of untrusted backup contents.
+- **432:** Verify inventory and health summaries never expose low-level SQLite exception text or private filesystem paths; replay remains disabled.
+- **433:** Add stable file-identity comparison, using Windows volume serial/file index rather than relying on st_ino behavior across Windows filesystem providers.
+- **434:** Route direct backup verification and inventory hard-link exclusion through the same stable identity primitive.
+- **435:** Fail closed when source/candidate file identity cannot be established at the direct verification boundary.
+- **436:** Verify inventory rejects candidates whose file identity cannot be established and exposes only a sanitized filesystem rejection category.
+
+
+## Cross-platform verification correction
+
+The Windows inventory gate exposed a mismatch between successful backup creation and read-only backup verification. File identity now uses Python's no-follow filesystem stat identity on both Windows and POSIX and rejects unavailable/zero inode identifiers. SQLite verification evaluates each Windows URI candidate independently and accepts only a candidate whose full integrity, schema and semantic checks pass; a syntactically successful open of the wrong/empty database no longer prevents trying the alternate URI. Both paths remain read-only, and inability to establish identity or verify a healthy database still fails closed. The existing Windows inventory regression is the acceptance gate for this correction.
+
+
+## Inventory rejection diagnostics
+
+The bounded backup inventory now records explicit rejection categories when a candidate changes during the post-verification identity check or when the verified receipt size does not match the final file metadata. This keeps rejected candidates fail-closed while making cross-platform inventory failures diagnosable without exposing file contents or credentials.
+
+
+## Cross-platform inventory identity comparison
+
+The inventory now compares stable file identities obtained through the same no-follow `os.stat` helper both before and after SQLite verification, while separately checking size and modification time. This avoids comparing Windows `DirEntry.stat` metadata with `os.lstat` metadata from different filesystem query paths. Source-database alias rejection and fail-closed changed-file detection remain in place.

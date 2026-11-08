@@ -79,6 +79,15 @@ class SQLiteBackgroundJobMaintenance:
         if os.path.lexists(target):raise FileExistsError("destination already exists")
         return target
     @staticmethod
+    def _file_identity(path):
+        """Return a stable device/file identifier without platform-specific handle layouts."""
+        info=os.stat(path,follow_symlinks=False)
+        inode=getattr(info,"st_ino",0)
+        if isinstance(inode,bool) or not isinstance(inode,int) or inode<=0:
+            raise OSError("stable filesystem file identity unavailable")
+        return (int(info.st_dev),inode)
+
+    @staticmethod
     def _digest(path):
         h=hashlib.sha256()
         with open(path,"rb") as f:
@@ -115,31 +124,47 @@ class SQLiteBackgroundJobMaintenance:
         import stat
         before=os.lstat(path)
         if not stat.S_ISREG(before.st_mode):raise ValueError("backup must be a regular non-symlink file")
+        # A hard link to the live queue is not a backup, even when its digest
+        # and schema are valid. Reject it at the direct verification boundary.
+        if self._file_identity(path)==self._file_identity(self._store._path):
+            raise ValueError("backup must not alias the live source database")
         actual=self._digest(path)
         if not hmac.compare_digest(actual,expected_sha256.lower()):raise RuntimeError("backup SHA-256 mismatch")
         if any(ch not in "0123456789abcdef" for ch in expected_sha256.lower()):
             raise ValueError("backup SHA-256 digest must be hexadecimal")
-        # Open backups read-only: verification must never create journals or mutate evidence.
-        # SQLite URI parsing differs across Windows builds; try canonical pathlib URI
-        # first, then the drive-letter form. Both retain mode=ro.
-        uri_candidates=[Path(path).as_uri()+"?mode=ro"]
+        # Open backups read-only. Some Windows SQLite builds accept a URI
+        # syntactically but resolve it to a different, empty database. Therefore
+        # inspect each platform-specific candidate and accept only the one whose
+        # schema, integrity and semantic checks all pass.
         if os.name=="nt":
-            uri_candidates.append("file:"+Path(path).as_posix()+"?mode=ro")
-        c=None
+            from urllib.parse import quote
+            drive_uri="file:"+quote(Path(path).as_posix(),safe="/:")+"?mode=ro"
+            uri_candidates=[drive_uri,Path(path).as_uri()+"?mode=ro"]
+        else:
+            uri_candidates=[Path(path).as_uri()+"?mode=ro"]
+        report=None
         last_error=None
         for uri in uri_candidates:
+            candidate=None
             try:
-                c=sqlite3.connect(uri,uri=True)
-                break
-            except sqlite3.OperationalError as exc:
+                candidate=sqlite3.connect(uri,uri=True)
+                candidate.execute("PRAGMA query_only=ON")
+                candidate_report=self._inspect(candidate)
+                if candidate_report["healthy"]:
+                    report=candidate_report
+                    break
+                report=candidate_report
+            except sqlite3.DatabaseError as exc:
                 last_error=exc
-        if c is None:
-            raise last_error
-        try:
-            c.execute("PRAGMA query_only=ON")
-            report=self._inspect(c)
-        finally:c.close()
-        if not report["healthy"]:raise RuntimeError("backup integrity verification failed")
+            finally:
+                if candidate is not None:
+                    candidate.close()
+        if report is None or not report["healthy"]:
+            if report is not None:
+                raise RuntimeError("backup integrity verification failed")
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError("backup integrity verification failed")
         after=os.lstat(path)
         identity=lambda st:(st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns)
         if not stat.S_ISREG(after.st_mode) or identity(before)!=identity(after):
@@ -219,9 +244,7 @@ class SQLiteBackgroundJobMaintenance:
         root_stat=os.lstat(root)
         if not __import__("stat").S_ISDIR(root_stat.st_mode): raise ValueError("backup directory must be a regular non-symlink directory")
         results=[];candidates=0;rejected=0;truncated=False;scanned=0;verified_bytes=0;reasons={}
-        source_stat=None
-        try: source_stat=os.lstat(self._store._path)
-        except OSError: pass
+        source_identity=self._file_identity(self._store._path)
         # Stop while iterating; do not materialize an attacker-controlled directory.
         with os.scandir(root) as entries:
             for entry in entries:
@@ -236,22 +259,28 @@ class SQLiteBackgroundJobMaintenance:
                     if not __import__("stat").S_ISREG(before.st_mode):
                         rejected+=1;reasons["not_regular_file"]=reasons.get("not_regular_file",0)+1
                         continue
-                    if source_stat is not None and (before.st_dev,before.st_ino)==(source_stat.st_dev,source_stat.st_ino):
+                    path=os.path.join(root,entry.name)
+                    before_file_identity=self._file_identity(path)
+                    if before_file_identity==source_identity:
                         rejected+=1;reasons["source_database_alias"]=reasons.get("source_database_alias",0)+1
                         continue
                     if before.st_size<1 or before.st_size>max_total_bytes-verified_bytes:
                         rejected+=1
                         truncated=True
                         break
-                    path=os.path.join(root,entry.name)
                     receipt=self.verify_backup(path,expected_sha256=self._digest(path))
                     after=os.lstat(path)
-                    identity=lambda st:(st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns)
-                    if not __import__("stat").S_ISREG(after.st_mode) or identity(before)!=identity(after):
+                    after_file_identity=self._file_identity(path)
+                    if (not __import__("stat").S_ISREG(after.st_mode)
+                            or before_file_identity!=after_file_identity
+                            or before.st_size!=after.st_size
+                            or before.st_mtime_ns!=after.st_mtime_ns):
                         rejected+=1
+                        reasons["changed_during_verification"]=reasons.get("changed_during_verification",0)+1
                         continue
                     if receipt.size_bytes!=after.st_size or receipt.size_bytes>max_total_bytes-verified_bytes:
                         rejected+=1
+                        reasons["receipt_size_mismatch"]=reasons.get("receipt_size_mismatch",0)+1
                         truncated=True
                         break
                     results.append(receipt)

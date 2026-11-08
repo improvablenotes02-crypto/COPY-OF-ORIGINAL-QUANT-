@@ -151,6 +151,32 @@ class SQLiteOwnerGovernanceRepository:
             if cur.rowcount != 1: raise GovernanceConflictError("membership is not pending")
             self._audit(tenant,actor,"MEMBERSHIP_"+status,subject,now)
 
+    def revoke_membership(self, tenant, subject, actor, now):
+        """Revoke an approved member as an audited one-way transition."""
+        with self._lock, self._db:
+            cur = self._db.execute(
+                "UPDATE qe_memberships SET status='REVOKED',permissions_json='[]',updated_at_ns=? "
+                "WHERE tenant_id=? AND subject_id=? AND status='APPROVED'",
+                (now, tenant, subject),
+            )
+            if cur.rowcount != 1:
+                raise GovernanceConflictError("membership is not approved")
+            credentials = self._db.execute(
+                "SELECT credential_id FROM qe_credential_approvals "
+                "WHERE tenant_id=? AND subject_id=? AND status IN ('PENDING','APPROVED') "
+                "ORDER BY credential_id",
+                (tenant, subject),
+            ).fetchall()
+            self._db.execute(
+                "UPDATE qe_credential_approvals SET status='REVOKED',updated_at_ns=? "
+                "WHERE tenant_id=? AND subject_id=? AND status IN ('PENDING','APPROVED')",
+                (now, tenant, subject),
+            )
+            for credential in credentials:
+                self._audit(tenant, actor, "CREDENTIAL_REVOKED_MEMBER_REMOVAL",
+                            credential["credential_id"], now)
+            self._audit(tenant, actor, "MEMBER_REVOKED", subject, now)
+
     def membership(self, tenant, subject):
         with self._lock:
             row=self._db.execute("SELECT * FROM qe_memberships WHERE tenant_id=? AND subject_id=?",
@@ -266,6 +292,14 @@ class OwnerGovernance:
         if any(p not in allowed for p in perms): raise ValueError("unsupported permission")
         self._repository.decide_membership(tenant,subject,"APPROVED" if approve else "REJECTED",
                                            perms if approve else (),actor_id,self._clock())
+
+    def revoke_member(self, *, actor_id, tenant_id, subject_id):
+        self._owner_only(actor_id)
+        tenant = self._text(tenant_id, "tenant_id")
+        subject = self._text(subject_id, "subject_id")
+        if subject == self._owner:
+            raise OwnerAuthorizationError("the configured owner cannot be revoked")
+        self._repository.revoke_membership(tenant, subject, actor_id, self._clock())
 
     def submit_credential(self, *, actor_id, tenant_id, credential_id, account_id, fingerprint):
         actor=self._text(actor_id,"actor_id")
@@ -395,6 +429,12 @@ class AuthenticatedOwnerGovernance:
             subject_id=subject_id,
             approve=approve,
             permissions=permissions,
+        )
+
+    def revoke_member(self, *, tenant_id, subject_id):
+        tenant, actor = self._identity(tenant_id)
+        self._governance.revoke_member(
+            actor_id=actor, tenant_id=tenant, subject_id=subject_id
         )
 
     def submit_credential(
