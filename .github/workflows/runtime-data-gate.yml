@@ -51,8 +51,12 @@ jobs:
           tests/test_phase202_adapter_behavior_probe.py
           tests/test_phase203_market_data_validation.py
           -q
-      - name: Certify Delta personal credential environment scoping (Phase 283)
-        run: python -m pytest tests/test_delta_region_authority_phase283.py -q
+      - name: Certify personal Delta region/environment routing (Phase 454)
+        run: >-
+          python -m pytest
+          tests/test_delta_region_authority_phase283.py
+          tests/test_provider_plumbing_9pd.py
+          -q
       - name: Certify OIDC-authenticated owner governance HTTP API
         run: python -m pytest tests/test_owner_governance_api.py -q
       - name: Certify strict owner governance HTTP framing headers (Phase 450)
