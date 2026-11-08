@@ -130,7 +130,7 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
             for previous, current in zip(audit_events, audit_events[1:])
         )
         assert all(
-            current["previous_event_hash"] == previous["event_hash"]
+            current["previous_hash"] == previous["event_hash"]
             for previous, current in zip(audit_events, audit_events[1:])
         )
 
