@@ -12,6 +12,7 @@ Routes:
 
 - `POST /v1/tenants/{tenant}/members` — owner invites a member (PENDING).
 - `POST /v1/tenants/{tenant}/members/{subject}/decision` — owner approves or rejects.
+- `DELETE /v1/tenants/{tenant}/members/{subject}` — owner revokes an approved member and clears permissions; the configured owner cannot revoke their own identity.
 - `POST /v1/tenants/{tenant}/credentials` — approved member submits credential metadata.
 - `POST /v1/tenants/{tenant}/credentials/{credential}/decision` — owner approves/rejects.
 - `DELETE /v1/tenants/{tenant}/credentials/{credential}` — owner revokes an approved credential.
@@ -37,7 +38,7 @@ distributed denial-of-service protection.
 ## Deployment and limitations
 
 Compose this transport with `OidcTenantPrincipalSource`, a production token
-verifier, an authoritative membership resolver, and a session-status validator.
+verifier, an authoritative membership resolver, and a session-status validator. The membership resolver must reflect current approved membership state (including revocation) on each authorization decision; a cache introduces a corresponding revocation delay. Member revocation clears governance permissions but does not independently terminate an external identity-provider session.
 The transport itself does not implement OIDC cryptography, identity provisioning,
 TLS termination, rate limiting, or production database isolation. Keep it on
 loopback behind a separately authenticated/TLS-terminating trusted gateway if
@@ -51,6 +52,6 @@ The integration tests exercise verified owner and member identities, invite
 and approval transitions, credential metadata submission/approval/revocation,
 missing and invalid bearer tokens, tenant mismatch, actor spoofing, raw secret
 field rejection, loopback-only binding, bounded concurrency, overload response,
-and stalled-request timeout recovery. These are transport tests using
+stalled-request timeout recovery, and owner-only member revocation with permission clearing. These are transport tests using
 injected test verifiers and SQLite, not evidence of a deployed identity provider,
 database isolation, or live trading authorization.
