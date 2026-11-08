@@ -10,6 +10,8 @@ def caps(**kwargs):
         venue="test-venue",
         market_families=frozenset({MarketFamily.CRYPTO}),
         instrument_types=frozenset({InstrumentType.SPOT}),
+        market_data=True,
+        account_data=True,
     )
     defaults.update(kwargs)
     return MarketCapabilities(**defaults)
@@ -95,3 +97,36 @@ def test_optional_adapter_parameters_are_allowed():
         def get_positions(self, account=None): return []
 
     assert validate_adapter_conformance(OptionalParams(), caps()).conforms
+
+def test_public_market_data_adapter_does_not_need_private_account_methods():
+    class PublicOnlyAdapter:
+        def get_products(self):
+            return [{"symbol": "BTC-USD"}]
+
+    capabilities = caps(market_data=True, historical_data=True, account_data=False)
+    report = validate_adapter_conformance(PublicOnlyAdapter(), capabilities)
+    assert report.conforms
+    assert report.errors == ()
+
+
+def test_declared_account_data_requires_balance_and_positions():
+    class MarketDataOnlyAdapter:
+        def get_products(self):
+            return []
+
+    capabilities = caps(market_data=True, account_data=True)
+    report = validate_adapter_conformance(MarketDataOnlyAdapter(), capabilities)
+    assert not report.conforms
+    assert "missing callable read method: get_balance" in report.errors
+    assert "missing callable read method: get_positions" in report.errors
+
+
+def test_adapter_must_declare_at_least_one_read_capability():
+    class EmptyAdapter:
+        pass
+
+    capabilities = caps(market_data=False, historical_data=False, account_data=False)
+    report = validate_adapter_conformance(EmptyAdapter(), capabilities)
+    assert not report.conforms
+    assert "adapter declares no read capabilities" in report.errors
+

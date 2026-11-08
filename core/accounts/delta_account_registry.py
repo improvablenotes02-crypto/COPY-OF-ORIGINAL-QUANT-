@@ -59,16 +59,22 @@ class EncryptionProvider(Protocol):
 
 
 class TenantAuthorizationProvider(Protocol):
-    """Server-side tenant authorization bound to the authenticated request principal."""
+    """Server-side tenant and subject authorization bound to the verified principal."""
     production_ready: bool
     def authorize_tenant(self, tenant_id: str) -> bool:
+        ...
+    def current_subject_id(self, tenant_id: str) -> str:
         ...
 
 
 class DeltaCredentialApprovalProvider(Protocol):
-    """Owner-governance lookup for an exact account and credential fingerprint."""
+    """Owner-governance lookup for an exact member/account/fingerprint tuple."""
     production_ready: bool
     def is_approved(self, *, tenant_id: str, account_id: str, fingerprint: str) -> bool:
+        ...
+    def is_approved_for_subject(
+        self, *, tenant_id: str, account_id: str, fingerprint: str, subject_id: str
+    ) -> bool:
         ...
 
 
@@ -789,7 +795,10 @@ class DeltaAccountRegistry:
         )
         approval_provider_ready = (
             getattr(self._credential_approval_provider, "production_ready", False) is True
-            and callable(getattr(self._credential_approval_provider, "is_approved", None))
+            and callable(getattr(self._credential_approval_provider, "is_approved_for_subject", None))
+        )
+        subject_authorizer_ready = callable(
+            getattr(self._tenant_authorizer, "current_subject_id", None)
         )
         if (
             repository_ready is not True
@@ -800,9 +809,9 @@ class DeltaAccountRegistry:
             raise CredentialVaultError(
                 "production credential security requires a durable shared tenant-isolated repository"
             )
-        if not tenant_authorizer_ready:
+        if not tenant_authorizer_ready or not subject_authorizer_ready:
             raise CredentialVaultError(
-                "production credential security requires a trusted tenant authorization provider"
+                "production credential security requires trusted tenant and subject authorization"
             )
         if not approval_provider_ready:
             raise CredentialVaultError(
@@ -1216,12 +1225,42 @@ class DeltaAccountRegistry:
         fingerprint = delta_credential_fingerprint(payload["api_key"], payload["api_secret"])
         approval_provider = self._credential_approval_provider
         approval_required = self._require_production_security or approval_provider is not None
+        subject_id = None
+        if approval_required and self._tenant_authorizer is not None:
+            try:
+                subject_reader = getattr(self._tenant_authorizer, "current_subject_id", None)
+                if callable(subject_reader):
+                    subject_id = subject_reader(tenant)
+            except Exception:
+                subject_id = None
+
         def approval_check() -> bool:
             if not approval_required: return True
             if approval_provider is None: return False
             try:
-                return approval_provider.is_approved(tenant_id=tenant, account_id=account, fingerprint=fingerprint) is True
-            except Exception: return False
+                if self._tenant_authorizer is not None:
+                    subject_reader = getattr(self._tenant_authorizer, "current_subject_id", None)
+                    if not callable(subject_reader) or subject_id is None:
+                        return False
+                    # Revalidate the live principal and session on every use,
+                    # not only when the session object is first constructed.
+                    if subject_reader(tenant) != subject_id:
+                        return False
+                subject_check = getattr(approval_provider, "is_approved_for_subject", None)
+                if subject_id is not None and callable(subject_check):
+                    return subject_check(
+                        tenant_id=tenant, account_id=account,
+                        fingerprint=fingerprint, subject_id=subject_id,
+                    ) is True
+                # Compatibility is limited to non-production adapters without
+                # request-scoped identity; production admission forbids it.
+                if self._require_production_security or self._tenant_authorizer is not None:
+                    return False
+                return approval_provider.is_approved(
+                    tenant_id=tenant, account_id=account, fingerprint=fingerprint
+                ) is True
+            except Exception:
+                return False
         if not approval_check():
             raise CredentialVaultError("Delta credentials are not owner-approved")
 

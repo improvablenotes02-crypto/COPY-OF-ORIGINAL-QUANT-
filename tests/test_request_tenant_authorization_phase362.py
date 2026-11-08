@@ -79,6 +79,14 @@ def test_production_readiness_requires_both_trusted_adapters():
     assert authorizer.production_ready is False
 
 
+def test_current_subject_id_requires_verified_active_tenant_membership():
+    authorizer, _ = _authorizer()
+    with bind_authenticated_principal(_principal()):
+        assert authorizer.current_subject_id("tenant-a") == "user-7"
+        with pytest.raises(AccountScopeError):
+            authorizer.current_subject_id("tenant-b")
+
+
 def test_context_is_restored_after_exception():
     authorizer, _ = _authorizer()
     with pytest.raises(RuntimeError):

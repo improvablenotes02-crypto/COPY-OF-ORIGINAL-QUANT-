@@ -111,3 +111,29 @@ def test_configured_client_uses_both_explicit_settings():
         client = env.configured_client()
     assert client.rest.base_url == "https://cdn-ind.testnet.deltaex.org"
     assert client.api_key == "india-demo"
+
+def test_example_env_uses_exact_runtime_credential_names():
+    from pathlib import Path
+
+    example = Path(".env.example").read_text(encoding="utf-8")
+    expected = {
+        "DELTA_REGION",
+        "DELTA_ENVIRONMENT",
+        "DELTA_API_KEY",
+        "DELTA_API_SECRET",
+        "DELTA_SANDBOX_API_KEY",
+        "DELTA_SANDBOX_API_SECRET",
+        "DELTA_INDIA_API_KEY",
+        "DELTA_INDIA_API_SECRET",
+        "DELTA_INDIA_SANDBOX_API_KEY",
+        "DELTA_INDIA_SANDBOX_API_SECRET",
+    }
+    configured = {
+        line.split("=", 1)[0]
+        for line in example.splitlines()
+        if line and not line.lstrip().startswith("#") and "=" in line
+    }
+    assert expected <= configured
+    assert "DELTA_INDIA_TESTNET_API_KEY" not in configured
+    assert "DELTA_INDIA_TESTNET_API_SECRET" not in configured
+

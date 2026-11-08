@@ -47,12 +47,21 @@ def validate_adapter_conformance(
 ) -> AdapterConformanceReport:
     """Check required callable methods for declared adapter capabilities.
 
-    Read methods are required for every adapter. Order methods are required
-    only when the adapter declares live order support. Any claim of verified
+    get_products is required for market-data, historical-data, or live-order
+    declarations. Balance and positions are required only when account_data is
+    declared. Order methods are required only for live-order support. Any claim of verified
     live execution must also satisfy the capability object's evidence gate.
     """
     errors: list[str] = []
-    required_methods = _READ_METHODS + (_ORDER_METHODS if capabilities.live_orders else ())
+    required_methods: tuple[str, ...] = ()
+    if capabilities.market_data or capabilities.historical_data or capabilities.live_orders:
+        required_methods += ("get_products",)
+    if capabilities.account_data:
+        required_methods += ("get_balance", "get_positions")
+    if not required_methods:
+        errors.append("adapter declares no read capabilities")
+    if capabilities.live_orders:
+        required_methods += _ORDER_METHODS
     for method_name in required_methods:
         method = getattr(adapter, method_name, None)
         if not callable(method):
@@ -80,7 +89,7 @@ def validate_adapter_conformance(
 class AdapterBehaviorProbeReport:
     """Results of explicit, read-only adapter smoke probes.
 
-    This probe invokes only the three shared read methods. It never invokes
+    This probe invokes only the selected read methods. It never invokes
     place_order/cancel_order and cannot certify remote truth or venue safety.
     """
 
@@ -95,12 +104,19 @@ class AdapterBehaviorProbeReport:
         return not self.errors
 
 
-def probe_read_only_behavior(adapter: Any, adapter_name: str = "unknown") -> AdapterBehaviorProbeReport:
+def probe_read_only_behavior(
+    adapter: Any,
+    adapter_name: str = "unknown",
+    *,
+    capabilities: MarketCapabilities | None = None,
+) -> AdapterBehaviorProbeReport:
     """Run a bounded-shape smoke probe against a deliberately supplied adapter.
 
-    Each method is called at most once. Products/positions must be list-like;
-    balance must be mapping-like. Exceptions are converted to safe error labels
-    without leaking exception messages, credentials, or response payloads.
+    Each selected method is called at most once. When capabilities are supplied,
+    only the declared read surface is probed; without them, the legacy full
+    read surface is retained. Products/positions must be list-like; balance
+    must be mapping-like. Exceptions are converted to safe error labels without
+    leaking exception messages, credentials, or response payloads.
     """
     from collections.abc import Mapping
 
@@ -109,7 +125,18 @@ def probe_read_only_behavior(adapter: Any, adapter_name: str = "unknown") -> Ada
     balance_type: str | None = None
     positions_count: int | None = None
 
-    for method_name in _READ_METHODS:
+    if capabilities is None:
+        selected_methods = _READ_METHODS
+    else:
+        selected_methods = ()
+        if capabilities.market_data or capabilities.historical_data or capabilities.live_orders:
+            selected_methods += ("get_products",)
+        if capabilities.account_data:
+            selected_methods += ("get_balance", "get_positions")
+        if not selected_methods:
+            errors.append("adapter declares no read capabilities")
+
+    for method_name in selected_methods:
         method = getattr(adapter, method_name, None)
         if not callable(method):
             errors.append(f"missing callable read method: {method_name}")

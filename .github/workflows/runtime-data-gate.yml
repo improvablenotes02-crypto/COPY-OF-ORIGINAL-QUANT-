@@ -43,8 +43,22 @@ jobs:
         run: python -m pytest tests/test_background_job_maintenance_phase401.py -q
       - name: Certify durable tenant background jobs (phases 382-384)
         run: python -m pytest tests/test_tenant_background_jobs_phase382.py -q
+      - name: Certify capability-scoped multi-market adapter contracts (phases 198-203)
+        run: >-
+          python -m pytest
+          tests/test_phase198_market_capabilities.py
+          tests/test_phase200_adapter_conformance.py
+          tests/test_phase202_adapter_behavior_probe.py
+          tests/test_phase203_market_data_validation.py
+          -q
+      - name: Certify Delta personal credential environment scoping (Phase 283)
+        run: python -m pytest tests/test_delta_region_authority_phase283.py -q
       - name: Certify OIDC-authenticated owner governance HTTP API
         run: python -m pytest tests/test_owner_governance_api.py -q
+      - name: Certify strict owner governance HTTP framing headers (Phase 450)
+        run: python -m pytest tests/test_owner_governance_http_headers_phase450.py -q
+      - name: Certify unambiguous owner governance auth and media headers (Phase 451)
+        run: python -m pytest tests/test_owner_governance_http_headers_phase451.py -q
       - name: Certify durable session revocation enforcement (phases 444-446)
         run: python -m pytest tests/test_session_revocation_enforcement_phase444.py -q
       - name: Certify PostgreSQL session revocation persistence (phases 447-449)

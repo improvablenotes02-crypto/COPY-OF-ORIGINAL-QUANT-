@@ -134,7 +134,7 @@ class RequestScopedTenantAuthorizer:
         except Exception:
             raise AccountScopeError("tenant authorization could not be verified") from None
 
-    def authorize_tenant(self, tenant_id: str) -> bool:
+    def _current_principal(self) -> AuthenticatedPrincipal:
         override = _authorizer_principal_override.get()
         if override is not None and override[0] is self:
             principal = override[1]
@@ -149,4 +149,16 @@ class RequestScopedTenantAuthorizer:
                 principal = self._principal_source.current_principal()
             except Exception:
                 raise AccountScopeError("tenant authorization could not be verified") from None
-        return self.authorize_principal(tenant_id, principal)
+        if not isinstance(principal, AuthenticatedPrincipal):
+            raise AccountScopeError("tenant authorization could not be verified")
+        return principal
+
+    def authorize_tenant(self, tenant_id: str) -> bool:
+        return self.authorize_principal(tenant_id, self._current_principal())
+
+    def current_subject_id(self, tenant_id: str) -> str:
+        """Return the verified request subject for an authorized tenant."""
+        principal = self._current_principal()
+        if self.authorize_principal(tenant_id, principal) is not True:
+            raise AccountScopeError("tenant is not authorized for this operation")
+        return principal.subject_id

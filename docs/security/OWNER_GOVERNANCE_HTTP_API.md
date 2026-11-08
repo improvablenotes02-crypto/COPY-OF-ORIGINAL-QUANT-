@@ -22,8 +22,9 @@ Routes:
 
 The API accepts either the legacy metadata-only migration shape or the raw Delta submission shape (`label`, `region`, `environment`, `api_key`, `api_secret`). For raw submissions, it writes secrets only through the injected encrypted Delta registry, then creates a pending owner-approval record. Secrets are never returned, logged, or stored in governance audit metadata. Unrelated fields, including caller-supplied actor IDs and roles, are rejected.
 Responses are non-cacheable; request logging is disabled; internal verifier and
-persistence exceptions are not echoed. A missing or malformed bearer header is
-401; a token that fails verification or fails the authenticated tenant/owner
+persistence exceptions are not echoed. A missing, duplicated, or syntactically malformed bearer header is
+401; bearer credentials must contain one RFC 6750 token value (no embedded
+whitespace, comma-combined values, or extra credentials). A token that fails verification or fails the authenticated tenant/owner
 policy is deliberately collapsed to 403 by the facade, avoiding identity-state
 oracle details. The server refuses non-loopback binds and verifies the numeric address returned
 by the completed bind, including when the configured host is `localhost`.
@@ -79,8 +80,11 @@ credentials in the same repository transaction.
 
 ## Member credential submission
 
-An authenticated, approved tenant member submits Delta credentials through
-`POST /v1/tenants/{tenant}/credentials` with exactly these JSON fields:
+The configured owner can submit personal Delta credentials directly through
+`POST /v1/tenants/{tenant}/credentials` without inviting or creating any member.
+The owner then approves that pending credential using the returned account ID.
+Alternatively, an approved tenant member can submit credentials for owner review.
+Both paths use exactly these JSON fields:
 `label`, `region`, `environment`, `api_key`, and `api_secret`.
 The server must be started with a trusted `account_registry` dependency whose
 tenant authorizer is bound to the verified request principal. The registry
@@ -110,7 +114,7 @@ accounts.
 3. Member submits broker API credentials (encrypted in the registry; approval is
    still `PENDING`).
 4. Owner reviews the queue and approves or rejects the credential.
-5. Only that member can use credentials approved for the tenant. The owner can
+5. Credential admission is bound to the verified submitting member as well as the tenant, account, fingerprint, and owner-approved status. Existing sessions revalidate the active member identity on every use. The owner can
    revoke a credential or the member.
 
 Every request requires a verified OIDC bearer token. Replace the placeholders
@@ -167,3 +171,12 @@ Use `{"approve":false}` to reject. The owner can revoke a credential with
 with `DELETE /v1/tenants/{tenant}/members/{subject_id}`. Member revocation also
 clears permissions and revokes that member's pending/approved credential
 registrations; it does not delete the external identity-provider account.
+
+
+If member removal returns a nonzero `vault_cleanup_pending`, membership and
+credential approvals are already revoked (so access remains disabled), but one
+or more encrypted vault deletions need retry. The owner can list the credential
+queue, locate each affected `REVOKED` record by its `account_id`/`credential_id`,
+and repeat `DELETE /v1/tenants/{tenant}/credentials/{credential_id}`. This
+cleanup route is idempotent and can finish deletion after a temporary vault
+failure; it never re-approves a credential.

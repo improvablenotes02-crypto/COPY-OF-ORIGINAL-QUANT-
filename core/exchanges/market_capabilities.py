@@ -41,6 +41,9 @@ class MarketCapabilities:
     live_orders: bool = False
     live_execution_verified: bool = False
     live_execution_evidence: str = ""
+    # Private account reads are independent from public market-data access.
+    # Appended to preserve the positional constructor order of prior fields.
+    account_data: bool = False
 
     def __post_init__(self) -> None:
         if not self.adapter_name.strip() or not self.venue.strip():

@@ -403,3 +403,189 @@ def test_raw_credential_submission_rolls_back_vault_record_when_membership_not_a
     assert status == 403
     assert result == {"error": "forbidden"}
     assert registry.accounts == {}
+
+
+def test_member_revocation_reports_and_allows_retry_of_failed_vault_cleanup(api):
+    server, repo, registry = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members",
+             "owner-token", {"subject_id": "member-1"})
+    _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
+             "owner-token", {"approve": True})
+    status, submitted = _request(
+        server, "POST", "/v1/tenants/tenant-a/credentials", "member-token",
+        {"label": "Retry cleanup", "region": "global", "environment": "testnet",
+         "api_key": "cleanup-key", "api_secret": "cleanup-secret"},
+    )
+    assert status == 200
+    account_id = submitted["account_id"]
+    original_delete = registry.delete_account
+    attempts = []
+
+    def fail_once(*, tenant_id, account_id):
+        attempts.append(account_id)
+        if len(attempts) == 1:
+            raise OSError("temporary vault outage")
+        return original_delete(tenant_id=tenant_id, account_id=account_id)
+
+    registry.delete_account = fail_once
+    status, result = _request(
+        server, "DELETE", "/v1/tenants/tenant-a/members/member-1", "owner-token"
+    )
+    assert status == 200
+    assert result["status"] == "REVOKED"
+    assert result["vault_deleted"] == 0
+    assert result["vault_cleanup_pending"] == 1
+    assert repo.membership("tenant-a", "member-1").status == "REVOKED"
+    assert repo.credential("tenant-a", account_id).status == "REVOKED"
+    assert account_id in registry.accounts
+
+    # The owner can locate the revoked record and retry its idempotent cleanup.
+    status, queue = _request(
+        server, "GET", "/v1/tenants/tenant-a/credentials", "owner-token"
+    )
+    assert status == 200
+    credential = next(item for item in queue["credentials"]
+                      if item["account_id"] == account_id)
+    assert credential["status"] == "REVOKED"
+    status, cleanup = _request(
+        server, "DELETE",
+        f"/v1/tenants/tenant-a/credentials/{credential['credential_id']}",
+        "owner-token",
+    )
+    assert status == 200
+    assert cleanup["status"] == "REVOKED"
+    assert cleanup["vault_deleted"] is True
+    assert account_id not in registry.accounts
+    assert attempts == [account_id, account_id]
+
+
+@pytest.mark.parametrize("permissions", [
+    None, "read", {"read": True}, [None], [["read"]], [1], ["unknown"],
+])
+def test_owner_member_permissions_reject_malformed_values_without_mutation(api, permissions):
+    server, repo, _registry = api
+    status, result = _request(
+        server, "POST", "/v1/tenants/tenant-a/members", "owner-token",
+        {"subject_id": "member-invalid-permissions", "permissions": permissions},
+    )
+    assert status == 400
+    assert result["error"] == "bad_request"
+    assert repo.membership("tenant-a", "member-invalid-permissions") is None
+
+
+def test_owner_member_permissions_accept_supported_values_and_deduplicate(api):
+    server, repo, _registry = api
+    status, result = _request(
+        server, "POST", "/v1/tenants/tenant-a/members", "owner-token",
+        {"subject_id": "member-valid-permissions",
+         "permissions": ["read", "trade_paper", "read"]},
+    )
+    assert status == 200
+    assert result["status"] == "PENDING"
+    member = repo.membership("tenant-a", "member-valid-permissions")
+    assert member.permissions == ("read", "trade_paper")
+
+
+def test_get_and_delete_reject_request_bodies(api):
+    server, repo, *_ = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members",
+             "owner-token", {"subject_id": "member-1"})
+    status, result = _request(
+        server, "DELETE", "/v1/tenants/tenant-a/members/member-1",
+        "owner-token", {"unexpected": "ignored-before-fix"},
+    )
+    assert status == 400
+    assert result["error"] == "bad_request"
+    assert repo.membership("tenant-a", "member-1").status == "PENDING"
+
+    status, result = _request(
+        server, "GET", "/v1/tenants/tenant-a/members",
+        "owner-token", {"unexpected": "ignored-before-fix"},
+    )
+    assert status == 400
+    assert result["error"] == "bad_request"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("api_key", 123),
+    ("api_secret", None),
+    ("label", ["account"]),
+    ("region", {"name": "global"}),
+    ("environment", False),
+    ("api_key", "   "),
+    ("api_secret", ""),
+    ("label", ""),
+])
+def test_raw_credential_submission_rejects_invalid_field_types_before_vault_write(api, field, value):
+    server, _repo, registry = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members",
+             "owner-token", {"subject_id": "member-1"})
+    _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
+             "owner-token", {"approve": True})
+    payload = {"label": "Trading account", "region": "global",
+               "environment": "testnet", "api_key": "valid-key",
+               "api_secret": "valid-secret"}
+    payload[field] = value
+    status, result = _request(server, "POST", "/v1/tenants/tenant-a/credentials",
+                              "member-token", payload)
+    assert status == 400
+    assert result["error"] == "bad_request"
+    assert registry.accounts == {}
+
+
+@pytest.mark.parametrize("field,maximum", [
+    ("api_key", 4096),
+    ("api_secret", 4096),
+    ("label", 80),
+    ("region", 32),
+    ("environment", 32),
+])
+def test_raw_credential_submission_enforces_field_size_limits_before_vault_write(api, field, maximum):
+    server, _repo, registry = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members",
+             "owner-token", {"subject_id": "member-1"})
+    _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
+             "owner-token", {"approve": True})
+    payload = {"label": "Trading account", "region": "global",
+               "environment": "testnet", "api_key": "valid-key",
+               "api_secret": "valid-secret"}
+    payload[field] = "x" * (maximum + 1)
+    status, result = _request(server, "POST", "/v1/tenants/tenant-a/credentials",
+                              "member-token", payload)
+    assert status == 400
+    assert result["error"] == "bad_request"
+    assert registry.accounts == {}
+
+def test_owner_can_use_personal_delta_credentials_without_member_setup(api):
+    """The configured owner can use QuantEngine without inviting any members."""
+    server, repo, registry = api
+    status, submitted = _request(
+        server, "POST", "/v1/tenants/tenant-a/credentials", "owner-token",
+        {
+            "label": "Personal Delta account",
+            "region": "global",
+            "environment": "testnet",
+            "api_key": "owner-private-api-key",
+            "api_secret": "owner-private-api-secret",
+        },
+    )
+    assert status == 200
+    assert submitted == {
+        "ok": True, "account_id": "vault-account-1", "status": "PENDING"
+    }
+    assert "owner-private-api-key" not in json.dumps(submitted)
+    assert "owner-private-api-secret" not in json.dumps(submitted)
+    assert repo.membership("tenant-a", "owner-1") is None
+    assert registry.accounts["vault-account-1"]["api_key"] == "owner-private-api-key"
+    assert registry.accounts["vault-account-1"]["api_secret"] == "owner-private-api-secret"
+
+    status, approved = _request(
+        server, "POST",
+        "/v1/tenants/tenant-a/credentials/vault-account-1/decision",
+        "owner-token", {"approve": True},
+    )
+    assert (status, approved) == (200, {"ok": True, "status": "APPROVED"})
+    credential = repo.credential("tenant-a", "vault-account-1")
+    assert credential.status == "APPROVED"
+    assert credential.subject_id == "owner-1"
+

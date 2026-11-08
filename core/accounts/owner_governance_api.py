@@ -38,18 +38,36 @@ def _segment(value: str) -> str:
     return decoded
 
 
-def _object_body(handler) -> dict:
-    raw_length = handler.headers.get("Content-Length")
-    if raw_length is None:
-        raise ValueError("Content-Length is required")
+def _content_length(handler, *, required: bool) -> int | None:
+    values = handler.headers.get_all("Content-Length", [])
+    if len(values) > 1:
+        raise ValueError("duplicate Content-Length is not supported")
+    if not values:
+        if required:
+            raise ValueError("Content-Length is required")
+        return None
+    raw_length = values[0]
+    if not re.fullmatch(r"[0-9]+", raw_length):
+        raise ValueError("invalid Content-Length")
     try:
-        length = int(raw_length)
-    except (TypeError, ValueError):
+        return int(raw_length)
+    except (TypeError, ValueError, OverflowError):
         raise ValueError("invalid Content-Length") from None
+
+
+def _reject_transfer_encoding(handler) -> None:
+    if handler.headers.get_all("Transfer-Encoding", []):
+        raise ValueError("transfer encoding is not supported")
+
+
+def _object_body(handler) -> dict:
+    length = _content_length(handler, required=True)
     if length < 0 or length > _MAX_BODY_BYTES:
         raise ValueError("request body exceeds limit")
-    if handler.headers.get("Transfer-Encoding"):
-        raise ValueError("transfer encoding is not supported")
+    _reject_transfer_encoding(handler)
+    content_types = handler.headers.get_all("Content-Type", [])
+    if len(content_types) != 1:
+        raise ValueError("exactly one Content-Type header is required")
     if handler.headers.get_content_type() != "application/json":
         raise ValueError("application/json is required")
     raw = handler.rfile.read(length)
@@ -91,12 +109,24 @@ def _only_fields(body: dict, required: set[str], optional: set[str] = frozenset(
         raise ValueError("request fields do not match endpoint contract")
 
 
+def _empty_body(handler) -> dict:
+    """Reject bodies on GET/DELETE so ignored bytes cannot hide extra input."""
+    _reject_transfer_encoding(handler)
+    length = _content_length(handler, required=False)
+    if length is not None and length != 0:
+        raise ValueError("request body must be empty")
+    return {}
+
+
 def _bearer(handler) -> str:
-    header = handler.headers.get("Authorization", "")
-    scheme, separator, value = header.partition(" ")
-    if not separator or scheme.lower() != "bearer" or not value.strip():
+    values = handler.headers.get_all("Authorization", [])
+    if len(values) != 1:
+        raise PermissionError("exactly one bearer authorization header required")
+    header = values[0]
+    match = re.fullmatch(r"(?i:Bearer) +([A-Za-z0-9._~+/-]+=*)", header)
+    if match is None:
         raise PermissionError("verified bearer token required")
-    return value.strip()
+    return match.group(1)
 
 
 def _dispatch(governance, method: str, path: str, body: dict, account_registry=None):
@@ -175,6 +205,21 @@ def _dispatch(governance, method: str, path: str, body: dict, account_registry=N
         if {"api_key", "api_secret", "label", "region", "environment"} == set(body):
             if account_registry is None:
                 raise LookupError("credential submission is not configured")
+            # Validate untrusted JSON types before hashing or passing values to
+            # the vault. This keeps malformed submissions on the 400 boundary.
+            field_limits = {
+                "api_key": 4096,
+                "api_secret": 4096,
+                "label": 80,
+                "region": 32,
+                "environment": 32,
+            }
+            for field, maximum in field_limits.items():
+                value = body[field]
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"{field} must be a non-empty string")
+                if len(value) > maximum:
+                    raise ValueError(f"{field} exceeds the {maximum}-character limit")
             fingerprint = delta_credential_fingerprint(body["api_key"], body["api_secret"])
             metadata = account_registry.register_account(
                 tenant_id=tenant, label=body["label"], region=body["region"],
@@ -325,7 +370,7 @@ def create_owner_governance_server(
             try:
                 token = _bearer(self)
                 path = urlsplit(self.path).path
-                body = _object_body(self) if method == "POST" else {}
+                body = _object_body(self) if method == "POST" else _empty_body(self)
                 with bind_access_token(token):
                     result = _dispatch(governance, method, path, body, account_registry)
                 self._reply(200, result)
