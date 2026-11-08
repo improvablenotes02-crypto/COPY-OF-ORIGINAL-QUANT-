@@ -47,6 +47,8 @@ jobs:
         run: python -m pytest tests/test_owner_governance_api.py -q
       - name: Certify strict owner governance HTTP framing headers (Phase 450)
         run: python -m pytest tests/test_owner_governance_http_headers_phase450.py -q
+      - name: Certify unambiguous owner governance auth and media headers (Phase 451)
+        run: python -m pytest tests/test_owner_governance_http_headers_phase451.py -q
       - name: Certify durable session revocation enforcement (phases 444-446)
         run: python -m pytest tests/test_session_revocation_enforcement_phase444.py -q
       - name: Certify PostgreSQL session revocation persistence (phases 447-449)

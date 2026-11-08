@@ -65,6 +65,9 @@ def _object_body(handler) -> dict:
     if length < 0 or length > _MAX_BODY_BYTES:
         raise ValueError("request body exceeds limit")
     _reject_transfer_encoding(handler)
+    content_types = handler.headers.get_all("Content-Type", [])
+    if len(content_types) != 1:
+        raise ValueError("exactly one Content-Type header is required")
     if handler.headers.get_content_type() != "application/json":
         raise ValueError("application/json is required")
     raw = handler.rfile.read(length)
@@ -116,7 +119,10 @@ def _empty_body(handler) -> dict:
 
 
 def _bearer(handler) -> str:
-    header = handler.headers.get("Authorization", "")
+    values = handler.headers.get_all("Authorization", [])
+    if len(values) != 1:
+        raise PermissionError("exactly one bearer authorization header required")
+    header = values[0]
     scheme, separator, value = header.partition(" ")
     if not separator or scheme.lower() != "bearer" or not value.strip():
         raise PermissionError("verified bearer token required")
