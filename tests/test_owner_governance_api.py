@@ -457,3 +457,23 @@ def test_member_revocation_reports_and_allows_retry_of_failed_vault_cleanup(api)
     assert cleanup["vault_deleted"] is True
     assert account_id not in registry.accounts
     assert attempts == [account_id, account_id]
+
+
+def test_get_and_delete_reject_request_bodies(api):
+    server, repo, *_ = api
+    _request(server, "POST", "/v1/tenants/tenant-a/members",
+             "owner-token", {"subject_id": "member-1"})
+    status, result = _request(
+        server, "DELETE", "/v1/tenants/tenant-a/members/member-1",
+        "owner-token", {"unexpected": "ignored-before-fix"},
+    )
+    assert status == 400
+    assert result["error"] == "bad_request"
+    assert repo.membership("tenant-a", "member-1").status == "PENDING"
+
+    status, result = _request(
+        server, "GET", "/v1/tenants/tenant-a/members",
+        "owner-token", {"unexpected": "ignored-before-fix"},
+    )
+    assert status == 400
+    assert result["error"] == "bad_request"

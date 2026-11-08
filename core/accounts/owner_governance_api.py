@@ -91,6 +91,22 @@ def _only_fields(body: dict, required: set[str], optional: set[str] = frozenset(
         raise ValueError("request fields do not match endpoint contract")
 
 
+def _empty_body(handler) -> dict:
+    """Reject bodies on GET/DELETE so ignored bytes cannot hide extra input."""
+    if handler.headers.get("Transfer-Encoding"):
+        raise ValueError("transfer encoding is not supported")
+    raw_length = handler.headers.get("Content-Length")
+    if raw_length is None:
+        return {}
+    try:
+        length = int(raw_length)
+    except (TypeError, ValueError):
+        raise ValueError("invalid Content-Length") from None
+    if length != 0:
+        raise ValueError("request body must be empty")
+    return {}
+
+
 def _bearer(handler) -> str:
     header = handler.headers.get("Authorization", "")
     scheme, separator, value = header.partition(" ")
@@ -325,7 +341,7 @@ def create_owner_governance_server(
             try:
                 token = _bearer(self)
                 path = urlsplit(self.path).path
-                body = _object_body(self) if method == "POST" else {}
+                body = _object_body(self) if method == "POST" else _empty_body(self)
                 with bind_access_token(token):
                     result = _dispatch(governance, method, path, body, account_registry)
                 self._reply(200, result)
