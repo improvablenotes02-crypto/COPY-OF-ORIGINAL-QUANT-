@@ -45,6 +45,10 @@ jobs:
         run: python -m pytest tests/test_tenant_background_jobs_phase382.py -q
       - name: Certify OIDC-authenticated owner governance HTTP API
         run: python -m pytest tests/test_owner_governance_api.py -q
+      - name: Certify durable session revocation enforcement (phases 444-446)
+        run: python -m pytest tests/test_session_revocation_enforcement_phase444.py -q
+      - name: Certify PostgreSQL session revocation persistence (phases 447-449)
+        run: python -m pytest tests/test_postgres_session_revocation_phase447.py -q
       - name: Certify owner governance HTTP resource limits (Phase 443)
         run: python -m pytest tests/test_owner_governance_api_limits_phase443.py -q
       - name: Run focused runtime and tenant regression gate
@@ -220,3 +224,7 @@ jobs:
         run: python -m pytest tests/test_postgres_tenant_connection_phase373.py -q
       - name: Certify trusted tenant service and background task boundaries
         run: python -m pytest tests/test_postgres_tenant_services_phase376.py -q
+      - name: Certify central PostgreSQL session revocation
+        run: python -m pytest tests/test_postgres_session_revocation_phase447.py -q
+        env:
+          QUANTENGINE_TEST_POSTGRES_ADMIN_DSN: postgresql://postgres:qe-test-only@localhost:5432/quantengine_test

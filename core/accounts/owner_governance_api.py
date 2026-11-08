@@ -23,6 +23,10 @@ from core.accounts.owner_governance import (
 
 
 _MAX_BODY_BYTES = 16 * 1024
+
+
+class ProductionAdmissionError(RuntimeError):
+    """The governance composition is not certified for production admission."""
 _SEGMENT = re.compile(r"^[A-Za-z0-9_.:@+-]{1,160}$")
 
 
@@ -86,6 +90,12 @@ def _dispatch(governance, method: str, path: str, body: dict):
             permissions=body.get("permissions", ()),
         )
         return {"ok": True, "status": "PENDING"}
+
+    if method == "DELETE" and len(parts) == 5 and parts[3] == "members":
+        if body:
+            raise ValueError("DELETE request body must be empty")
+        governance.revoke_member(tenant_id=tenant, subject_id=_segment(parts[4]))
+        return {"ok": True, "status": "REVOKED"}
 
     if method == "POST" and len(parts) == 6 and parts[3] == "members" and parts[5] == "decision":
         _only_fields(body, {"approve"}, {"permissions"})
@@ -181,6 +191,7 @@ def create_owner_governance_server(
     port: int = 0,
     max_workers: int = 16,
     request_timeout: float = 10.0,
+    allow_nonproduction: bool = False,
 ):
     """Create a bounded loopback server; caller owns lifecycle and OIDC adapters."""
     if not isinstance(host, str) or host not in {"127.0.0.1", "::1", "localhost"}:
@@ -197,6 +208,12 @@ def create_owner_governance_server(
         raise ValueError("request_timeout must be finite and in (0, 120] seconds")
     if governance is None:
         raise ValueError("authenticated owner governance facade is required")
+    if not isinstance(allow_nonproduction, bool):
+        raise ValueError("allow_nonproduction must be boolean")
+    if getattr(governance, "production_ready", False) is not True and not allow_nonproduction:
+        raise ProductionAdmissionError(
+            "owner governance composition is not production-admissible"
+        )
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
