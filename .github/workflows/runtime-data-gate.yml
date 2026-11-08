@@ -219,6 +219,8 @@ jobs:
           QUANTENGINE_TEST_POSTGRES_RUNTIME_DSN: postgresql://qe_runtime_phase358:qe_runtime_phase358_test@localhost:5432/quantengine_test
       - name: Certify authenticated tenant identity and spoof resistance
         run: python -m pytest tests/test_postgres_authenticated_tenant_phase370.py -q
+      - name: Certify authenticated owner/member credential lifecycle isolation
+        run: python -m pytest tests/test_postgres_authenticated_tenant_phase370.py -q
         env:
           QUANTENGINE_TEST_POSTGRES_ADMIN_DSN: postgresql://postgres:qe-test-only@localhost:5432/quantengine_test
       - name: Certify tenant-bound repository routing and identity checks

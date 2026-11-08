@@ -92,8 +92,44 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
             delta_repo.get("tenant-b", "acct-b")
         governance_repo = AuthenticatedPostgreSQLOwnerGovernanceRepository(tenant_a_resolver)
         assert governance_repo.membership("tenant-a", "member-a").subject_id == "member-a"
+
+        # Exercise the complete owner/member credential lifecycle through the
+        # database-authenticated repository, not only its read path.
+        governance_repo.invite(
+            "tenant-a", "member-created", ("read",), "owner-a", 10
+        )
+        assert governance_repo.membership("tenant-a", "member-created").status == "PENDING"
+        governance_repo.decide_membership(
+            "tenant-a", "member-created", "APPROVED", ("read",), "owner-a", 11
+        )
+        governance_repo.submit_credential(
+            "tenant-a", "credential-created", "member-created",
+            "delta-account-created", "d" * 64, 12
+        )
+        assert governance_repo.credential(
+            "tenant-a", "credential-created"
+        ).status == "PENDING"
+        governance_repo.decide_credential(
+            "tenant-a", "credential-created", "APPROVED", "owner-a", 13
+        )
+        assert governance_repo.credential(
+            "tenant-a", "credential-created"
+        ).status == "APPROVED"
+
+        # The resolver is deliberately pinned to tenant A's database login.
+        # A caller cannot switch it to tenant B by choosing another tenant ID.
         with pytest.raises(RuntimeError, match="operation failed"):
-            governance_repo.membership("tenant-b", "member-b")
+            governance_repo.invite(
+                "tenant-b", "spoofed-member", ("read",), "owner-a", 14
+            )
+        with psycopg.connect(_dsn(ROLE_B, PASSWORD_B)) as db:
+            assert db.execute(
+                "SELECT subject_id FROM public.qe_memberships WHERE subject_id='spoofed-member'"
+            ).fetchall() == []
+            assert db.execute(
+                "SELECT credential_id FROM public.qe_credential_approvals "
+                "WHERE credential_id='credential-created'"
+            ).fetchall() == []
     finally:
         with psycopg.connect(ADMIN, autocommit=True) as db:
             db.execute("DELETE FROM public.qe_tenant_login_map WHERE login_role IN (%s,%s)", (ROLE_A, ROLE_B))
