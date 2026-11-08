@@ -121,7 +121,7 @@ def test_owner_invites_and_approves_member_using_verified_actor(api):
 
 
 def test_member_cannot_invite_or_approve_another_member(api):
-    server, repo = api
+    server, repo, *_ = api
     status, _ = _request(
         server, "POST", "/v1/tenants/tenant-a/members",
         "member-token", {"subject_id": "other"},
@@ -131,7 +131,7 @@ def test_member_cannot_invite_or_approve_another_member(api):
 
 
 def test_credential_metadata_submission_approval_and_revocation(api):
-    server, repo = api
+    server, repo, *_ = api
     _request(server, "POST", "/v1/tenants/tenant-a/members",
               "owner-token", {"subject_id": "member-1"})
     _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
@@ -154,7 +154,7 @@ def test_credential_metadata_submission_approval_and_revocation(api):
 
 
 def test_missing_invalid_token_and_tenant_mismatch_fail_closed(api):
-    server, repo = api
+    server, repo, *_ = api
     assert _request(server, "POST", "/v1/tenants/tenant-a/members",
                     None, {"subject_id": "x"})[0] == 401
     assert _request(server, "POST", "/v1/tenants/tenant-a/members",
@@ -165,7 +165,7 @@ def test_missing_invalid_token_and_tenant_mismatch_fail_closed(api):
 
 
 def test_endpoint_rejects_spoofed_actor_and_raw_api_secret(api):
-    server, repo = api
+    server, repo, *_ = api
     status, _ = _request(
         server, "POST", "/v1/tenants/tenant-a/members", "owner-token",
         {"subject_id": "x", "actor_id": "owner-1"},
@@ -186,7 +186,7 @@ def test_server_refuses_non_loopback_binding():
 
 
 def test_owner_can_revoke_member_and_clear_permissions(api):
-    server, repo = api
+    server, repo, *_ = api
     _request(server, "POST", "/v1/tenants/tenant-a/members",
               "owner-token", {"subject_id": "member-1", "permissions": ["read", "trade_paper"]})
     _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
@@ -222,7 +222,7 @@ def test_owner_can_revoke_member_and_clear_permissions(api):
 
 
 def test_owner_cannot_revoke_own_identity(api):
-    server, _repo = api
+    server, _repo, *_ = api
     status, _ = _request(
         server, "DELETE", "/v1/tenants/tenant-a/members/owner-1", "owner-token"
     )
@@ -231,7 +231,7 @@ def test_owner_cannot_revoke_own_identity(api):
 
 
 def test_member_revocation_cascades_to_credentials_and_is_audited(api):
-    server, repo = api
+    server, repo, *_ = api
     _request(server, "POST", "/v1/tenants/tenant-a/members",
              "owner-token", {"subject_id": "member-1", "permissions": ["read"]})
     _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
@@ -264,7 +264,7 @@ def test_nonproduction_composition_requires_explicit_opt_in(tmp_path):
     repo.close()
 
 def test_owner_can_list_members_and_pending_credential_approvals(api):
-    server, repo = api
+    server, repo, *_ = api
     _request(server, "POST", "/v1/tenants/tenant-a/members",
              "owner-token", {"subject_id": "member-1", "permissions": ["read"]})
     _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision",
@@ -278,7 +278,7 @@ def test_owner_can_list_members_and_pending_credential_approvals(api):
     assert credentials["credentials"][0]["fingerprint"] == "d" * 64
 
 def test_member_cannot_list_owner_management_views(api):
-    server, repo = api
+    server, repo, *_ = api
     _request(server, "POST", "/v1/tenants/tenant-a/members", "owner-token", {"subject_id": "member-1"})
     _request(server, "POST", "/v1/tenants/tenant-a/members/member-1/decision", "owner-token", {"approve": True})
     assert _request(server, "GET", "/v1/tenants/tenant-a/members", "member-token")[0] == 403
