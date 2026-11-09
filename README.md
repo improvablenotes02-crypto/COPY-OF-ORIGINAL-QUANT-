@@ -11,7 +11,7 @@ QuantEngine is a multi-market research and trading-engine project. Its current p
 4. Run the offline configuration check: `python scripts/quantengine_preflight.py`\n5. Verify the selected key with:
    `python scripts/check_delta_credentials.py`
 
-The setup writes to the ignored local `.env`; it does not print secrets or enable live execution. See [Personal Delta API key setup](docs/OPERATOR_PERSONAL_DELTA_API_KEYS.md).
+The setup writes to the ignored local `.env`; it does not print secrets or enable live execution. See [Personal Delta API key setup](docs/OPERATOR_PERSONAL_DELTA_API_KEYS.md) and the [market support matrix](docs/OPERATOR_MARKET_SUPPORT_MATRIX.md).
 
 ## Safety status
 
