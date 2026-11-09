@@ -6,7 +6,7 @@ This matrix distinguishes implemented interfaces from declared architecture and 
 |---|---|---|
 | Delta Exchange Global | Region/environment-pinned REST client, personal key setup, read-only identity and public product-catalog check, option-chain and contract tooling | Production strategy candle delivery remains fail-closed until a verified Global evidence bundle is supplied. No live trading certification. |
 | Delta Exchange India | Region/environment-pinned REST client and credential selection; India public candle observations and advisory fixture analysis | India fixture harness is test-only/advisory. It does not authorize or wire a production strategy feed. |
-| NSE / BSE via Flattrade | No concrete Flattrade adapter or personal Flattrade credential flow in this repository yet | Not available for live market data, historical data, paper execution or live orders through QuantEngine. |
+| NSE / BSE via Flattrade | Local personal credential/token provisioning is implemented; no concrete Flattrade market-data or execution adapter yet | Credential provisioning is available, but live market data, historical data, paper execution and live orders are not yet connected through QuantEngine. |
 | Forex via Flattrade | No concrete FX broker adapter in this repository yet | Not available through QuantEngine. |
 | Crypto beyond Delta | Capability architecture may support additional venues | No additional venue should be treated as connected without a concrete adapter and conformance/evidence tests. |
 
