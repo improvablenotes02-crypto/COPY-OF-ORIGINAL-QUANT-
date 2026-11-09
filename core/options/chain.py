@@ -4,24 +4,20 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
 from typing import Mapping, Sequence
-
 from core.exchanges.market_data_validation import NormalizedQuote, validate_quote
 from core.registry.instrument import Instrument
 from core.registry.product_types import PRODUCT_CALL_OPTION, PRODUCT_PUT_OPTION
-
 
 @dataclass(frozen=True, slots=True)
 class OptionLeg:
     instrument: Instrument
     quote: NormalizedQuote | None
 
-
 @dataclass(frozen=True, slots=True)
 class OptionChainEntry:
     strike: float
     call: OptionLeg | None
     put: OptionLeg | None
-
 
 @dataclass(frozen=True, slots=True)
 class OptionChain:
@@ -41,17 +37,15 @@ class OptionChain:
     def missing_put_quotes(self) -> int:
         return sum(1 for entry in self.entries if entry.put is not None and entry.put.quote is None)
 
+def build_option_chain(instruments: Sequence[Instrument], quotes: Mapping[str, NormalizedQuote], *,
+                       underlying: str, expiry_time: int, as_of: datetime,
+                       max_quote_age_seconds: float = 5.0) -> OptionChain:
+    """Pair calls/puts by strike; reject ambiguous identity and stale input.
 
-def build_option_chain(
-    instruments: Sequence[Instrument],
-    quotes: Mapping[str, NormalizedQuote],
-    *,
-    underlying: str,
-    expiry_time: int,
-    as_of: datetime,
-    max_quote_age_seconds: float = 5.0,
-) -> OptionChain:
-    """Pair calls/puts by strike; never synthesize missing legs or quotes."""
+    Quote mappings may contain a broader provider snapshot; only selected
+    instrument symbols are consumed. Each selected instrument must have a
+    unique canonical symbol and instrument ID.
+    """
     if not isinstance(underlying, str) or not underlying.strip():
         raise ValueError("underlying is required")
     if isinstance(expiry_time, bool) or not isinstance(expiry_time, int) or expiry_time <= 0:
@@ -61,6 +55,8 @@ def build_option_chain(
     current = as_of.astimezone(timezone.utc)
     if expiry_time <= int(current.timestamp()):
         raise ValueError("option chain expiry is not in the future")
+    if isinstance(max_quote_age_seconds, bool):
+        raise ValueError("max_quote_age_seconds must be finite and non-negative")
     try:
         max_age = float(max_quote_age_seconds)
     except (TypeError, ValueError, OverflowError):
@@ -71,19 +67,27 @@ def build_option_chain(
         raise ValueError("option chain requires at least one instrument")
     if not isinstance(quotes, Mapping):
         raise TypeError("quotes must be a symbol-to-quote mapping")
-
     grouped: dict[float, dict[str, OptionLeg]] = {}
     seen_symbols: set[str] = set()
+    seen_instrument_ids: set[str] = set()
     sources: set[str] = set()
     common_lot: int | None = None
     common_multiplier: float | None = None
-
     for instrument in instruments:
         if not isinstance(instrument, Instrument):
             raise TypeError("option chain instruments must be canonical Instrument records")
+        if not isinstance(instrument.instrument_id, str) or not instrument.instrument_id.strip():
+            raise ValueError("option instrument ID is required")
+        if not isinstance(instrument.symbol, str) or not instrument.symbol.strip():
+            raise ValueError("option instrument symbol is required")
+        if not isinstance(instrument.exchange, str) or not instrument.exchange.strip():
+            raise ValueError("option instrument exchange is required")
         if instrument.symbol in seen_symbols:
             raise ValueError("duplicate option instrument symbol")
+        if instrument.instrument_id in seen_instrument_ids:
+            raise ValueError("duplicate option instrument ID")
         seen_symbols.add(instrument.symbol)
+        seen_instrument_ids.add(instrument.instrument_id)
         if instrument.product_type not in (PRODUCT_CALL_OPTION, PRODUCT_PUT_OPTION):
             raise ValueError("option chain contains a non-option instrument")
         if instrument.underlying_asset != underlying:
@@ -97,7 +101,6 @@ def build_option_chain(
             common_multiplier = float(instrument.contract_multiplier)
         elif instrument.lot_size != common_lot or float(instrument.contract_multiplier) != common_multiplier:
             raise ValueError("option chain lot size or multiplier mismatch")
-
         right = "call" if instrument.product_type == PRODUCT_CALL_OPTION else "put"
         strike = float(instrument.strike_price)
         legs = grouped.setdefault(strike, {})
@@ -107,27 +110,16 @@ def build_option_chain(
         if quote is not None:
             if not isinstance(quote, NormalizedQuote):
                 raise TypeError("option quote values must be NormalizedQuote records")
-            report = validate_quote(
-                quote, now=current, max_age_seconds=max_age,
-                expected_symbol=instrument.symbol,
-            )
+            report = validate_quote(quote, now=current, max_age_seconds=max_age,
+                                    expected_symbol=instrument.symbol)
             if not report.valid:
                 raise ValueError("invalid option quote: %s" % ", ".join(report.errors))
             sources.add(quote.source)
         legs[right] = OptionLeg(instrument=instrument, quote=quote)
-
     if len(sources) > 1:
         raise ValueError("option chain quotes must use one consistent source")
-    entries = tuple(
-        OptionChainEntry(strike=strike, call=legs.get("call"), put=legs.get("put"))
-        for strike, legs in sorted(grouped.items())
-    )
-    return OptionChain(
-        underlying=underlying,
-        expiry_time=expiry_time,
-        lot_size=common_lot,
-        contract_multiplier=common_multiplier,
-        as_of=current,
-        source=next(iter(sources)) if sources else "",
-        entries=entries,
-    )
+    entries = tuple(OptionChainEntry(strike=strike, call=legs.get("call"), put=legs.get("put"))
+                    for strike, legs in sorted(grouped.items()))
+    return OptionChain(underlying=underlying, expiry_time=expiry_time, lot_size=common_lot,
+                       contract_multiplier=common_multiplier, as_of=current, source=next(iter(sources)) if sources else "",
+                       entries=entries)
