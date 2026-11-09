@@ -7,10 +7,13 @@ from core.options.black_scholes import (
     price_european_option,
 )
 from core.options.position import OptionPositionExposure, scale_option_position
+from core.options.scenario import OptionScenarioResult, evaluate_option_scenario
 
 __all__ = (
     "OptionValuation",
     "OptionPositionExposure",
+    "OptionScenarioResult",
+    "evaluate_option_scenario",
     "calculate_option_valuation",
     "implied_volatility",
     "price_european_option",

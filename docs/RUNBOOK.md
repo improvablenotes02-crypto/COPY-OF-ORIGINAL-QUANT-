@@ -259,7 +259,11 @@ The canonical instrument registry retains option `lot_size` and
 `contract_multiplier`. Option contract metadata is considered complete only
 when the underlying, call/put right, strike, expiry timestamp, lot size, and
 multiplier are all valid. This does not make options eligible for the existing
-spot/perpetual strategy engine.
+spot/perpetual strategy engine. A deterministic single-position scenario
+repricer is also available through `evaluate_option_scenario`; it reprices
+under spot, volatility, and elapsed-time shocks and scales model P&L by signed
+contracts, lot size, and multiplier. It is not a portfolio margin or
+liquidation simulation.
 
 ### 2.6 Control API
 
