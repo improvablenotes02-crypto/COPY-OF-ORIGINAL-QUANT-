@@ -210,7 +210,35 @@ result includes a `scope_provenance` record. Its default completeness is
 independently confirmed the source export covers the intended period; this
 is an operator attestation, not something CSV parsing can prove.
 
-### 2.5 Control API
+### 2.5 European options analytics (research only)
+
+The research options module provides Black-Scholes European call/put values,
+delta, gamma, vega, theta, rho, and a bounded implied-volatility solver.
+Values are per underlying unit; the module does not apply exchange lot sizes,
+contract multipliers, transaction costs, margin, early exercise, or discrete
+dividend schedules. Use verified option contract metadata and market quotes;
+this model is not an execution or profitability signal.
+
+```python
+from core.options import calculate_option_valuation, implied_volatility
+
+value = calculate_option_valuation(
+    spot=22500, strike=22600, time_to_expiry_years=0.18,
+    volatility=0.34, option_right="call",
+    risk_free_rate=0.065,
+)
+iv = implied_volatility(
+    market_price=value.fair_value, spot=22500, strike=22600,
+    time_to_expiry_years=0.18, option_right="call",
+    risk_free_rate=0.065,
+)
+```
+
+Theta is returned per year and per ACT/365 day. Vega and rho are derivatives
+per 1.0 absolute change in volatility and rate. Expiry valuation returns
+intrinsic value and boundary delta, with other Greeks zero.
+
+### 2.6 Control API
 
 The Control & Monitoring API binds to **127.0.0.1 only** and is **OFF
 by default**. It fails **closed**: if enabled without a token, it refuses
