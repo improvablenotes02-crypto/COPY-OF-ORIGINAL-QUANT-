@@ -58,7 +58,7 @@ except ImportError:  # direct script execution
 _SECRET_NAMES_PATTERN = "|".join(re.escape(name) for name in ALL_SECRET_ENV_VARS)
 _DELTA_NAMES_PATTERN = "|".join(re.escape(name) for name in DELTA_CREDENTIAL_ENV_VARS)
 _KNOWN_SECRET = re.compile(
-    r"^\s*(?:" + _SECRET_NAMES_PATTERN + r")\s*=\s*(\S.+?)\s*$"
+    r"^\s*(?:" + _SECRET_NAMES_PATTERN + r")\s*=\s*(\S.*)$"
 )
 _PY_LITERAL_SECRET = re.compile(
     r"\b(?:" + _DELTA_NAMES_PATTERN + r")\s*=\s*[\"']([^\"']+)[\"']"
