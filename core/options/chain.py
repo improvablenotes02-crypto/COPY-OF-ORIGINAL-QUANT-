@@ -9,8 +9,28 @@ from core.registry.instrument import Instrument
 from core.registry.product_types import PRODUCT_CALL_OPTION, PRODUCT_PUT_OPTION
 
 @dataclass(frozen=True, slots=True)
+class OptionContractSnapshot:
+    """Deeply immutable canonical contract facts captured at chain-build time."""
+    instrument_id: str
+    symbol: str
+    exchange: str
+    product_type: str
+    underlying_asset: str
+    quote_asset: str
+    expiry_time: int
+    strike_price: float
+    option_type: str
+    tick_size: float
+    quantity_step: float
+    minimum_quantity: float
+    trading_enabled: bool
+    lot_size: int
+    contract_multiplier: float
+
+
+@dataclass(frozen=True, slots=True)
 class OptionLeg:
-    instrument: Instrument
+    instrument: OptionContractSnapshot
     quote: NormalizedQuote | None
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +57,27 @@ class OptionChain:
     @property
     def missing_put_quotes(self) -> int:
         return sum(1 for entry in self.entries if entry.put is not None and entry.put.quote is None)
+
+def _snapshot_instrument(instrument: Instrument) -> OptionContractSnapshot:
+    """Copy only scalar contract facts; never retain a mutable Instrument."""
+    return OptionContractSnapshot(
+        instrument_id=instrument.instrument_id,
+        symbol=instrument.symbol,
+        exchange=instrument.exchange,
+        product_type=instrument.product_type,
+        underlying_asset=instrument.underlying_asset,
+        quote_asset=instrument.quote_asset,
+        expiry_time=instrument.expiry_time,
+        strike_price=float(instrument.strike_price),
+        option_type=instrument.option_type,
+        tick_size=float(instrument.tick_size),
+        quantity_step=float(instrument.quantity_step),
+        minimum_quantity=float(instrument.minimum_quantity),
+        trading_enabled=bool(instrument.trading_enabled),
+        lot_size=instrument.lot_size,
+        contract_multiplier=float(instrument.contract_multiplier),
+    )
+
 
 def build_option_chain(instruments: Sequence[Instrument], quotes: Mapping[str, NormalizedQuote], *,
                        underlying: str, expiry_time: int, as_of: datetime,
@@ -121,7 +162,7 @@ def build_option_chain(instruments: Sequence[Instrument], quotes: Mapping[str, N
             if not report.valid:
                 raise ValueError("invalid option quote: %s" % ", ".join(report.errors))
             sources.add(quote.source)
-        legs[right] = OptionLeg(instrument=instrument, quote=quote)
+        legs[right] = OptionLeg(instrument=_snapshot_instrument(instrument), quote=quote)
     if len(sources) > 1:
         raise ValueError("option chain quotes must use one consistent source")
     entries = tuple(OptionChainEntry(strike=strike, call=legs.get("call"), put=legs.get("put"))
