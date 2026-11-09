@@ -109,7 +109,8 @@ class Instrument:
             return True
         if not isinstance(self.underlying_asset, str) or not self.underlying_asset.strip():
             return False
-        if not isinstance(self.option_type, str) or self.option_type.lower() not in ("call", "put"):
+        expected_right = "call" if self.product_type == PRODUCT_CALL_OPTION else "put"
+        if not isinstance(self.option_type, str) or self.option_type.lower() != expected_right:
             return False
         if isinstance(self.expiry_time, bool) or not isinstance(self.expiry_time, int) or self.expiry_time <= 0:
             return False

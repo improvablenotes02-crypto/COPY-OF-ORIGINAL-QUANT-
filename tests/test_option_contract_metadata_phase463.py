@@ -38,6 +38,7 @@ def test_option_contract_metadata_requires_verified_lot_and_expiry():
     assert not _option(expiry_time=0).valid_option_contract_metadata
     assert not _option(strike_price=0).valid_option_contract_metadata
     assert not _option(option_type="binary").valid_option_contract_metadata
+    assert not _option(option_type="put").valid_option_contract_metadata
     assert not _option(contract_multiplier=0).valid_option_contract_metadata
 
 
