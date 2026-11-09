@@ -6,7 +6,7 @@ Run from the repository root:
 py scripts\configure_flattrade_credentials.py
 ```
 
-Before running, create a Flattrade Pi API application and register the exact local redirect URI printed by the command (default `http://localhost:8080/`). The command prompts for the app API key and secret with hidden input, opens the Flattrade login URL, receives the one-time callback code on a loopback-only HTTP listener, exchanges it once, and atomically writes the app key, app secret, returned client ID and session token to the ignored local `.env`.
+Before running, create a Flattrade Pi API application and register the exact local redirect URI printed by the command (default `http://127.0.0.1:8080/`). The command prompts for the app API key and secret with hidden input, opens the Flattrade login URL, receives the one-time callback code on a loopback-only HTTP listener, exchanges it once, and atomically writes the app key, app secret, returned client ID and session token to the ignored local `.env`.
 
 Security boundaries:
 - The callback server binds only to `127.0.0.1`; callback URLs and one-time codes are never logged.
