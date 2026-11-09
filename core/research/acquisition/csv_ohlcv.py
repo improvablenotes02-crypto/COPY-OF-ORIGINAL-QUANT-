@@ -230,7 +230,11 @@ def load_ohlcv_csv(
                 )
                 symbol_column = columns.get("symbol")
                 row_symbol = row.get(symbol_column) if symbol_column else symbol
-                if row_symbol is not None and str(row_symbol).strip() and str(row_symbol).strip() != symbol:
+                if symbol_column and (
+                    not isinstance(row_symbol, str) or not row_symbol.strip()
+                ):
+                    raise CSVHistoricalDataError("row %d symbol is empty" % row_number)
+                if row_symbol is not None and str(row_symbol).strip() != symbol:
                     raise CSVHistoricalDataError("row %d symbol does not match requested symbol" % row_number)
                 values = {
                     name: _decimal(name, row.get(columns[name]), allow_zero=(name == "volume"))
