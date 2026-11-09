@@ -67,6 +67,8 @@ jobs:
         run: python -m pytest tests/test_delta_credentials_diagnostics_phase457.py -q
       - name: Certify secure local personal Delta credential setup (Phase 458)
         run: python -m pytest tests/test_delta_credential_setup_phase458.py -q
+      - name: Certify venue-neutral historical OHLCV CSV ingestion (Phase 459)
+        run: python -m pytest tests/test_csv_ohlcv_ingestion_phase459.py -q
       - name: Certify OIDC-authenticated owner governance HTTP API
         run: python -m pytest tests/test_owner_governance_api.py -q
       - name: Certify strict owner governance HTTP framing headers (Phase 450)

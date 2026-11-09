@@ -170,7 +170,36 @@ starting PAPER mode does not yet mean exchange candles are reaching strategy
 engines. Use verified historical datasets for research/backtests until the
 venue-specific live-candle integration is separately certified.
 
-### 2.4 Control API
+### 2.4 Importing historical CSV data for research
+
+A venue-neutral CSV importer is available for historical OHLCV exports from
+NSE/Sensex, forex, crypto, or other data vendors. It validates and normalizes
+rows but does not fetch data or certify the vendor's completeness. Use the
+Python API:
+
+```python
+from core.research.acquisition.csv_ohlcv import load_ohlcv_csv
+
+dataset = load_ohlcv_csv(
+    "data/imports/NIFTY_1m.csv",
+    symbol="NIFTY",
+    source="your-broker-export",
+    timeframe="1m",
+    source_timezone="Asia/Kolkata",  # required for naive local timestamps
+)
+print(dataset.row_count, dataset.dataset_hash, len(dataset.gaps))
+bars = list(dataset.bars)
+```
+
+For ISO-8601 timestamps with an explicit UTC offset, `source_timezone`
+can be omitted. Numeric timestamps require an explicit `timestamp_unit`
+(`seconds`, `milliseconds`, `microseconds`, or `nanoseconds`). Duplicate
+timestamps, symbol mismatches, invalid OHLCV, and ambiguous local times are
+rejected. Missing intervals are reported in `dataset.gaps`; they are never
+interpolated or fabricated. The hash covers normalized rows in chronological
+order. Treat this as validated input, not proof of complete source history.
+
+### 2.5 Control API
 
 The Control & Monitoring API binds to **127.0.0.1 only** and is **OFF
 by default**. It fails **closed**: if enabled without a token, it refuses
