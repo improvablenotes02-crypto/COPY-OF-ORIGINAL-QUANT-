@@ -43,6 +43,8 @@ def test_doctor_runs_only_the_readonly_connectivity_check_after_preflight():
     assert calls == ["read-only-connection"]
     assert "Offline configuration preflight: PASS" in output
     assert "Exchange writes: NOT USED" in output
+    assert "Strategy candle feed: NOT CERTIFIED (remains fail-closed pending venue evidence)." in output
+    assert "NSE/BSE/Forex broker adapter: NOT IMPLEMENTED." in output
 
 
 def test_doctor_propagates_connectivity_failure():
