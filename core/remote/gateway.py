@@ -82,23 +82,55 @@ class _RateLimiter:
     remote boundary. Bounded memory (per client it stores a deque of
     window timestamps). Thread-safe."""
 
-    def __init__(self, max_events, window_seconds):
-        from collections import deque
+    def __init__(self, max_events, window_seconds, max_clients=4096):
+        from collections import OrderedDict
 
         self.max_events = int(max_events)
         self.window_seconds = float(window_seconds)
-        self._deque = deque()
+        self.max_clients = max(1, int(max_clients))
+        self._clients = OrderedDict()
         self._lock = threading.Lock()
 
-    def allow(self):
+    def allow(self, client_key=""):
+        """Apply an independent sliding window to one remote client.
+
+        Client state is bounded. Expired entries are pruned when the map
+        reaches capacity; the least-recently-used entry is evicted only
+        when all retained entries are still active.
+        """
+        from collections import deque
+
         now = time.time()
+        cutoff = now - self.window_seconds
+        key = str(client_key or "<unknown>")
         with self._lock:
-            d = self._deque
-            while d and d[0] <= now - self.window_seconds:
-                d.popleft()
-            if len(d) >= self.max_events:
+            events = self._clients.get(key)
+            if events is not None:
+                while events and events[0] <= cutoff:
+                    events.popleft()
+                self._clients.move_to_end(key)
+                if not events:
+                    del self._clients[key]
+                    events = None
+
+            if events is None:
+                if len(self._clients) >= self.max_clients:
+                    # A bounded cleanup pass is only needed on admission
+                    # of a new client at capacity.
+                    for stale_key, stale_events in list(self._clients.items()):
+                        while stale_events and stale_events[0] <= cutoff:
+                            stale_events.popleft()
+                        if not stale_events:
+                            del self._clients[stale_key]
+                    if len(self._clients) >= self.max_clients:
+                        self._clients.popitem(last=False)
+                events = deque()
+                self._clients[key] = events
+
+            if len(events) >= self.max_events:
                 return False
-            d.append(now)
+            events.append(now)
+            self._clients.move_to_end(key)
             return True
 
 
@@ -259,7 +291,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
 
         # Rate limit the boundary (auth attempts already handled;
         # this bounds control + polling per remote client).
-        if self.limiter is not None and not self.limiter.allow():
+        if self.limiter is not None and not self.limiter.allow(remote):
             self._audit(
                 correlation_id=conn_id, role=role,
                 device=self.headers.get("User-Agent", "")[:120],
