@@ -206,8 +206,21 @@ class TestHistoricalEnvVariantCoverage(unittest.TestCase):
                 ["git", "rev-parse", "HEAD"], cwd=root, check=True,
                 capture_output=True, text=True).stdout.strip()
 
+            atomic_temp = root / ".env.tmp-interrupted"
+            atomic_temp.write_text(
+                "DELTA_INDIA_API_SECRET=history-canary-three\\n",
+                encoding="utf-8")
+            subprocess.run(["git", "add", atomic_temp.name],
+                           cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "atomic env temp file"],
+                           cwd=root, check=True)
+            third = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+                capture_output=True, text=True).stdout.strip()
+
             unsafe = _SCANNER.scan_env_history(root)
 
-        self.assertEqual(set(unsafe), {first, second})
+        self.assertEqual(set(unsafe), {first, second, third})
         self.assertNotIn("history-canary-one", repr(unsafe))
         self.assertNotIn("history-canary-two", repr(unsafe))
+        self.assertNotIn("history-canary-three", repr(unsafe))
