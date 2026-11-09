@@ -77,9 +77,7 @@ def _tokens_equal(left, right):
     return hmac.compare_digest(a, b)
 
 
-_SECRET_ENV_VARS = (
-    "DELTA_API_KEY", "DELTA_API_SECRET", "CONTROL_API_TOKEN",
-)
+from core.secret_inventory import ALL_SECRET_ENV_VARS as _SECRET_ENV_VARS
 
 
 def _safe_detail(exc, limit=300):
