@@ -10,6 +10,7 @@ import getpass
 import os
 import sys
 import tempfile
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -171,16 +172,21 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         return
 
 
-def capture_request_code(*, port: int = 8080, timeout: float = 180.0) -> str:
+def capture_request_code(*, port: int = 8080, timeout: float = 180.0, on_listening=None) -> str:
     """Receive one callback on loopback only; never print/log the request code."""
     if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
         raise FlattradeSetupError("callback port is invalid")
     server = _CallbackHTTPServer(("127.0.0.1", port), _CallbackHandler)
-    server.timeout = timeout
+    deadline = time.monotonic() + timeout
     try:
-        server.handle_request()
-        if not server.request_code:
-            raise FlattradeSetupError("Flattrade callback timed out or was not received")
+        if callable(on_listening):
+            on_listening()
+        while not server.request_code:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise FlattradeSetupError("Flattrade callback timed out or was not received")
+            server.timeout = remaining
+            server.handle_request()
         return server.request_code
     finally:
         server.server_close()
@@ -216,7 +222,7 @@ def main() -> int:
     except ValueError:
         print("Invalid callback port.")
         return 2
-    redirect_uri = "http://localhost:%d/" % port
+    redirect_uri = "http://127.0.0.1:%d/" % port
     print("Required registered redirect URL: " + redirect_uri)
     api_key = getpass.getpass("Flattrade API key (hidden): ")
     api_secret = getpass.getpass("Flattrade API secret (hidden): ")
@@ -224,11 +230,17 @@ def main() -> int:
         key = _required_text(api_key, "API key")
         secret = _required_text(api_secret, "API secret")
         login_url = AUTH_URL + "?" + urlencode({"app_key": key})
-        print("Waiting for local Flattrade authorization callback...")
-        print("If your browser does not open, use this login URL:")
-        print(login_url)
-        webbrowser.open(login_url)
-        request_code = capture_request_code(port=port)
+        def _open_login_page():
+            print("Waiting for local Flattrade authorization callback...")
+            print("If your browser does not open, use this login URL:")
+            print(login_url)
+            webbrowser.open(login_url)
+
+        # Bind the loopback listener BEFORE opening the browser, so a fast
+        # redirect cannot race ahead of the local callback server.
+        request_code = capture_request_code(
+            port=port, on_listening=_open_login_page
+        )
         configure_credentials(
             api_key=key, api_secret=secret, request_code=request_code
         )
