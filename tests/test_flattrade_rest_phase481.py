@@ -65,7 +65,7 @@ def test_search_quotes_and_option_chain_use_only_documented_read_endpoints():
     assert chain_api.get_option_chain(
         exchange="NFO", trading_symbol="NIFTY", strike_price=22500, count=5
     )[0]["tsym"] == "NIFTYCE"
-    assert all(call[0] in ("/SearchScrip", "/GetQuotes", "/GetOptionChain") for call in (
+    assert all(call[0] in ("SearchScrip", "GetQuotes", "GetOptionChain") for call in (
         search_client.calls[0], quote_client.calls[0], chain_client.calls[0]
     ))
 
