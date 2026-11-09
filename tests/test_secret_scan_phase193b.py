@@ -27,6 +27,13 @@ manifest_mod = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = manifest_mod
 _spec.loader.exec_module(manifest_mod)
 
+_scanner_spec = importlib.util.spec_from_file_location(
+    "phase193b_history_secret_scan", ROOT / "scripts" / "security" / "scan_secrets.py")
+assert _scanner_spec is not None and _scanner_spec.loader is not None
+_SCANNER = importlib.util.module_from_spec(_scanner_spec)
+sys.modules[_scanner_spec.name] = _SCANNER
+_scanner_spec.loader.exec_module(_SCANNER)
+
 
 def _tree_with_secret_members() -> tuple[Path, list[str]]:
     root = Path(tempfile.mkdtemp())
