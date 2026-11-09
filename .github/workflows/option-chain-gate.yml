@@ -30,4 +30,4 @@ jobs:
       - name: Verify strict source manifest
         run: python scripts/generate_manifest.py --root . --verify --strict
       - name: Certify option-chain assembly and quote freshness
-        run: python -m pytest tests/test_option_chain_phase465.py tests/test_option_chain_phase466.py -q
+        run: python -m pytest tests/test_option_chain_phase465.py tests/test_option_chain_phase466.py tests/test_option_chain_phase467.py -q
