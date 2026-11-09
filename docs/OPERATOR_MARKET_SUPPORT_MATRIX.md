@@ -23,7 +23,7 @@ The intended Flattrade target is the vendor's Pi API and its official Python cli
 
 The vendor documentation describes instrument search/metadata, quotes, intraday and daily price series, option-chain retrieval, WebSocket market feeds, and account/order APIs. The Python client setup uses an app API key/secret plus a user ID and generated session token. Its setup guide states that session tokens expire daily at 5:00 AM IST.
 
-A safe QuantEngine adapter must therefore implement and test, before use:
+The vendor token exchange also requires the request to originate from the API key's registered private static IP. A safe QuantEngine adapter must therefore implement and test, before use:
 1. Local-only secret provisioning for app key, app secret, user ID and short-lived session token; no secrets in source control, logs or chat.
 2. A token refresh/re-authentication workflow that does not expose credentials or silently reuse an expired token.
 3. Read-only identity/session validation, instrument search, quote, historical candle and option-chain retrieval.
