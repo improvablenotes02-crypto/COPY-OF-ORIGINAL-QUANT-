@@ -56,7 +56,7 @@ If verification fails:
 - Check the matching secret and local system clock.
 - Re-enter credentials locally rather than sending them in a message.
 
-## Secret storage and Git
+## Read-only connectivity check\n\nRun `python scripts/check_delta_connection.py` after the identity check. It verifies the authenticated identity and public product catalog using the selected region/environment client. It does not read balances, positions or orders, and does not send exchange writes. The result is connectivity evidence only, not a trading-readiness certification.\n\n## Secret storage and Git
 
 The root `.env` file is ignored by Git. Keep it on the trusted machine where QuantEngine runs. Do not remove the ignore rule or commit it. If a key is accidentally exposed or committed, revoke it at the exchange and create a replacement.
 
