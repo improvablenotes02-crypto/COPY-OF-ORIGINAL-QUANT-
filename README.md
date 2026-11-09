@@ -14,6 +14,13 @@ QuantEngine is a multi-market research and trading-engine project. Its current p
 
 The setup writes to the ignored local `.env`; it does not print secrets or enable live execution. See [Personal Delta API key setup](docs/OPERATOR_PERSONAL_DELTA_API_KEYS.md) and the [market support matrix](docs/OPERATOR_MARKET_SUPPORT_MATRIX.md).
 
+## Flattrade token setup (authentication only)
+
+A local-only Flattrade token provisioning utility is available:
+`python scripts/configure_flattrade_credentials.py`
+
+Register the exact loopback redirect URL shown by the utility in your Flattrade app. This provisions your personal Flattrade credentials and short-lived session token in the ignored local `.env`. **It does not yet connect Flattrade market data or enable NSE/BSE/Forex trading.** See [Flattrade setup details](docs/phase480-flattrade-local-token-setup.md).
+
 ## Safety status
 
 Paper/research workflows are separate from live execution. Live order writing remains disarmed by default. Passing a focused CI gate does not certify profitability or full production readiness.
