@@ -7,8 +7,6 @@ non-tradable until a separate eligibility/evidence workflow approves them.
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
-import math
-
 from core.registry.instrument import Instrument
 from core.registry.product_types import PRODUCT_CALL_OPTION, PRODUCT_PUT_OPTION
 
