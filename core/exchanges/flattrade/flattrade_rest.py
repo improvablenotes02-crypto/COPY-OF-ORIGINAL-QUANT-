@@ -100,7 +100,7 @@ class FlattradeReadOnlyREST:
             raise ValueError("exchange is required")
         if not isinstance(token, (str, int)) or isinstance(token, bool) or not str(token).strip():
             raise ValueError("instrument token is required")
-        if interval not in (1, 3, 5, 10, 15, 30, 60, 120):
+        if isinstance(interval, bool) or interval not in (1, 3, 5, 10, 15, 30, 60, 120):
             raise ValueError("unsupported Flattrade candle interval")
         if (start_time is None) != (end_time is None):
             raise ValueError("start_time and end_time must be supplied together")
