@@ -224,6 +224,10 @@ def main() -> int:
         return 2
     redirect_uri = "http://127.0.0.1:%d/" % port
     print("Required registered redirect URL: " + redirect_uri)
+    confirm = input("Replace existing Flattrade credential entries in .env after successful login? [y/N]: ")
+    if confirm.strip().lower() not in ("y", "yes"):
+        print("No changes made.")
+        return 0
     api_key = getpass.getpass("Flattrade API key (hidden): ")
     api_secret = getpass.getpass("Flattrade API secret (hidden): ")
     try:
