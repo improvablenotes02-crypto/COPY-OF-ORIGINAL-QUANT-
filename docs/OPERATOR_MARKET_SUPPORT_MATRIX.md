@@ -32,4 +32,4 @@ The vendor token exchange also requires the request to originate from the API ke
 6. Paper-only integration and adapter conformance tests before any order API work.
 7. Separate order-write authorization, journaling, reconciliation and explicit safety review; credential setup alone must never arm live trading.
 
-Do not enter Flattrade credentials into the Delta setup utility. The Flattrade adapter and its credential workflow are future work, not an implemented feature.
+Do not enter Flattrade credentials into the Delta setup utility. Flattrade token provisioning is implemented; the Flattrade market-data adapter and any execution integration remain future work.
