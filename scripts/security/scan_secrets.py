@@ -58,10 +58,10 @@ except ImportError:  # direct script execution
 _SECRET_NAMES_PATTERN = "|".join(re.escape(name) for name in ALL_SECRET_ENV_VARS)
 _DELTA_NAMES_PATTERN = "|".join(re.escape(name) for name in DELTA_CREDENTIAL_ENV_VARS)
 _KNOWN_SECRET = re.compile(
-    r"^\\s*(?:" + _SECRET_NAMES_PATTERN + r")\\s*=\\s*(\\S.+?)\\s*$"
+    r"^\s*(?:" + _SECRET_NAMES_PATTERN + r")\s*=\s*(\S.+?)\s*$"
 )
 _PY_LITERAL_SECRET = re.compile(
-    r"\\b(?:" + _DELTA_NAMES_PATTERN + r")\\s*=\\s*[\\\"']([^\\\"']+)[\\\"']"
+    r"\b(?:" + _DELTA_NAMES_PATTERN + r")\s*=\s*[\"']([^\"']+)[\"']"
 )
 _PRIVATE_KEY = re.compile(
     r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
@@ -82,9 +82,13 @@ def _uses_env_assignment_rules(path: Path) -> bool:
     ``CONTROL_API_TOKEN = os.getenv(...)`` and documentation contains
     illustrative assignments.  Neither is a credential leak.
     """
-    return (path.name == ".env" or path.name.startswith(".env.")\n            or path.name.startswith(".quantengine-env-")\n            or path.suffix.lower() in {
-        ".ini", ".toml", ".yaml", ".yml",
-    }
+    return (
+        path.name == ".env"
+        or path.name.startswith(".env.")
+        or path.name.startswith(".env.tmp-")
+        or path.name.startswith(".quantengine-env-")
+        or path.suffix.lower() in {".ini", ".toml", ".yaml", ".yml"}
+    )
 
 
 def _scan_text_lines(relative: str, name: str, suffix: str,
