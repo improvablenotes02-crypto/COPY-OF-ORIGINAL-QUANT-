@@ -41,7 +41,7 @@ def test_user_details_uses_form_encoded_jdata_and_jkey():
     result = api.user_details()
     assert result["stat"] == "Ok"
     path, data, headers = transport.calls[0]
-    assert path == "/UserDetails"
+    assert path == "UserDetails"
     assert data["jKey"] == "synthetic-token"
     assert json.loads(data["jData"]) == {"uid": "USER1"}
     assert headers["Content-Type"] == "application/x-www-form-urlencoded"
