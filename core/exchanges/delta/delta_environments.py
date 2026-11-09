@@ -53,6 +53,14 @@ SANDBOX_WS_URL: str | None = None
 class EnvironmentError(ValueError):
     """An environment/region/endpoint/credential combination is unsafe."""
 
+def approved_rest_endpoints() -> tuple[str, ...]:
+    """Exact REST origins approved for supported region/environment pairs."""
+    return tuple(sorted({
+        entry["rest"] for entry in _ENDPOINTS.values()
+        if isinstance(entry.get("rest"), str) and entry["rest"]
+    }))
+
+
 def resolve_environment(name: object) -> str:
     if isinstance(name, str) and name.strip().upper() in ENVIRONMENTS:
         return name.strip().upper()
