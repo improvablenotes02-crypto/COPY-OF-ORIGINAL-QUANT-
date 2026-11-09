@@ -93,7 +93,25 @@ credentials, and an explicit symbol universe.
 ### 2.2 Delta venue and personal API credentials
 
 Select the exact Delta region and environment before using private
-clients or provider-backed data. For an India account, for example:
+clients or provider-backed data. You can configure your own key locally
+without sending it to ChatGPT or committing it:
+
+```powershell
+python scripts/configure_delta_credentials.py
+```
+
+Choose INDIA or GLOBAL, then SANDBOX or PRODUCTION. The key and secret
+prompts are hidden. The script updates only the selected Delta credential
+pair in the ignored repository-root `.env`, preserves unrelated settings,
+replaces stale Delta credential entries, and restricts file permissions
+where the operating system supports POSIX mode bits. It never enables live
+trading. Then verify the key:
+
+```powershell
+python scripts/check_delta_credentials.py
+```
+
+For manual setup, an India account can use:
 
 ```dotenv
 DELTA_REGION=INDIA
