@@ -98,7 +98,10 @@ def verify_credentials(*, client_factory=None, emit=print) -> int:
         return 0
     except Exception as error:  # redact exception text; it may contain request data
         category = _safe_auth_failure_category(error)
-        emit("Delta credential verification: FAIL ({})".format(category))
+        exception_type = type(error).__name__
+        if not isinstance(exception_type, str) or not exception_type.isidentifier():
+            exception_type = "Exception"
+        emit("Delta credential verification: FAIL ({}; {})".format(exception_type, category))
         emit(_FAILURE_HINTS.get(category, _FAILURE_HINTS[AUTHENTICATION_FAILED]))
         emit("Provider response and exception details are redacted.")
         return 1

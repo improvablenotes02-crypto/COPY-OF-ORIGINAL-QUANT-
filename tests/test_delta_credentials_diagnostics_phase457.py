@@ -128,5 +128,6 @@ def test_transport_exception_without_http_response_is_generic():
 
     assert result == 1
     assert "AUTHENTICATION_FAILED" in rendered
+    assert "RuntimeError" in rendered
     assert "transport-detail-must-not-leak" not in rendered
     assert rest.client.closed

@@ -27,9 +27,9 @@ them through the existing classify_auth_error taxonomy to a fixed set:
 
 Unknown codes, malformed response bodies, transport errors, and unrecognized
 provider responses fall back to AUTHENTICATION_FAILED. Only the fixed
-category and a static operator hint are emitted. Raw provider messages, error
-codes, response bodies, context objects, exception text, API keys, API secrets,
-and account identifiers are never printed.
+category, the exception class name (not its message), and a static operator hint
+are emitted. Raw provider messages, error codes, response bodies, context objects,
+exception messages, API keys, API secrets, and account identifiers are never printed.
 
 The categories are diagnostic hints, not a complete or authoritative statement
 of provider policy. Operators must verify key permissions and IP allowlists in
