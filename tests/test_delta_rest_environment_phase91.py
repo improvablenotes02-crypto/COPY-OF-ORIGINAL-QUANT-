@@ -162,3 +162,10 @@ def test_historical_loader_fetch_uses_configured_host():
     assert seen["url"] == ("https://cdn-ind.testnet.deltaex.org"
                            "/v2/history/candles")
     assert seen["params"]["symbol"] == "BTCUSD"
+
+
+def test_delta_rest_rejects_unapproved_authenticated_origin():
+    import pytest
+    from core.exchanges.delta.delta_environments import EnvironmentError
+    with pytest.raises(EnvironmentError, match="not an approved"):
+        DeltaREST(base_url="https://attacker.example")
