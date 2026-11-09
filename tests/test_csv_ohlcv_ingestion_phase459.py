@@ -194,11 +194,12 @@ def test_scope_metadata_must_be_complete_and_explicit(tmp_path):
             completeness="COMPLETE", pagination_exhausted=False,
         )
 
+
 def test_symbol_column_cannot_be_blank(tmp_path):
     path = _write(
         tmp_path,
-        "timestamp,open,high,low,close,volume,symbol\\n"
-        "2026-11-09T03:45:00Z,100,101,99,100,1,\\n",
+        "timestamp,open,high,low,close,volume,symbol\n"
+        "2026-11-09T03:45:00Z,100,101,99,100,1,\n",
     )
     with pytest.raises(CSVHistoricalDataError, match="symbol is empty"):
         load_ohlcv_csv(path, symbol="NIFTY", source="test")
@@ -207,9 +208,9 @@ def test_symbol_column_cannot_be_blank(tmp_path):
 def test_non_aligned_spacing_is_reported_without_inventing_missing_bars(tmp_path):
     path = _write(
         tmp_path,
-        "timestamp,open,high,low,close,volume\\n"
-        "2026-11-09T03:45:00Z,100,101,99,100,1\\n"
-        "2026-11-09T03:46:30Z,100,101,99,100,1\\n",
+        "timestamp,open,high,low,close,volume\n"
+        "2026-11-09T03:45:00Z,100,101,99,100,1\n"
+        "2026-11-09T03:46:30Z,100,101,99,100,1\n",
     )
     dataset = load_ohlcv_csv(
         path, symbol="NIFTY", source="test", timeframe="1m",
