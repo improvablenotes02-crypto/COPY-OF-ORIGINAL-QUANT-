@@ -16,13 +16,16 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from core.exchanges.flattrade.flattrade_auth import (
     TOKEN_EXCHANGE_URL,
     build_token_exchange_payload,
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
 AUTH_URL = "https://auth.flattrade.in/"
 MANAGED_NAMES = frozenset({
