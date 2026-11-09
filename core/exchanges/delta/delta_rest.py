@@ -12,6 +12,10 @@ import time
 
 import httpx
 
+from core.exchanges.delta.delta_environments import (
+    EnvironmentError, approved_rest_endpoints,
+)
+
 
 class DeltaREST:
 
@@ -23,7 +27,12 @@ class DeltaREST:
         # to reach any non-default host (e.g. the India Testnet catalog).
         # The default preserves the legacy Global endpoint byte-for-byte
         # so existing callers are behavior-neutral.
-        self.base_url = (base_url or self.BASE_URL).rstrip("/")
+        candidate = (base_url or self.BASE_URL).strip().rstrip("/")
+        if candidate not in approved_rest_endpoints():
+            raise EnvironmentError(
+                "Delta REST origin is not an approved region/environment endpoint"
+            )
+        self.base_url = candidate
         self.client = httpx.Client(
 
             base_url=self.base_url,
