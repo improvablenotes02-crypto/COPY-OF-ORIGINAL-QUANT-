@@ -140,6 +140,16 @@ def build_option_chain(instruments: Sequence[Instrument], quotes: Mapping[str, N
             raise ValueError("option chain expiry mismatch")
         if not instrument.valid_option_contract_metadata:
             raise ValueError("option contract metadata is incomplete or inconsistent")
+        try:
+            precision_values = (
+                float(instrument.tick_size),
+                float(instrument.quantity_step),
+                float(instrument.minimum_quantity),
+            )
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError("option contract precision metadata is invalid") from None
+        if any(not math.isfinite(value) or value <= 0 for value in precision_values):
+            raise ValueError("option contract precision metadata is invalid")
         if common_lot is None:
             common_lot = instrument.lot_size
             common_multiplier = float(instrument.contract_multiplier)
