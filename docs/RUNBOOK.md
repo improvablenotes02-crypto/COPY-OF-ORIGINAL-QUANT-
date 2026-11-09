@@ -263,7 +263,10 @@ spot/perpetual strategy engine. A deterministic single-position scenario
 repricer is also available through `evaluate_option_scenario`; it reprices
 under spot, volatility, and elapsed-time shocks and scales model P&L by signed
 contracts, lot size, and multiplier. It is not a portfolio margin or
-liquidation simulation.
+liquidation simulation. The provider-neutral `build_option_chain` helper
+pairs call/put contracts by strike and expiry, enforces consistent lot sizing
+and quote source, rejects stale quotes, and preserves missing quotes/legs as
+missing rather than fabricating them.
 
 ### 2.6 Control API
 

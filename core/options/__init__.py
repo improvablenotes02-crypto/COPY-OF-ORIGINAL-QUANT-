@@ -8,11 +8,16 @@ from core.options.black_scholes import (
 )
 from core.options.position import OptionPositionExposure, scale_option_position
 from core.options.scenario import OptionScenarioResult, evaluate_option_scenario
+from core.options.chain import OptionChain, OptionChainEntry, OptionLeg, build_option_chain
 
 __all__ = (
     "OptionValuation",
     "OptionPositionExposure",
     "OptionScenarioResult",
+    "OptionChain",
+    "OptionChainEntry",
+    "OptionLeg",
+    "build_option_chain",
     "evaluate_option_scenario",
     "calculate_option_valuation",
     "implied_volatility",
