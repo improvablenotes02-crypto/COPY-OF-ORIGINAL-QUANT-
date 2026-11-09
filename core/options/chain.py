@@ -189,10 +189,15 @@ def build_option_chain(instruments: Sequence[Instrument], quotes: Mapping[str, N
         legs[right] = OptionLeg(instrument=_snapshot_instrument(instrument), quote=quote)
     if len(sources) > 1:
         raise ValueError("option chain quotes must use one consistent source")
-    if len(quote_timestamps) > 1:
-        skew = (max(quote_timestamps) - min(quote_timestamps)).total_seconds()
-        if skew > max_skew:
-            raise ValueError("option chain quote timestamp skew exceeds limit")
+    quote_timestamp_start = min(quote_timestamps) if quote_timestamps else None
+    quote_timestamp_end = max(quote_timestamps) if quote_timestamps else None
+    quote_skew_seconds = (
+        (quote_timestamp_end - quote_timestamp_start).total_seconds()
+        if quote_timestamp_start is not None and quote_timestamp_end is not None
+        else None
+    )
+    if quote_skew_seconds is not None and quote_skew_seconds > max_skew:
+        raise ValueError("option chain quote timestamp skew exceeds limit")
     entries = tuple(OptionChainEntry(strike=strike, call=legs.get("call"), put=legs.get("put"))
                     for strike, legs in sorted(grouped.items()))
     return OptionChain(underlying=underlying, exchange=common_exchange, expiry_time=expiry_time, lot_size=common_lot,
