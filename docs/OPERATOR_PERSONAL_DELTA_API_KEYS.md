@@ -33,7 +33,7 @@ It updates only the managed Delta credential names in the root `.env` file and p
 
 The selected credential pair is region- and environment-specific. The script does not substitute Global credentials for India, or production credentials for sandbox credentials.
 
-## Verify the key
+## Offline preflight\n\nRun `python scripts/quantengine_preflight.py` first. This checks the exact region/environment, endpoint, credential-pair presence, and disarmed live flags without network access or printing secrets. A pass is local configuration evidence only.\n\n## Verify the key
 
 Run:
 
