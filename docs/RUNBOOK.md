@@ -195,9 +195,12 @@ For ISO-8601 timestamps with an explicit UTC offset, `source_timezone`
 can be omitted. Numeric timestamps require an explicit `timestamp_unit`
 (`seconds`, `milliseconds`, `microseconds`, or `nanoseconds`). Duplicate
 timestamps, symbol mismatches, invalid OHLCV, and ambiguous local times are
-rejected. Missing intervals are reported in `dataset.gaps`; they are never
-interpolated or fabricated. The hash covers normalized rows in chronological
-order. Treat this as validated input, not proof of complete source history.
+rejected. Time-spacing gaps are reported in `dataset.gaps`; no bars are interpolated
+or fabricated. These are wall-clock spacing observations, not proof of missing
+trading bars: overnight closures, exchange holidays, and session breaks can
+also appear because no venue calendar is applied. The hash covers normalized
+rows in chronological order. Treat this as validated input, not proof of
+complete source history.
 
 For the project's scoped-backtest gate, supply `venue`, `region`,
 `environment`, `instrument`, and an explicit `source_timestamp`. The

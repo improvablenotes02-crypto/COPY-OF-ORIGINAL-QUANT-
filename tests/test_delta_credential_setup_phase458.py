@@ -86,3 +86,16 @@ def test_setup_restricts_local_env_permissions(tmp_path):
         api_key="key", api_secret="secret", env_path=env,
     )
     assert stat.S_IMODE(env.stat().st_mode) == 0o600
+
+def test_setup_refuses_noninteractive_secret_input(monkeypatch):
+    import io
+    import sys
+
+    from scripts import configure_delta_credentials as setup
+
+    captured = io.StringIO()
+    monkeypatch.setattr(sys, "stdin", io.StringIO())
+    monkeypatch.setattr(sys, "stdout", captured)
+    assert setup.main() == 2
+    assert "interactive terminal" in captured.getvalue()
+

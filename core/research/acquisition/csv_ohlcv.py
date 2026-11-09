@@ -31,7 +31,8 @@ class CSVHistoricalDataError(ValueError):
 class CSVGap:
     previous_timestamp: int
     next_timestamp: int
-    missing_intervals: int
+    elapsed_seconds: int
+    expected_interval_seconds: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,8 +286,8 @@ def load_ohlcv_csv(
     gaps = []
     for previous, current in zip(rows, rows[1:]):
         difference = current[0] - previous[0]
-        if difference > interval and difference % interval == 0:
-            gaps.append(CSVGap(previous[0], current[0], difference // interval - 1))
+        if difference > interval:
+            gaps.append(CSVGap(previous[0], current[0], difference, interval))
 
     scope_fields = (venue, region, environment, instrument)
     if any(value is not None for value in scope_fields) and not all(
