@@ -34,3 +34,15 @@ def test_json_safe_exception_branch_redacts(monkeypatch):
     # path is taken, a configured secret must never survive it.
     out = _json_safe(RuntimeError("failed with AS-SECRET-MARKER-456 inside"))
     assert "AS-SECRET-MARKER-456" not in str(out)
+
+
+def test_safe_detail_redacts_all_region_and_environment_credentials(monkeypatch):
+    from core.secret_inventory import DELTA_CREDENTIAL_ENV_VARS
+    parts = []
+    for index, name in enumerate(DELTA_CREDENTIAL_ENV_VARS):
+        value = "REGIONAL-SECRET-CANARY-%02d" % index
+        monkeypatch.setenv(name, value)
+        parts.append(value)
+    detail = _safe_detail(RuntimeError(" / ".join(parts)), limit=2000)
+    assert all(value not in detail for value in parts)
+    assert detail.count("[REDACTED]") == len(parts)
