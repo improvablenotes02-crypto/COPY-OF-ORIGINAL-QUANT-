@@ -49,18 +49,19 @@ except ImportError:  # direct execution or spec_from_file_location loading
 
 
 _SKIP_DIRS = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".kilo"}
+try:
+    from core.secret_inventory import ALL_SECRET_ENV_VARS, DELTA_CREDENTIAL_ENV_VARS
+except ImportError:  # direct script execution
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from core.secret_inventory import ALL_SECRET_ENV_VARS, DELTA_CREDENTIAL_ENV_VARS
+
+_SECRET_NAMES_PATTERN = "|".join(re.escape(name) for name in ALL_SECRET_ENV_VARS)
+_DELTA_NAMES_PATTERN = "|".join(re.escape(name) for name in DELTA_CREDENTIAL_ENV_VARS)
 _KNOWN_SECRET = re.compile(
-    r"^\s*(?:DELTA_API_KEY|DELTA_API_SECRET|DELTA_INDIA_TESTNET_API_KEY|"
-    r"DELTA_INDIA_TESTNET_API_SECRET|DELTA_SANDBOX_API_KEY|"
-    r"DELTA_SANDBOX_API_SECRET|OPENAI_API_KEY|"
-    r"ANTHROPIC_API_KEY|OPENROUTER_API_KEY|CONTROL_API_TOKEN|"
-    r"REMOTE_(?:VIEW|CONTROL|EMERGENCY)_TOKEN)\s*=\s*(\S.+?)\s*$"
+    r"^\s*(?:" + _SECRET_NAMES_PATTERN + r")\s*=\s*(\S.*)$"
 )
 _PY_LITERAL_SECRET = re.compile(
-    r"\b(?:DELTA_API_KEY|DELTA_API_SECRET|DELTA_INDIA_TESTNET_API_KEY|"
-    r"DELTA_INDIA_TESTNET_API_SECRET|DELTA_SANDBOX_API_KEY|"
-    r"DELTA_SANDBOX_API_SECRET|OPENAI_API_KEY|"
-    r"ANTHROPIC_API_KEY|OPENROUTER_API_KEY)\s*=\s*[\"']([^\"']+)[\"']"
+    r"\b(?:" + _DELTA_NAMES_PATTERN + r")\s*=\s*[\"']([^\"']+)[\"']"
 )
 _PRIVATE_KEY = re.compile(
     r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
@@ -81,9 +82,13 @@ def _uses_env_assignment_rules(path: Path) -> bool:
     ``CONTROL_API_TOKEN = os.getenv(...)`` and documentation contains
     illustrative assignments.  Neither is a credential leak.
     """
-    return path.name == ".env" or path.name.startswith(".env.") or path.suffix.lower() in {
-        ".ini", ".toml", ".yaml", ".yml",
-    }
+    return (
+        path.name == ".env"
+        or path.name.startswith(".env.")
+        or path.name.startswith(".env.tmp-")
+        or path.name.startswith(".quantengine-env-")
+        or path.suffix.lower() in {".ini", ".toml", ".yaml", ".yml"}
+    )
 
 
 def _scan_text_lines(relative: str, name: str, suffix: str,

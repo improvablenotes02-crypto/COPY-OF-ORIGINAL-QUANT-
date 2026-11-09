@@ -27,6 +27,18 @@ def _env_int(name, default=None):
     except (ValueError, TypeError) as exc:
         raise ValueError(f"Invalid {name}={raw!r}: must be an integer") from exc
 
+def _env_bool(name, default=False):
+    """Parse boolean environment settings strictly; reject typos."""
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return bool(default)
+    value = str(raw).strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"Invalid {name}={raw!r}: expected true/false")
+
 
 class Settings:
     API_KEY = os.getenv("DELTA_API_KEY", "")
@@ -70,9 +82,9 @@ class Settings:
     ]
 
     TIMEFRAME = os.getenv("TIMEFRAME", "1m")
-    PAPER_MODE = os.getenv("PAPER_MODE", "True").lower() == "true"
-    LIVE_MODE = os.getenv("LIVE_MODE", "False").lower() == "true"
-    LIVE_EXECUTE = os.getenv("LIVE_EXECUTE", "").lower() in ("1", "true")
+    PAPER_MODE = _env_bool("PAPER_MODE", True)
+    LIVE_MODE = _env_bool("LIVE_MODE", False)
+    LIVE_EXECUTE = _env_bool("LIVE_EXECUTE", False)
 
     # Phase 11A: master LIVE arming flag. Default False.
     # LIVE execution requires ALL of: mode == LIVE AND
@@ -81,7 +93,7 @@ class Settings:
     # core/execution/live_safety_gate.py). There is no
     # single-flag bypass: ALLOW_LIVE=true alone arms
     # nothing without the other conditions.
-    ALLOW_LIVE = os.getenv("ALLOW_LIVE", "").lower() in ("1", "true")
+    ALLOW_LIVE = _env_bool("ALLOW_LIVE", False)
 
     # Phase 11A: optional explicit execution-mode
     # override. "" (unset) derives the mode from
@@ -117,9 +129,7 @@ class Settings:
     # only control surface; binds to 127.0.0.1. OFF by default.
     # When enabled a CONTROL_API_TOKEN MUST be set -- an enabled
     # API with an empty token fails closed (refuses all requests).
-    CONTROL_API_ENABLED = os.getenv(
-        "CONTROL_API_ENABLED", "False"
-    ).lower() == "true"
+    CONTROL_API_ENABLED = _env_bool("CONTROL_API_ENABLED", False)
     CONTROL_API_TOKEN = os.getenv("CONTROL_API_TOKEN", "")
     CONTROL_API_HOST = os.getenv("CONTROL_API_HOST", "127.0.0.1")
     CONTROL_API_PORT = int(os.getenv("CONTROL_API_PORT", "8787"))
@@ -137,12 +147,10 @@ class Settings:
     # / REMOTE_EMERGENCY_TOKEN) and the TLS cert paths are read from
     # the environment in core/remote/gateway.py -- they are secrets /
     # operator artifacts and are not given defaults here.
-    REMOTE_GATEWAY_ENABLED = os.getenv(
-        "REMOTE_GATEWAY_ENABLED", "False"
-    ).lower() == "true"
+    REMOTE_GATEWAY_ENABLED = _env_bool("REMOTE_GATEWAY_ENABLED", False)
     REMOTE_GATEWAY_HOST = os.getenv("REMOTE_GATEWAY_HOST", "127.0.0.1")
     REMOTE_GATEWAY_PORT = int(os.getenv("REMOTE_GATEWAY_PORT", "9443"))
-    AUDIT_ENABLED = os.getenv("AUDIT_ENABLED", "False").lower() == "true"
+    AUDIT_ENABLED = _env_bool("AUDIT_ENABLED", False)
     AUDIT_PATH = os.getenv("AUDIT_PATH", str(BASE_DIR / "logs" / "remote_audit.jsonl"))
 
 

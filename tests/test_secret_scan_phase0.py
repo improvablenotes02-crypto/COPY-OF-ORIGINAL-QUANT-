@@ -258,3 +258,41 @@ class TestPhase0SecretScanner(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_all_supported_india_and_sandbox_credentials_are_scanned():
+    names = (
+        "DELTA_INDIA_API_KEY",
+        "DELTA_INDIA_API_SECRET",
+        "DELTA_INDIA_SANDBOX_API_KEY",
+        "DELTA_INDIA_SANDBOX_API_SECRET",
+        "DELTA_SANDBOX_API_KEY",
+        "DELTA_SANDBOX_API_SECRET",
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / ".env").write_text(
+            "\n".join(name + "=canary-value" for name in names),
+            encoding="utf-8",
+        )
+        findings = _SCANNER.scan_worktree(root)
+    assert len(findings) == len(names)
+    assert {item.line for item in findings} == set(range(1, len(names) + 1))
+    assert all(item.rule == "non_empty_known_secret" for item in findings)
+
+
+def test_interrupted_credential_temp_files_are_scanned():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / ".env.tmp-interrupted").write_text(
+            "DELTA_INDIA_SANDBOX_API_SECRET=temporary-canary\n",
+            encoding="utf-8",
+        )
+        (root / ".quantengine-env-old").write_text(
+            "DELTA_INDIA_API_KEY=old-temp-canary\n",
+            encoding="utf-8",
+        )
+        findings = _SCANNER.scan_worktree(root)
+    assert {item.path for item in findings} == {
+        ".env.tmp-interrupted", ".quantengine-env-old"
+    }

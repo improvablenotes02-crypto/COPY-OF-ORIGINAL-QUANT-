@@ -91,6 +91,16 @@ jobs:
         run: python -m pytest tests/test_postgres_session_revocation_phase447.py -q
       - name: Certify owner governance HTTP resource limits (Phase 443)
         run: python -m pytest tests/test_owner_governance_api_limits_phase443.py -q
+      - name: Certify security audit remediations (secret scanning, redaction, mode, endpoint)
+        run: >-
+          python -m pytest
+          tests/test_secret_scan_phase0.py
+          tests/test_api_error_redaction_phase93.py
+          tests/test_delta_rest_environment_phase91.py
+          tests/test_settings_strict_bool_phase480.py
+          -q
+      - name: Certify direct executor cannot bypass PAPER mode
+        run: python -m pytest tests/test_order_executor_phase277.py -k direct_execute_respects_configured_paper_mode_and_never_writes -q
       - name: Run focused runtime and tenant regression gate
         run: >-
           python -m pytest

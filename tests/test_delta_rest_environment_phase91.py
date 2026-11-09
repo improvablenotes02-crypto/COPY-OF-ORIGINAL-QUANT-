@@ -98,6 +98,9 @@ def test_acquire_rejects_missing_and_ambiguous_symbol(monkeypatch):
 
 def test_history_and_products_accept_explicit_transport(monkeypatch):
     """Injected transports select the environment; defaults are unchanged."""
+    from config.settings import settings
+    monkeypatch.setattr(settings, "DELTA_ENVIRONMENT", "PRODUCTION")
+    monkeypatch.setattr(settings, "DELTA_REGION", "GLOBAL")
     import httpx
     from core.exchanges.delta.delta_history import DeltaHistory
     from core.exchanges.delta.delta_products import DeltaProducts
@@ -162,3 +165,10 @@ def test_historical_loader_fetch_uses_configured_host():
     assert seen["url"] == ("https://cdn-ind.testnet.deltaex.org"
                            "/v2/history/candles")
     assert seen["params"]["symbol"] == "BTCUSD"
+
+
+def test_delta_rest_rejects_unapproved_authenticated_origin():
+    import pytest
+    from core.exchanges.delta.delta_environments import EnvironmentError
+    with pytest.raises(EnvironmentError, match="not an approved"):
+        DeltaREST(base_url="https://attacker.example")
