@@ -58,7 +58,7 @@ If verification fails:
 
 ## Flattrade token provisioning
 
-Run `python scripts/configure_flattrade_credentials.py` to complete the local Flattrade login/token exchange and store your own credentials in the ignored `.env`. Register the exact loopback redirect URL printed by the script in your Flattrade API application. The session token expires daily at 5:00 AM IST and must be renewed by rerunning the setup. This is authentication provisioning only; QuantEngine's Flattrade market-data adapter is not yet implemented. See [Flattrade local token setup](phase480-flattrade-local-token-setup.md).
+Run `python scripts/configure_flattrade_credentials.py` to complete the local Flattrade login/token exchange and store your own credentials in the ignored `.env`. Register the exact loopback redirect URL printed by the script (default `http://127.0.0.1:8080/`) in your Flattrade API application. The session token expires daily at 5:00 AM IST and must be renewed by rerunning the setup. This is authentication provisioning only; QuantEngine's Flattrade market-data adapter is not yet implemented. See [Flattrade local token setup](phase480-flattrade-local-token-setup.md).
 
 ## Current support boundary
 
