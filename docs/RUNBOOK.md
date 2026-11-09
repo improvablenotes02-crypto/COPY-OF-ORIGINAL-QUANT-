@@ -195,9 +195,12 @@ For ISO-8601 timestamps with an explicit UTC offset, `source_timezone`
 can be omitted. Numeric timestamps require an explicit `timestamp_unit`
 (`seconds`, `milliseconds`, `microseconds`, or `nanoseconds`). Duplicate
 timestamps, symbol mismatches, invalid OHLCV, and ambiguous local times are
-rejected. Missing intervals are reported in `dataset.gaps`; they are never
-interpolated or fabricated. The hash covers normalized rows in chronological
-order. Treat this as validated input, not proof of complete source history.
+rejected. Time-spacing gaps are reported in `dataset.gaps`; no bars are interpolated
+or fabricated. These are wall-clock spacing observations, not proof of missing
+trading bars: overnight closures, exchange holidays, and session breaks can
+also appear because no venue calendar is applied. The hash covers normalized
+rows in chronological order. Treat this as validated input, not proof of
+complete source history.
 
 For the project's scoped-backtest gate, supply `venue`, `region`,
 `environment`, `instrument`, and an explicit `source_timestamp`. The
@@ -207,7 +210,65 @@ result includes a `scope_provenance` record. Its default completeness is
 independently confirmed the source export covers the intended period; this
 is an operator attestation, not something CSV parsing can prove.
 
-### 2.5 Control API
+### 2.5 European options analytics (research only)
+
+The research options module provides Black-Scholes European call/put values,
+delta, gamma, vega, theta, rho, and a bounded implied-volatility solver.
+Values are per underlying unit; the module does not apply exchange lot sizes,
+contract multipliers, transaction costs, margin, early exercise, or discrete
+dividend schedules. Use verified option contract metadata and market quotes;
+this model is not an execution or profitability signal.
+
+```python
+from core.options import calculate_option_valuation, implied_volatility
+
+value = calculate_option_valuation(
+    spot=22500, strike=22600, time_to_expiry_years=0.18,
+    volatility=0.34, option_right="call",
+    risk_free_rate=0.065,
+)
+iv = implied_volatility(
+    market_price=value.fair_value, spot=22500, strike=22600,
+    time_to_expiry_years=0.18, option_right="call",
+    risk_free_rate=0.065,
+)
+```
+
+Theta is returned per year and per ACT/365 day. Vega and rho are derivatives
+per 1.0 absolute change in volatility and rate. Expiry valuation returns
+intrinsic value and boundary delta, with other Greeks zero.
+
+Scale a per-unit valuation into a signed position using the verified option
+lot size and contract multiplier:
+
+```python
+from core.options import scale_option_position
+
+exposure = scale_option_position(
+    value, spot=22500, signed_contracts=2, lot_size=25,
+    contract_multiplier=1,
+)
+print(exposure.delta_notional, exposure.vega_per_volatility_point)
+```
+
+Negative contract counts represent short positions. The result reports model
+premium value and signed Greeks; it is not a margin, liquidation, or maximum-loss
+calculation.
+
+The canonical instrument registry retains option `lot_size` and
+`contract_multiplier`. Option contract metadata is considered complete only
+when the underlying, call/put right, strike, expiry timestamp, lot size, and
+multiplier are all valid. This does not make options eligible for the existing
+spot/perpetual strategy engine. A deterministic single-position scenario
+repricer is also available through `evaluate_option_scenario`; it reprices
+under spot, volatility, and elapsed-time shocks and scales model P&L by signed
+contracts, lot size, and multiplier. It is not a portfolio margin or
+liquidation simulation. The provider-neutral `build_option_chain` helper
+pairs call/put contracts by strike and expiry, enforces consistent lot sizing
+and quote source, rejects stale quotes, and preserves missing quotes/legs as
+missing rather than fabricating them.
+
+### 2.6 Control API
 
 The Control & Monitoring API binds to **127.0.0.1 only** and is **OFF
 by default**. It fails **closed**: if enabled without a token, it refuses
@@ -223,7 +284,7 @@ to start at all.
 
 The API is read-only except the four allowlisted PAPER lifecycle verbs.
 
-### 2.5 Desktop client
+### 2.7 Desktop client
 
 The client reads its own env variables (not the server's).
 

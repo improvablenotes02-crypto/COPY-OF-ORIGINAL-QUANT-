@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -129,6 +130,9 @@ def _choice(prompt: str, allowed: tuple[str, ...]) -> str:
 
 
 def main() -> int:
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        print("Refusing credential input without an interactive terminal.")
+        return 2
     print("QuantEngine personal Delta credential setup")
     print("Choose the exact venue and environment for your own API key.")
     print("Secret input is hidden. Values are written only to the ignored local .env.")

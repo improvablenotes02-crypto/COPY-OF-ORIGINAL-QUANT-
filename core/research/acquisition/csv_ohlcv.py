@@ -31,7 +31,8 @@ class CSVHistoricalDataError(ValueError):
 class CSVGap:
     previous_timestamp: int
     next_timestamp: int
-    missing_intervals: int
+    elapsed_seconds: int
+    expected_interval_seconds: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,7 +230,11 @@ def load_ohlcv_csv(
                 )
                 symbol_column = columns.get("symbol")
                 row_symbol = row.get(symbol_column) if symbol_column else symbol
-                if row_symbol is not None and str(row_symbol).strip() and str(row_symbol).strip() != symbol:
+                if symbol_column and (
+                    not isinstance(row_symbol, str) or not row_symbol.strip()
+                ):
+                    raise CSVHistoricalDataError("row %d symbol is empty" % row_number)
+                if row_symbol is not None and str(row_symbol).strip() != symbol:
                     raise CSVHistoricalDataError("row %d symbol does not match requested symbol" % row_number)
                 values = {
                     name: _decimal(name, row.get(columns[name]), allow_zero=(name == "volume"))
@@ -285,8 +290,8 @@ def load_ohlcv_csv(
     gaps = []
     for previous, current in zip(rows, rows[1:]):
         difference = current[0] - previous[0]
-        if difference > interval and difference % interval == 0:
-            gaps.append(CSVGap(previous[0], current[0], difference // interval - 1))
+        if difference > interval:
+            gaps.append(CSVGap(previous[0], current[0], difference, interval))
 
     scope_fields = (venue, region, environment, instrument)
     if any(value is not None for value in scope_fields) and not all(

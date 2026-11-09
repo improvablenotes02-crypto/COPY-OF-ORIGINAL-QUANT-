@@ -117,7 +117,8 @@ def test_gaps_are_reported_but_never_filled(tmp_path):
     )
     assert dataset.row_count == 2
     assert len(dataset.gaps) == 1
-    assert dataset.gaps[0].missing_intervals == 2
+    assert dataset.gaps[0].elapsed_seconds == 180
+    assert dataset.gaps[0].expected_interval_seconds == 60
 
 
 def test_import_enforces_row_limit_and_rejects_empty_file(tmp_path):
@@ -133,6 +134,7 @@ def test_import_enforces_row_limit_and_rejects_empty_file(tmp_path):
     with pytest.raises(CSVHistoricalDataError, match="no OHLCV rows"):
         load_ohlcv_csv(empty, symbol="NIFTY", source="test")
 
+
 def test_scope_provenance_defaults_unknown_and_cannot_enter_backtest(tmp_path):
     from core.research.acquisition.scope_provenance import (
         ScopeProvenanceError, validate_backtest_inputs,
@@ -140,8 +142,8 @@ def test_scope_provenance_defaults_unknown_and_cannot_enter_backtest(tmp_path):
 
     path = _write(
         tmp_path,
-        "timestamp,open,high,low,close,volume\\n"
-        "2026-11-09T03:45:00Z,100,101,99,100,1\\n",
+        "timestamp,open,high,low,close,volume\n"
+        "2026-11-09T03:45:00Z,100,101,99,100,1\n",
     )
     dataset = load_ohlcv_csv(
         path, symbol="NIFTY", source="broker-export",
@@ -159,8 +161,8 @@ def test_explicitly_complete_csv_scope_is_compatible_with_backtest_gate(tmp_path
 
     path = _write(
         tmp_path,
-        "timestamp,open,high,low,close,volume\\n"
-        "2026-11-09T03:45:00Z,100,101,99,100,1\\n",
+        "timestamp,open,high,low,close,volume\n"
+        "2026-11-09T03:45:00Z,100,101,99,100,1\n",
     )
     dataset = load_ohlcv_csv(
         path, symbol="NIFTY", source="broker-export",
@@ -176,8 +178,8 @@ def test_explicitly_complete_csv_scope_is_compatible_with_backtest_gate(tmp_path
 def test_scope_metadata_must_be_complete_and_explicit(tmp_path):
     path = _write(
         tmp_path,
-        "timestamp,open,high,low,close,volume\\n"
-        "2026-11-09T03:45:00Z,100,101,99,100,1\\n",
+        "timestamp,open,high,low,close,volume\n"
+        "2026-11-09T03:45:00Z,100,101,99,100,1\n",
     )
     with pytest.raises(CSVHistoricalDataError, match="supplied together"):
         load_ohlcv_csv(
@@ -191,3 +193,29 @@ def test_scope_metadata_must_be_complete_and_explicit(tmp_path):
             instrument="INDEX", source_timestamp="2026-11-09T04:00:00Z",
             completeness="COMPLETE", pagination_exhausted=False,
         )
+
+
+def test_symbol_column_cannot_be_blank(tmp_path):
+    path = _write(
+        tmp_path,
+        "timestamp,open,high,low,close,volume,symbol\n"
+        "2026-11-09T03:45:00Z,100,101,99,100,1,\n",
+    )
+    with pytest.raises(CSVHistoricalDataError, match="symbol is empty"):
+        load_ohlcv_csv(path, symbol="NIFTY", source="test")
+
+
+def test_non_aligned_spacing_is_reported_without_inventing_missing_bars(tmp_path):
+    path = _write(
+        tmp_path,
+        "timestamp,open,high,low,close,volume\n"
+        "2026-11-09T03:45:00Z,100,101,99,100,1\n"
+        "2026-11-09T03:46:30Z,100,101,99,100,1\n",
+    )
+    dataset = load_ohlcv_csv(
+        path, symbol="NIFTY", source="test", timeframe="1m",
+    )
+    assert len(dataset.gaps) == 1
+    assert dataset.gaps[0].elapsed_seconds == 90
+    assert dataset.gaps[0].expected_interval_seconds == 60
+
