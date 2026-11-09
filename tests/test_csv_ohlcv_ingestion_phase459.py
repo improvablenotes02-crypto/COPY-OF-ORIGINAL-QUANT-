@@ -60,7 +60,7 @@ def test_numeric_timestamps_require_explicit_unit(tmp_path):
         tmp_path,
         "time,o,h,l,c,v\n1772941500,100,101,99,100,1\n",
     )
-    with pytest.raises(CSVHistoricalDataError, match="explicit unit"):
+    with pytest.raises(CSVHistoricalDataError, match="timestamp_unit"):
         load_ohlcv_csv(path, symbol="EURUSD", source="vendor")
     result = load_ohlcv_csv(
         path, symbol="EURUSD", source="vendor", timestamp_unit="seconds",

@@ -218,7 +218,8 @@ def load_ohlcv_csv(
                     source_timezone=source_timezone,
                     timestamp_unit=timestamp_unit,
                 )
-                row_symbol = row.get(columns["symbol"], symbol)
+                symbol_column = columns.get("symbol")
+                row_symbol = row.get(symbol_column) if symbol_column else symbol
                 if row_symbol is not None and str(row_symbol).strip() and str(row_symbol).strip() != symbol:
                     raise CSVHistoricalDataError("row %d symbol does not match requested symbol" % row_number)
                 values = {
