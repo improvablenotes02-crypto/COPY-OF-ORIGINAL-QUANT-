@@ -238,6 +238,23 @@ Theta is returned per year and per ACT/365 day. Vega and rho are derivatives
 per 1.0 absolute change in volatility and rate. Expiry valuation returns
 intrinsic value and boundary delta, with other Greeks zero.
 
+Scale a per-unit valuation into a signed position using the verified option
+lot size and contract multiplier:
+
+```python
+from core.options import scale_option_position
+
+exposure = scale_option_position(
+    value, spot=22500, signed_contracts=2, lot_size=25,
+    contract_multiplier=1,
+)
+print(exposure.delta_notional, exposure.vega_per_volatility_point)
+```
+
+Negative contract counts represent short positions. The result reports model
+premium value and signed Greeks; it is not a margin, liquidation, or maximum-loss
+calculation.
+
 ### 2.6 Control API
 
 The Control & Monitoring API binds to **127.0.0.1 only** and is **OFF
