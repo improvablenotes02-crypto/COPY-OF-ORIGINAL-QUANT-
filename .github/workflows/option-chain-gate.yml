@@ -25,8 +25,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install pinned dependencies
-        run: python -m pip install -r requirements.txt
+      - name: Install pinned test runner only
+        run: python -m pip install pytest==9.0.3
       - name: Verify strict source manifest
         run: python scripts/generate_manifest.py --root . --verify --strict
       - name: Certify option-chain identity, exchange scope, and quote freshness
