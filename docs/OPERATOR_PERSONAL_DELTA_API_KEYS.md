@@ -56,7 +56,7 @@ If verification fails:
 - Check the matching secret and local system clock.
 - Re-enter credentials locally rather than sending them in a message.
 
-## Read-only connectivity check\n\nRun `python scripts/check_delta_connection.py` after the identity check. It verifies the authenticated identity and public product catalog using the selected region/environment client. It does not read balances, positions or orders, and does not send exchange writes. The result is connectivity evidence only, not a trading-readiness certification.\n\n## Secret storage and Git
+## One-command operator check\n\nFor the normal workflow, run `python scripts/quantengine_doctor.py`. It first performs the offline configuration preflight and stops without network access if the selected key pair is unavailable or any live execution flag is present. If preflight passes, it performs the read-only authenticated identity and public catalog check. It does not access balances, positions or orders and never sends exchange writes.\n\n## Read-only connectivity check\n\nRun `python scripts/check_delta_connection.py` after the identity check. It verifies the authenticated identity and public product catalog using the selected region/environment client. It does not read balances, positions or orders, and does not send exchange writes. The result is connectivity evidence only, not a trading-readiness certification.\n\n## Secret storage and Git
 
 The root `.env` file is ignored by Git. Keep it on the trusted machine where QuantEngine runs. Do not remove the ignore rule or commit it. If a key is accidentally exposed or committed, revoke it at the exchange and create a replacement.
 
