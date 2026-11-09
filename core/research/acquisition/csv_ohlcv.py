@@ -20,6 +20,7 @@ from typing import Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from core.history.candle import Candle
+from core.research.acquisition.scope_provenance import DatasetScopeProvenance
 
 
 class CSVHistoricalDataError(ValueError):
@@ -43,6 +44,7 @@ class CSVHistoricalDataset:
     actual_start: int
     actual_end: int
     gaps: tuple[CSVGap, ...]
+    scope_provenance: DatasetScopeProvenance | None = None
 
     @property
     def row_count(self) -> int:
@@ -178,6 +180,13 @@ def load_ohlcv_csv(
     timestamp_column: str | None = None,
     expected_interval_seconds: int | None = None,
     max_rows: int = 1_000_000,
+    venue: str | None = None,
+    region: str | None = None,
+    environment: str | None = None,
+    instrument: str | None = None,
+    source_timestamp: str | None = None,
+    completeness: str = "UNKNOWN",
+    pagination_exhausted: bool = False,
 ) -> CSVHistoricalDataset:
     """Load a bounded CSV, sort chronologically, validate, hash, and report gaps.
 
@@ -278,6 +287,47 @@ def load_ohlcv_csv(
         difference = current[0] - previous[0]
         if difference > interval and difference % interval == 0:
             gaps.append(CSVGap(previous[0], current[0], difference // interval - 1))
+
+    scope_fields = (venue, region, environment, instrument)
+    if any(value is not None for value in scope_fields) and not all(
+        isinstance(value, str) and value.strip() for value in scope_fields
+    ):
+        raise CSVHistoricalDataError(
+            "venue, region, environment, and instrument must be supplied together"
+        )
+    scope = None
+    if all(value is not None for value in scope_fields):
+        if not isinstance(source_timestamp, str) or not source_timestamp.strip():
+            raise CSVHistoricalDataError(
+                "source_timestamp is required when dataset scope is supplied"
+            )
+        try:
+            scope = DatasetScopeProvenance(
+                venue=venue,
+                region=region,
+                environment=environment,
+                instrument=instrument,
+                symbol=symbol,
+                timeframe=timeframe,
+                data_class="PUBLIC_MARKET",
+                source=source,
+                source_timestamp=source_timestamp,
+                schema_version="1",
+                normalization_version="1",
+                dataset_hash=digest,
+                row_count=len(bars),
+                completeness=completeness,
+                pagination_exhausted=pagination_exhausted,
+            )
+        except ValueError as error:
+            raise CSVHistoricalDataError(
+                "invalid dataset scope provenance: %s" % str(error)
+            ) from None
+    elif completeness != "UNKNOWN" or pagination_exhausted or source_timestamp is not None:
+        raise CSVHistoricalDataError(
+            "completeness metadata requires complete venue scope metadata"
+        )
+
     return CSVHistoricalDataset(
         symbol=symbol,
         source=source,
@@ -287,4 +337,5 @@ def load_ohlcv_csv(
         actual_start=bars[0].timestamp,
         actual_end=bars[-1].timestamp,
         gaps=tuple(gaps),
+        scope_provenance=scope,
     )

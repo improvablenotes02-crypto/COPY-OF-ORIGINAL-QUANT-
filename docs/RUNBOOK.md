@@ -199,6 +199,14 @@ rejected. Missing intervals are reported in `dataset.gaps`; they are never
 interpolated or fabricated. The hash covers normalized rows in chronological
 order. Treat this as validated input, not proof of complete source history.
 
+For the project's scoped-backtest gate, supply `venue`, `region`,
+`environment`, `instrument`, and an explicit `source_timestamp`. The
+result includes a `scope_provenance` record. Its default completeness is
+`UNKNOWN`, which the backtest gate rejects. Only set
+`completeness="COMPLETE"` and `pagination_exhausted=True` when you have
+independently confirmed the source export covers the intended period; this
+is an operator attestation, not something CSV parsing can prove.
+
 ### 2.5 Control API
 
 The Control & Monitoring API binds to **127.0.0.1 only** and is **OFF

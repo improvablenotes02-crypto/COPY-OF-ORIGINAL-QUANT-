@@ -132,3 +132,62 @@ def test_import_enforces_row_limit_and_rejects_empty_file(tmp_path):
     empty = _write(tmp_path, "timestamp,open,high,low,close,volume\n")
     with pytest.raises(CSVHistoricalDataError, match="no OHLCV rows"):
         load_ohlcv_csv(empty, symbol="NIFTY", source="test")
+
+def test_scope_provenance_defaults_unknown_and_cannot_enter_backtest(tmp_path):
+    from core.research.acquisition.scope_provenance import (
+        ScopeProvenanceError, validate_backtest_inputs,
+    )
+
+    path = _write(
+        tmp_path,
+        "timestamp,open,high,low,close,volume\\n"
+        "2026-11-09T03:45:00Z,100,101,99,100,1\\n",
+    )
+    dataset = load_ohlcv_csv(
+        path, symbol="NIFTY", source="broker-export",
+        venue="NSE", region="INDIA", environment="PRODUCTION",
+        instrument="INDEX",
+        source_timestamp="2026-11-09T04:00:00Z",
+    )
+    assert dataset.scope_provenance.completeness == "UNKNOWN"
+    with pytest.raises(ScopeProvenanceError, match="non-complete"):
+        validate_backtest_inputs((dataset.scope_provenance,))
+
+
+def test_explicitly_complete_csv_scope_is_compatible_with_backtest_gate(tmp_path):
+    from core.research.acquisition.scope_provenance import validate_backtest_inputs
+
+    path = _write(
+        tmp_path,
+        "timestamp,open,high,low,close,volume\\n"
+        "2026-11-09T03:45:00Z,100,101,99,100,1\\n",
+    )
+    dataset = load_ohlcv_csv(
+        path, symbol="NIFTY", source="broker-export",
+        venue="NSE", region="INDIA", environment="PRODUCTION",
+        instrument="INDEX", source_timestamp="2026-11-09T04:00:00Z",
+        completeness="COMPLETE", pagination_exhausted=True,
+    )
+    validated = validate_backtest_inputs((dataset.scope_provenance,))
+    assert validated == (dataset.scope_provenance,)
+    assert dataset.scope_provenance.dataset_hash == dataset.dataset_hash
+
+
+def test_scope_metadata_must_be_complete_and_explicit(tmp_path):
+    path = _write(
+        tmp_path,
+        "timestamp,open,high,low,close,volume\\n"
+        "2026-11-09T03:45:00Z,100,101,99,100,1\\n",
+    )
+    with pytest.raises(CSVHistoricalDataError, match="supplied together"):
+        load_ohlcv_csv(
+            path, symbol="NIFTY", source="broker-export",
+            venue="NSE", region="INDIA",
+        )
+    with pytest.raises(CSVHistoricalDataError, match="pagination"):
+        load_ohlcv_csv(
+            path, symbol="NIFTY", source="broker-export",
+            venue="NSE", region="INDIA", environment="PRODUCTION",
+            instrument="INDEX", source_timestamp="2026-11-09T04:00:00Z",
+            completeness="COMPLETE", pagination_exhausted=False,
+        )
