@@ -98,7 +98,7 @@ def configure_credentials(
     content = "\n".join(preserved) + "\n"
 
     descriptor, temporary_name = tempfile.mkstemp(
-        prefix=".quantengine-env-", dir=str(path.parent)
+        prefix=".env.tmp-", dir=str(path.parent)
     )
     temporary = Path(temporary_name)
     try:
