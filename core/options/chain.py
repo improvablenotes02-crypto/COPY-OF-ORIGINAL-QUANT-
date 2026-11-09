@@ -47,6 +47,9 @@ class OptionChain:
     lot_size: int
     contract_multiplier: float
     as_of: datetime
+    quote_timestamp_start: datetime | None
+    quote_timestamp_end: datetime | None
+    quote_skew_seconds: float | None
     source: str
     entries: tuple[OptionChainEntry, ...]
 
@@ -193,5 +196,9 @@ def build_option_chain(instruments: Sequence[Instrument], quotes: Mapping[str, N
     entries = tuple(OptionChainEntry(strike=strike, call=legs.get("call"), put=legs.get("put"))
                     for strike, legs in sorted(grouped.items()))
     return OptionChain(underlying=underlying, exchange=common_exchange, expiry_time=expiry_time, lot_size=common_lot,
-                       contract_multiplier=common_multiplier, as_of=current, source=next(iter(sources)) if sources else "",
+                       contract_multiplier=common_multiplier, as_of=current,
+                       quote_timestamp_start=quote_timestamp_start,
+                       quote_timestamp_end=quote_timestamp_end,
+                       quote_skew_seconds=quote_skew_seconds,
+                       source=next(iter(sources)) if sources else "",
                        entries=entries)
