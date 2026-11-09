@@ -207,7 +207,7 @@ class DeltaOrderExecutor:
         if safety is None:
 
             gate_inputs = LiveSafetyGate.from_settings(
-                mode="LIVE",
+                mode=None,
                 api_key=getattr(
                     self.exchange, "api_key", None
                 ),
