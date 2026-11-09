@@ -8,13 +8,13 @@ certify continuity across market sessions.
 from __future__ import annotations
 
 from datetime import datetime
+from datetime import timedelta
 from datetime import timezone
-from zoneinfo import ZoneInfo
 
 from core.exchanges.market_data_validation import NormalizedBar
 
 
-INDIA_TZ = ZoneInfo("Asia/Kolkata")
+INDIA_TZ = timezone(timedelta(hours=5, minutes=30), name="IST")
 SOURCE = "FLATTRADE_TPSERIES"
 TIME_FORMATS = ("%d-%m-%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S")
 
