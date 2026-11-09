@@ -128,3 +128,26 @@ class TestExecutorPostAcknowledgementJournalFailurePhase277(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_direct_execute_respects_configured_paper_mode_and_never_writes(monkeypatch):
+    from config.settings import settings
+    from core.execution.live_safety_gate import LiveBlockedError
+
+    monkeypatch.setattr(settings, "PAPER_MODE", True)
+    monkeypatch.setattr(settings, "LIVE_MODE", False)
+    monkeypatch.setattr(settings, "EXECUTION_MODE", "")
+    monkeypatch.setattr(settings, "ALLOW_LIVE", True)
+    monkeypatch.setattr(settings, "LIVE_EXECUTE", True)
+
+    registry = ContractRegistry()
+    registry.add(_contract())
+    exchange = _AcceptedFakeExchange()
+    exchange.api_key = "offline-key"
+    exchange.api_secret = "offline-secret"
+    executor = DeltaOrderExecutor(exchange=exchange, registry=registry)
+
+    with unittest.TestCase().assertRaises(LiveBlockedError):
+        executor.execute(_intent())
+
+    assert exchange.placed == []
