@@ -159,3 +159,48 @@ class TestStagedScanCoversRemovedWorktreeCopies(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHistoricalEnvVariantCoverage(unittest.TestCase):
+    def test_history_scans_nested_backup_and_interrupted_temp_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "t@t.invalid"],
+                           cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "t"],
+                           cwd=root, check=True)
+            (root / "README.txt").write_text("clean\\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "baseline"],
+                           cwd=root, check=True)
+
+            nested = root / "ops" / ".env.backup"
+            nested.parent.mkdir()
+            nested.write_text(
+                "DELTA_INDIA_SANDBOX_API_SECRET=history-canary-one\\n",
+                encoding="utf-8")
+            subprocess.run(["git", "add", str(nested)], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "nested env backup"],
+                           cwd=root, check=True)
+            first = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+                capture_output=True, text=True).stdout.strip()
+
+            interrupted = root / ".quantengine-env-interrupted"
+            interrupted.write_text(
+                "DELTA_SANDBOX_API_KEY=history-canary-two\\n",
+                encoding="utf-8")
+            subprocess.run(["git", "add", interrupted.name],
+                           cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "interrupted env write"],
+                           cwd=root, check=True)
+            second = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+                capture_output=True, text=True).stdout.strip()
+
+            unsafe = _SCANNER.scan_env_history(root)
+
+        self.assertEqual(set(unsafe), {first, second})
+        self.assertNotIn("history-canary-one", repr(unsafe))
+        self.assertNotIn("history-canary-two", repr(unsafe))
