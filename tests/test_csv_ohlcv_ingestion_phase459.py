@@ -72,7 +72,7 @@ def test_numeric_timestamps_require_explicit_unit(tmp_path):
     "rows, message",
     [
         ("2026-11-09T03:45:00Z,100,99,98,100,1", "inconsistent high"),
-        ("2026-11-09T03:45:00Z,100,101,102,100,1", "inconsistent low"),
+        ("2026-11-09T03:45:00Z,100,103,102,103,1", "inconsistent low"),
         ("2026-11-09T03:45:00Z,100,101,99,100,-1", "volume must be finite and non-negative"),
         ("2026-11-09T03:45:00Z,100,101,99,0,1", "close must be finite and positive"),
     ],
