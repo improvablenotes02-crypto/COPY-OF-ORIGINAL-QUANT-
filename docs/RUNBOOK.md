@@ -254,7 +254,7 @@ to start at all.
 
 The API is read-only except the four allowlisted PAPER lifecycle verbs.
 
-### 2.5 Desktop client
+### 2.7 Desktop client
 
 The client reads its own env variables (not the server's).
 
