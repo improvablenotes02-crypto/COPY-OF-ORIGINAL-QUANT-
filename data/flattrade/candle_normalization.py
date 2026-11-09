@@ -44,7 +44,7 @@ def normalize_tpseries_rows(
     """Convert documented TPSeries OHLCV fields into UTC NormalizedBar rows."""
     if not isinstance(symbol, str) or not symbol.strip():
         raise FlattradeCandleNormalizationError("canonical symbol is required")
-    if isinstance(interval_minutes, bool) or interval_minutes not in (1, 3, 5, 10, 15, 30, 60, 120):
+    if isinstance(interval_minutes, bool) or not isinstance(interval_minutes, int) or interval_minutes not in (1, 3, 5, 10, 15, 30, 60, 120):
         raise FlattradeCandleNormalizationError("unsupported candle interval")
     if not isinstance(rows, (list, tuple)):
         raise FlattradeCandleNormalizationError("candle rows must be a sequence")
