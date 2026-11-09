@@ -30,7 +30,12 @@ def run_doctor(*, preflight=inspect_configuration, connection_check=check_connec
     emit("Offline configuration preflight: PASS")
     emit("Selected venue: {}/{}".format(report["region"], report["environment"]))
     emit("Live execution flags: DISARMED")
-    return connection_check(emit=emit)
+    result = connection_check(emit=emit)
+    if result == 0:
+        emit("Capability boundary: Delta identity and public catalog connectivity only.")
+        emit("Strategy candle feed: NOT CERTIFIED (remains fail-closed pending venue evidence).")
+        emit("NSE/BSE/Forex broker adapter: NOT IMPLEMENTED.")
+    return result
 
 
 def main() -> int:
