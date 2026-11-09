@@ -255,6 +255,12 @@ Negative contract counts represent short positions. The result reports model
 premium value and signed Greeks; it is not a margin, liquidation, or maximum-loss
 calculation.
 
+The canonical instrument registry retains option `lot_size` and
+`contract_multiplier`. Option contract metadata is considered complete only
+when the underlying, call/put right, strike, expiry timestamp, lot size, and
+multiplier are all valid. This does not make options eligible for the existing
+spot/perpetual strategy engine.
+
 ### 2.6 Control API
 
 The Control & Monitoring API binds to **127.0.0.1 only** and is **OFF
