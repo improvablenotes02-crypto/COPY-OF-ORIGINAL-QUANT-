@@ -8,7 +8,7 @@ QuantEngine is a multi-market research and trading-engine project. Its current p
    `python scripts/configure_delta_credentials.py`
 2. Select the exact region (`INDIA` or `GLOBAL`) and environment (`SANDBOX` or `PRODUCTION`).
 3. Confirm the update, then enter your API key and secret at the hidden prompts.
-4. Verify the selected key with:
+4. Run the offline configuration check: `python scripts/quantengine_preflight.py`\n5. Verify the selected key with:
    `python scripts/check_delta_credentials.py`
 
 The setup writes to the ignored local `.env`; it does not print secrets or enable live execution. See [Personal Delta API key setup](docs/OPERATOR_PERSONAL_DELTA_API_KEYS.md).
