@@ -21,6 +21,11 @@ A local-only Flattrade token provisioning utility is available:
 
 Register the exact loopback redirect URL shown by the utility in your Flattrade app and ensure the token exchange runs from the API key's registered private static IP. This provisions your personal Flattrade credentials and short-lived session token in the ignored local `.env`. **It does not yet connect Flattrade market data or enable NSE/BSE/Forex trading.** See [Flattrade setup details](docs/phase480-flattrade-local-token-setup.md).
 
+After provisioning your token, you can verify the read-only Flattrade session with:
+`python scripts/check_flattrade_connection.py`
+
+The check only calls the user-details endpoint; it does not access balances, positions or orders.
+
 ## Safety status
 
 Paper/research workflows are separate from live execution. Live order writing remains disarmed by default. Passing a focused CI gate does not certify profitability or full production readiness.
