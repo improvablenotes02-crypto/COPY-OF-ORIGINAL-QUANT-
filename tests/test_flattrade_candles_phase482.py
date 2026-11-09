@@ -62,7 +62,7 @@ def test_tpseries_normalizer_rejects_duplicate_or_out_of_order_timestamps():
         normalize_tpseries_rows(rows, symbol="NFO:NIFTY", interval_minutes=1)
 
 
-@pytest.mark.parametrize("interval", [0, 2, 240, True])
+@pytest.mark.parametrize("interval", [0, 2, 240, True, 1.0])
 def test_tpseries_normalizer_rejects_unsupported_intervals(interval):
     with pytest.raises(FlattradeCandleNormalizationError):
         normalize_tpseries_rows(
