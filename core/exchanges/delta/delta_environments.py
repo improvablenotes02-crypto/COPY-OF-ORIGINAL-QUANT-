@@ -153,3 +153,18 @@ def india_sandbox_client() -> object:
 
 def india_production_client() -> object:
     return client_for(PRODUCTION, INDIA)
+
+
+def configured_public_rest() -> object:
+    """Create a public REST transport for the selected Delta venue.
+
+    Public endpoints do not need private credentials, but their host is
+    region/environment-specific. Missing or invalid selection fails closed.
+    """
+    from config.settings import settings
+    from core.exchanges.delta.delta_rest import DeltaREST
+
+    endpoint = resolve_rest_endpoint(
+        settings.DELTA_ENVIRONMENT, settings.DELTA_REGION
+    )
+    return DeltaREST(base_url=endpoint)

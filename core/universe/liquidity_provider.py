@@ -78,7 +78,14 @@ class DeltaLiquidityProvider:
     def __init__(self, transport=None, fetch=None):
         # `transport`: anything with .get(endpoint, params=None),
         # like DeltaREST or an offline mock.
-        self.rest = transport if transport is not None else DeltaREST()
+        if transport is not None:
+            self.rest = transport
+        elif fetch is not None:
+            # A fully injected fetch callback needs no network transport.
+            self.rest = None
+        else:
+            from core.exchanges.delta.delta_environments import configured_public_rest
+            self.rest = configured_public_rest()
         # `fetch`: optional override returning the raw tickers
         # payload dict ({"result": [...]}). Injected by tests to
         # script responses without a transport layer.

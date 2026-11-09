@@ -623,6 +623,30 @@ class TestManagerUniverseDiff(unittest.TestCase):
 
 class TestManagerFailureIsolation(unittest.TestCase):
 
+    def test_shared_transport_poll_runs_once_before_worker_timers(self):
+        manager, transport, clock = make_manager()
+        manager.sync([make_instrument("BTC"), make_instrument("ETH")])
+        calls = []
+        transport.poll = lambda: calls.append("poll")
+        manager.poll()
+        self.assertEqual(calls, ["poll"])
+        self.assertEqual(manager.status("BTC").status, SubscriptionStatus.LIVE)
+        self.assertEqual(manager.status("ETH").status, SubscriptionStatus.LIVE)
+
+    def test_shared_transport_poll_failure_reconnects_all_active_workers(self):
+        manager, transport, clock = make_manager()
+        manager.sync([make_instrument("BTC"), make_instrument("ETH")])
+
+        def fail_poll():
+            raise OSError("transport payload and endpoint details must not be retained")
+
+        transport.poll = fail_poll
+        manager.poll()
+        self.assertEqual(manager.status("BTC").status, SubscriptionStatus.RECONNECTING)
+        self.assertEqual(manager.status("ETH").status, SubscriptionStatus.RECONNECTING)
+        self.assertIn(("transport", "poll", "OSError"), manager.errors)
+
+
     def test_a_and_c_continue_while_b_reconnects(self):
         """BTC and SOL keep delivering while ETH is disconnected and
         then restores independently."""

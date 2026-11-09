@@ -97,7 +97,19 @@ async def main():
         ),
     )
 
-    _gate_inputs = LiveSafetyGate.from_settings(mode=mode)
+    if mode == ExecutionMode.LIVE:
+        # Resolve the personal key pair from the explicitly selected
+        # Delta region/environment. Never fall through to Global keys.
+        from core.exchanges.delta.delta_environments import credentials_for
+
+        _api_key, _api_secret = credentials_for(
+            settings.DELTA_ENVIRONMENT, settings.DELTA_REGION
+        )
+        _gate_inputs = LiveSafetyGate.from_settings(
+            mode=mode, api_key=_api_key, api_secret=_api_secret
+        )
+    else:
+        _gate_inputs = LiveSafetyGate.from_settings(mode=mode)
 
     if mode == ExecutionMode.LIVE:
 
@@ -153,7 +165,9 @@ async def main():
             )
         )
         print("=" * 60)
-        print("Waiting for live candles...\n")
+        print("Strategy candle feed: FAIL-CLOSED (no production-wired verified feed)")
+        print("Ticker marks are reference-only; no strategy candles are synthesized.")
+        print("Waiting for a venue-verified traded-candle transport...\n")
 
         # Phase 9P-g: the PAPER entrypoint drives the engine through
         # an authoritative EngineLifecycle (which owns the poll loop)
@@ -175,13 +189,14 @@ async def main():
         from core.exchanges.delta.delta_contract_loader import (
             DeltaContractLoader,
         )
-        from core.exchanges.delta.delta_exchange import DeltaExchange
-
+        from core.exchanges.delta.delta_environments import configured_client
         from core.execution.order_executor import DeltaOrderExecutor
 
+        # Pin private requests and contract discovery to the same venue.
+        exchange = configured_client()
         executor = DeltaOrderExecutor(
-            exchange=DeltaExchange(),
-            registry=DeltaContractLoader().load(),
+            exchange=exchange,
+            registry=DeltaContractLoader().load(rest=exchange.rest),
         )
 
         # Stage 1-3 hardening: live trading is unverified without

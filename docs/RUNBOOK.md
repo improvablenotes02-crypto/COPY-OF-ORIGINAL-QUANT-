@@ -90,7 +90,60 @@ credentials, and an explicit symbol universe.
 | `PAPER_MODE` | `True`          | PAPER runtime (do not set false) |
 | `UNIVERSE` | `explicit`        | See 2.3                            |
 
-### 2.2 PAPER + Delta market data
+### 2.2 Delta venue and personal API credentials
+
+Select the exact Delta region and environment before using private
+clients or provider-backed data. You can configure your own key locally
+without sending it to ChatGPT or committing it:
+
+```powershell
+python scripts/configure_delta_credentials.py
+```
+
+Choose INDIA or GLOBAL, then SANDBOX or PRODUCTION. The key and secret
+prompts are hidden. The script updates only the selected Delta credential
+pair in the ignored repository-root `.env`, preserves unrelated settings,
+replaces stale Delta credential entries, and restricts file permissions
+where the operating system supports POSIX mode bits. It never enables live
+trading. Then verify the key:
+
+```powershell
+python scripts/check_delta_credentials.py
+```
+
+For manual setup, an India account can use:
+
+```dotenv
+DELTA_REGION=INDIA
+DELTA_ENVIRONMENT=SANDBOX
+DELTA_INDIA_SANDBOX_API_KEY=your-personal-key
+DELTA_INDIA_SANDBOX_API_SECRET=your-personal-secret
+```
+
+For India production use `DELTA_ENVIRONMENT=PRODUCTION` with
+`DELTA_INDIA_API_KEY` / `DELTA_INDIA_API_SECRET`. Global accounts use
+their matching Global pair. Never copy keys between regions or
+environments. Keep actual values only in the local `.env` file or
+secret store; never commit them or paste them into source files.
+
+Paper trading does not require private credentials; public market data
+is sufficient. Private account reads require the matching personal
+key pair. The selected region/environment now pins provider REST hosts,
+contract discovery and the LIVE client factory. Missing or unknown
+selection fails closed instead of silently using Global.
+
+Verify your own configured key pair before running the engine:
+
+```powershell
+python scripts/check_delta_credentials.py
+```
+
+This performs one signed account-identity read only. It does not read
+balances, place orders, or print your API key, secret, or account ID.
+A successful check confirms authentication for the selected region and
+environment; it does not enable live trading.
+
+### 2.3 PAPER + Delta market data
 
 Delta connectivity is **optional and best-effort**; the runtime still
 starts safely when Delta is unreachable (see Troubleshooting).
@@ -108,7 +161,53 @@ Data honesty: when `UNIVERSE=provider`, a symbol with missing / zero /
 unparseable liquidity or history is **DENIED**, never assumed eligible.
 An empty eligible universe is a valid state, not an error.
 
-### 2.3 Control API
+**Current strategy-feed limitation:** the canonical PAPER runtime still
+fails closed at the strategy-candle subscription seam. Legacy ticker marks
+are reference-only and are never converted into traded OHLCV. The verified
+Global socket transport is tested but not yet wired into the canonical
+PAPER engine; India capture classifications remain advisory-only. Therefore
+starting PAPER mode does not yet mean exchange candles are reaching strategy
+engines. Use verified historical datasets for research/backtests until the
+venue-specific live-candle integration is separately certified.
+
+### 2.4 Importing historical CSV data for research
+
+A venue-neutral CSV importer is available for historical OHLCV exports from
+NSE/Sensex, forex, crypto, or other data vendors. It validates and normalizes
+rows but does not fetch data or certify the vendor's completeness. Use the
+Python API:
+
+```python
+from core.research.acquisition.csv_ohlcv import load_ohlcv_csv
+
+dataset = load_ohlcv_csv(
+    "data/imports/NIFTY_1m.csv",
+    symbol="NIFTY",
+    source="your-broker-export",
+    timeframe="1m",
+    source_timezone="Asia/Kolkata",  # required for naive local timestamps
+)
+print(dataset.row_count, dataset.dataset_hash, len(dataset.gaps))
+bars = list(dataset.bars)
+```
+
+For ISO-8601 timestamps with an explicit UTC offset, `source_timezone`
+can be omitted. Numeric timestamps require an explicit `timestamp_unit`
+(`seconds`, `milliseconds`, `microseconds`, or `nanoseconds`). Duplicate
+timestamps, symbol mismatches, invalid OHLCV, and ambiguous local times are
+rejected. Missing intervals are reported in `dataset.gaps`; they are never
+interpolated or fabricated. The hash covers normalized rows in chronological
+order. Treat this as validated input, not proof of complete source history.
+
+For the project's scoped-backtest gate, supply `venue`, `region`,
+`environment`, `instrument`, and an explicit `source_timestamp`. The
+result includes a `scope_provenance` record. Its default completeness is
+`UNKNOWN`, which the backtest gate rejects. Only set
+`completeness="COMPLETE"` and `pagination_exhausted=True` when you have
+independently confirmed the source export covers the intended period; this
+is an operator attestation, not something CSV parsing can prove.
+
+### 2.5 Control API
 
 The Control & Monitoring API binds to **127.0.0.1 only** and is **OFF
 by default**. It fails **closed**: if enabled without a token, it refuses
@@ -124,7 +223,7 @@ to start at all.
 
 The API is read-only except the four allowlisted PAPER lifecycle verbs.
 
-### 2.4 Desktop client
+### 2.5 Desktop client
 
 The client reads its own env variables (not the server's).
 

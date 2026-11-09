@@ -137,3 +137,89 @@ def test_example_env_uses_exact_runtime_credential_names():
     assert "DELTA_INDIA_TESTNET_API_KEY" not in configured
     assert "DELTA_INDIA_TESTNET_API_SECRET" not in configured
 
+def test_configured_public_rest_uses_selected_region_and_environment():
+    from config import settings as settings_mod
+    with mock.patch.object(settings_mod.settings, "DELTA_REGION", "INDIA"), mock.patch.object(settings_mod.settings, "DELTA_ENVIRONMENT", "SANDBOX"):
+        rest = env.configured_public_rest()
+    try:
+        assert rest.base_url == "https://cdn-ind.testnet.deltaex.org"
+    finally:
+        rest.client.close()
+
+
+def test_default_liquidity_provider_uses_configured_public_rest():
+    from config import settings as settings_mod
+    from core.universe.liquidity_provider import DeltaLiquidityProvider
+    with mock.patch.object(settings_mod.settings, "DELTA_REGION", "INDIA"), mock.patch.object(settings_mod.settings, "DELTA_ENVIRONMENT", "PRODUCTION"):
+        provider = DeltaLiquidityProvider()
+    try:
+        assert provider.rest.base_url == "https://api.india.delta.exchange"
+    finally:
+        provider.rest.client.close()
+
+
+def test_default_history_provider_uses_configured_public_rest():
+    from config import settings as settings_mod
+    from core.universe.history_provider import DeltaHistoryProvider
+    with mock.patch.object(settings_mod.settings, "DELTA_REGION", "INDIA"), mock.patch.object(settings_mod.settings, "DELTA_ENVIRONMENT", "SANDBOX"):
+        provider = DeltaHistoryProvider()
+    try:
+        assert provider.history.rest.base_url == "https://cdn-ind.testnet.deltaex.org"
+    finally:
+        provider.history.rest.client.close()
+
+
+def test_region_scoped_personal_credentials_feed_live_gate_inputs():
+    from config import settings as settings_mod
+    from core.execution.live_safety_gate import ExecutionMode, LiveSafetyGate
+    with mock.patch.object(settings_mod.settings, "INDIA_API_KEY", "india-personal-key"), mock.patch.object(settings_mod.settings, "INDIA_API_SECRET", "india-personal-secret"):
+        key, secret = env.credentials_for("PRODUCTION", "INDIA")
+        inputs = LiveSafetyGate.from_settings(
+            mode=ExecutionMode.LIVE, api_key=key, api_secret=secret
+        )
+    assert inputs["api_key"] == "india-personal-key"
+    assert inputs["api_secret"] == "india-personal-secret"
+
+
+def test_delta_exchange_product_catalog_uses_its_pinned_rest_transport():
+    from core.exchanges.delta.delta_exchange import DeltaExchange
+
+    class RecordingRest:
+        authenticated = False
+        base_url = "https://cdn-ind.testnet.deltaex.org"
+
+        def __init__(self):
+            self.calls = []
+
+        def get(self, path, params=None):
+            self.calls.append((path, params))
+            return {"result": [{"symbol": "BTCUSD"}]}
+
+    rest = RecordingRest()
+    exchange = DeltaExchange(api_key="", api_secret="", rest=rest)
+    assert exchange.get_products() == {"result": [{"symbol": "BTCUSD"}]}
+    assert rest.calls == [("/v2/products", None)]
+
+def test_default_product_discovery_client_uses_configured_venue():
+    from config import settings as settings_mod
+    from data.delta.product_client import ProductClient
+    with mock.patch.object(settings_mod.settings, "DELTA_REGION", "INDIA"), mock.patch.object(settings_mod.settings, "DELTA_ENVIRONMENT", "PRODUCTION"):
+        client = ProductClient()
+    try:
+        assert client.rest.base_url == "https://api.india.delta.exchange"
+    finally:
+        client.rest.client.close()
+
+def test_default_delta_history_and_products_use_selected_venue():
+    from config import settings as settings_mod
+    from core.exchanges.delta.delta_history import DeltaHistory
+    from core.exchanges.delta.delta_products import DeltaProducts
+    with mock.patch.object(settings_mod.settings, "DELTA_REGION", "INDIA"), mock.patch.object(settings_mod.settings, "DELTA_ENVIRONMENT", "SANDBOX"):
+        history = DeltaHistory()
+        products = DeltaProducts()
+    try:
+        assert history.rest.base_url == "https://cdn-ind.testnet.deltaex.org"
+        assert products.rest.base_url == "https://cdn-ind.testnet.deltaex.org"
+    finally:
+        history.rest.client.close()
+        products.rest.client.close()

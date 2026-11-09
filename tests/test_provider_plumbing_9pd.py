@@ -27,6 +27,7 @@ Stdlib only.
 """
 
 import unittest
+from unittest import mock
 
 from config.settings import settings
 
@@ -309,22 +310,34 @@ def build_registry_with(*instruments):
 
 class TestProviderManagerAssembly(unittest.TestCase):
 
+    def _build_with_explicit_global_environment(self):
+        # Provider-backed construction must pin a real venue/environment.
+        with mock.patch.object(settings, "DELTA_ENVIRONMENT", "PRODUCTION"):
+            return build_provider_universe_manager()
+
+    def _close(self, liq, hist):
+        liq.rest.client.close()
+        hist.history.rest.client.close()
+
     def test_builds_canonical_manager_with_real_providers(self):
-        mgr, reg, liq, hist = build_provider_universe_manager()
-        self.assertIsInstance(mgr, UniverseManager)
-        self.assertIsInstance(liq, DeltaLiquidityProvider)
-        self.assertIsInstance(hist, DeltaHistoryProvider)
-        self.assertIs(liq, mgr.liquidity_provider)
-        self.assertIs(hist, mgr.history_provider)
+        mgr, reg, liq, hist = self._build_with_explicit_global_environment()
+        try:
+            self.assertIsInstance(mgr, UniverseManager)
+            self.assertIsInstance(liq, DeltaLiquidityProvider)
+            self.assertIsInstance(hist, DeltaHistoryProvider)
+            self.assertIs(liq, mgr.liquidity_provider)
+            self.assertIs(hist, mgr.history_provider)
+        finally:
+            self._close(liq, hist)
 
     def test_delegates_to_real_providers_when_none_injected(self):
-        mgr, reg, liq, hist = build_provider_universe_manager()
-        # build_universe() must ask the injected real providers,
-        # not a conditionless fallback: with no discovered
-        # instruments the cascade stays empty, never "everything
-        # goes".
-        universe = mgr.build_universe(timeframe="1m")
-        self.assertEqual(universe.count, 0)
+        mgr, reg, liq, hist = self._build_with_explicit_global_environment()
+        try:
+            # With no discovered instruments, the cascade stays empty.
+            universe = mgr.build_universe(timeframe="1m")
+            self.assertEqual(universe.count, 0)
+        finally:
+            self._close(liq, hist)
 
 
 class TestProviderCascadeToEligibleSet(unittest.TestCase):

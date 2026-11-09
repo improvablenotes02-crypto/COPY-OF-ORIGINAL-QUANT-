@@ -28,7 +28,11 @@ PRODUCTS_ENDPOINT = "/v2/products"
 class ProductClient:
 
     def __init__(self, transport=None, cache_ttl=0.0):
-        self.rest = transport if transport is not None else DeltaREST()
+        if transport is not None:
+            self.rest = transport
+        else:
+            from core.exchanges.delta.delta_environments import configured_public_rest
+            self.rest = configured_public_rest()
         self._cache_ttl = cache_ttl
         self._cache = None
         self._cached_at = 0.0

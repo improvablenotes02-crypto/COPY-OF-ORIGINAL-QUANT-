@@ -29,7 +29,7 @@ class TestDeltaProductsSmoke(unittest.TestCase):
         with mock.patch.object(
             DeltaProducts, "download", return_value=payload
         ):
-            products = DeltaProducts().download()
+            products = DeltaProducts(rest=object()).download()
 
         self.assertTrue(products["success"])
         self.assertEqual(len(products["result"]), 2)

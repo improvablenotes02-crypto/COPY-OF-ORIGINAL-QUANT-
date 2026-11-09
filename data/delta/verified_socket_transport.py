@@ -32,6 +32,7 @@ This module does not open any socket at import time.
 from __future__ import annotations
 
 import json
+import time
 from collections import Counter
 from collections.abc import Callable, Iterable
 from typing import Any
@@ -78,11 +79,10 @@ def check_global_evidence(
 ) -> None:
     """Raise fail-closed unless a verified Global bundle exists for symbols.
 
-    The bundle must be a single-session ``quantengine.delta-public-capture.v1``
-    document for the exact Global endpoint covering the requested symbols.
-    India endpoint or non-universe symbols never satisfy this gate.  A
-    reconnect observation bundle is supplementary evidence only and does not
-    satisfy this gate on its own.
+    The current evidence schema certifies one symbol per bundle. Multi-symbol
+    subscriptions are rejected until every requested symbol can be proven by
+    a multi-symbol evidence bundle. India endpoint or non-universe symbols
+    never satisfy this Global gate. Reconnect observations are supplementary.
     """
     import json as _json
     from pathlib import Path as _Path
@@ -109,9 +109,15 @@ def check_global_evidence(
         ) from error
     if not isinstance(bundle, dict):
         raise GlobalEvidenceMissing("Global evidence bundle is not a mapping")
+    required_symbols = tuple(sorted(set(symbols)))
+    if len(required_symbols) != 1:
+        raise GlobalEvidenceMissing(
+            "current Global evidence schema certifies one symbol per bundle; "
+            "multi-symbol subscriptions require per-symbol evidence and are "
+            "refused until that evidence is available"
+        )
     verdict = verify_single_session(
-        bundle, required_symbols=tuple(sorted(set(symbols))),
-        resolution=resolution,
+        bundle, required_symbols=required_symbols, resolution=resolution,
     )
     if not verdict.passed:
         failures = "; ".join(
@@ -231,6 +237,51 @@ class VerifiedSocketTransport:
         for gate in self._gates.values():
             gate.on_connected()
         self._stats["connects"] += 1
+
+    def poll(self, *, max_frames: int = 64, timeout: float = 0.001) -> dict[str, Any]:
+        """Drain a bounded number of queued WebSocket frames without blocking indefinitely."""
+        if not isinstance(max_frames, int) or isinstance(max_frames, bool) or not 1 <= max_frames <= 1024:
+            raise ValueError("max_frames must be an integer from 1 through 1024")
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+            raise ValueError("timeout must be a finite number between 0 and 5 seconds")
+        if timeout < 0 or timeout > 5.0 or timeout != timeout or timeout in (float("inf"), float("-inf")):
+            raise ValueError("timeout must be a finite number between 0 and 5 seconds")
+        if not self.connected or self._socket is None:
+            return {"frames_received": 0, "delivered": 0, "connected": False}
+
+        received = 0
+        delivered = 0
+        for _ in range(max_frames):
+            try:
+                raw = self._socket.recv(timeout=float(timeout))
+            except TimeoutError:
+                break
+            except Exception as exc:  # transport boundary; never echo frame/URL details
+                self.close()
+                raise RuntimeError(
+                    "Delta public socket receive failed (%s)" % type(exc).__name__
+                ) from exc
+            if raw is None:
+                break
+            received += 1
+            try:
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8")
+                if not isinstance(raw, str):
+                    raise TypeError("frame is not text")
+                frame = json.loads(raw)
+            except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+                self._stats["malformed_frames"] += 1
+                continue
+            decision = self.ingest(frame, receipt_timestamp=time.time_ns())
+            if decision.get("delivered") is True:
+                delivered += 1
+
+        return {
+            "frames_received": received,
+            "delivered": delivered,
+            "connected": self.connected,
+        }
 
     def close(self) -> None:
         socket, self._socket = self._socket, None

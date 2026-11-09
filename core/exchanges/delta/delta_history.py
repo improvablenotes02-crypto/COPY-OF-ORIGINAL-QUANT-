@@ -17,12 +17,13 @@ class DeltaHistory:
 
     def __init__(self, rest=None):
 
-        # Environment separation: an explicit transport (e.g. a
-        # Testnet-pointed DeltaREST) may be injected; the default
-        # preserves the legacy endpoint so existing callers are
-        # behavior-neutral. Attribute assignment (history.rest = …)
-        # remains supported as before.
-        self.rest = rest if rest is not None else DeltaREST()
+        # Public history requests must use the operator-selected venue.
+        # Tests and specialized callers can still inject an explicit transport.
+        if rest is not None:
+            self.rest = rest
+        else:
+            from core.exchanges.delta.delta_environments import configured_public_rest
+            self.rest = configured_public_rest()
 
     # -------------------------------------------------
 
