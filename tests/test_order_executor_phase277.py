@@ -147,7 +147,8 @@ def test_direct_execute_respects_configured_paper_mode_and_never_writes(monkeypa
     exchange.api_secret = "offline-secret"
     executor = DeltaOrderExecutor(exchange=exchange, registry=registry)
 
-    with unittest.TestCase().assertRaises(LiveBlockedError):
+    import pytest
+    with pytest.raises(LiveBlockedError):
         executor.execute(_intent())
 
     assert exchange.placed == []
