@@ -217,7 +217,7 @@ def scan_env_history(root: Path) -> list[str]:
                 # The path may have been deleted in this commit.
                 continue
             if any(_KNOWN_SECRET.match(line) for line in content.splitlines()):
-                unsafe.add(f"{revision}:{relative}")
+                unsafe.add(revision)
 
     return sorted(unsafe)
 
