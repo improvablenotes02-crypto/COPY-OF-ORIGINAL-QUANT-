@@ -98,6 +98,8 @@ def test_acquire_rejects_missing_and_ambiguous_symbol(monkeypatch):
 
 def test_history_and_products_accept_explicit_transport(monkeypatch):
     """Injected transports select the environment; defaults are unchanged."""
+    monkeypatch.setenv("DELTA_ENVIRONMENT", "PRODUCTION")
+    monkeypatch.setenv("DELTA_REGION", "GLOBAL")
     import httpx
     from core.exchanges.delta.delta_history import DeltaHistory
     from core.exchanges.delta.delta_products import DeltaProducts
