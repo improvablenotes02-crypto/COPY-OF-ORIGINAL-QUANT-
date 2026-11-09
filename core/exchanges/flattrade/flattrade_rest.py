@@ -46,7 +46,7 @@ class FlattradeReadOnlyREST:
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
         try:
             response = self.client.post(
-                "/" + endpoint,
+                endpoint,
                 data={"jData": body, "jKey": self.session_token},
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
