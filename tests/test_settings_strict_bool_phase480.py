@@ -1,15 +1,14 @@
 """Strict environment boolean parsing regressions."""
-import importlib
 import pytest
 
-import config.settings as settings_module
+from config.settings import _env_bool
 
 
 @pytest.mark.parametrize("value", ["treu", "1maybe", "enabled-ish"])
 def test_execution_boolean_typo_fails_closed(monkeypatch, value):
     monkeypatch.setenv("LIVE_MODE", value)
     with pytest.raises(ValueError, match="Invalid LIVE_MODE"):
-        importlib.reload(settings_module)
+        _env_bool("LIVE_MODE")
 
 
 @pytest.mark.parametrize("value, expected", [
@@ -18,6 +17,4 @@ def test_execution_boolean_typo_fails_closed(monkeypatch, value):
 ])
 def test_execution_boolean_spellings_are_explicit(monkeypatch, value, expected):
     monkeypatch.setenv("PAPER_MODE", value)
-    monkeypatch.delenv("LIVE_MODE", raising=False)
-    module = importlib.reload(settings_module)
-    assert module.settings.PAPER_MODE is expected
+    assert _env_bool("PAPER_MODE") is expected
