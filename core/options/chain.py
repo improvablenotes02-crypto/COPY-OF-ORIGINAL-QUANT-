@@ -22,6 +22,7 @@ class OptionChainEntry:
 @dataclass(frozen=True, slots=True)
 class OptionChain:
     underlying: str
+    exchange: str
     expiry_time: int
     lot_size: int
     contract_multiplier: float
@@ -73,6 +74,7 @@ def build_option_chain(instruments: Sequence[Instrument], quotes: Mapping[str, N
     sources: set[str] = set()
     common_lot: int | None = None
     common_multiplier: float | None = None
+    common_exchange: str | None = None
     for instrument in instruments:
         if not isinstance(instrument, Instrument):
             raise TypeError("option chain instruments must be canonical Instrument records")
@@ -82,6 +84,10 @@ def build_option_chain(instruments: Sequence[Instrument], quotes: Mapping[str, N
             raise ValueError("option instrument symbol is required")
         if not isinstance(instrument.exchange, str) or not instrument.exchange.strip():
             raise ValueError("option instrument exchange is required")
+        if common_exchange is None:
+            common_exchange = instrument.exchange
+        elif instrument.exchange != common_exchange:
+            raise ValueError("option chain exchange mismatch")
         if instrument.symbol in seen_symbols:
             raise ValueError("duplicate option instrument symbol")
         seen_symbols.add(instrument.symbol)
@@ -120,6 +126,6 @@ def build_option_chain(instruments: Sequence[Instrument], quotes: Mapping[str, N
         raise ValueError("option chain quotes must use one consistent source")
     entries = tuple(OptionChainEntry(strike=strike, call=legs.get("call"), put=legs.get("put"))
                     for strike, legs in sorted(grouped.items()))
-    return OptionChain(underlying=underlying, expiry_time=expiry_time, lot_size=common_lot,
+    return OptionChain(underlying=underlying, exchange=common_exchange, expiry_time=expiry_time, lot_size=common_lot,
                        contract_multiplier=common_multiplier, as_of=current, source=next(iter(sources)) if sources else "",
                        entries=entries)
