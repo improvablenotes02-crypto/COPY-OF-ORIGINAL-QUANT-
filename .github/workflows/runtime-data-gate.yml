@@ -4,6 +4,8 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '30 1 * * 0' # Weekly extended regression, Sunday 01:30 UTC
 
 permissions:
   contents: read
@@ -12,7 +14,7 @@ jobs:
   paper-runtime-data-gate:
     name: Paper runtime data gate (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -117,8 +119,8 @@ jobs:
           tests/test_postgres_tenant_services_phase376.py
           tests/test_tenant_governance_runtime_phase379.py
           -q
-      - name: Run full historical regression suite (manual release certification)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Run extended historical regression suite (weekly and manual release certification)
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
         run: >-
           python -m pytest
           tests/test_realtime.py
