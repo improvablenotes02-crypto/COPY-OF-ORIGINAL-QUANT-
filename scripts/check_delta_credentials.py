@@ -1,7 +1,9 @@
 """Read-only check for the operator's own Delta API credentials.
 
-This command performs one authenticated identity request only. It never
-reads balances, places/cancels orders, or prints credential/account values.
+This command calls one authenticated identity endpoint only. It never reads
+balances, places/cancels orders, or prints credential/account values. The
+signed REST transport may retry transient connection failures on that same
+read-only endpoint.
 Run from the repository root after configuring the local .env file:
     python scripts/check_delta_credentials.py
 """
@@ -16,7 +18,63 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from config.settings import settings
+from core.exchanges.delta.delta_auth import (
+    AUTHENTICATION_FAILED,
+    INVALID_API_KEY,
+    INVALID_SIGNATURE,
+    IP_NOT_WHITELISTED,
+    PERMISSION_DENIED,
+    TIMESTAMP_ERROR,
+    classify_auth_error,
+)
 from core.exchanges.delta.delta_environments import configured_client
+
+
+_FAILURE_HINTS = {
+    INVALID_API_KEY: "Check the API key configured for the selected venue.",
+    INVALID_SIGNATURE: "Check the matching API secret and local clock.",
+    TIMESTAMP_ERROR: "Check system clock synchronization.",
+    IP_NOT_WHITELISTED: "Confirm this deployment's outbound IP is allowlisted.",
+    PERMISSION_DENIED: "Confirm the key permits the identity endpoint's read operation.",
+    AUTHENTICATION_FAILED: (
+        "Check the selected region/environment, credential status and network reachability."
+    ),
+}
+
+
+def _safe_auth_failure_category(error) -> str:
+    """Reduce a provider exception to a fixed, credential-free category."""
+    try:
+        response = getattr(error, "response", None)
+    except Exception:
+        response = None
+
+    try:
+        status = getattr(response, "status_code", None)
+    except Exception:
+        status = None
+
+    code = None
+    try:
+        decode = getattr(response, "json", None)
+        payload = decode() if callable(decode) else None
+    except Exception:
+        payload = None
+
+    if isinstance(payload, dict):
+        detail = payload.get("error")
+        if isinstance(detail, dict):
+            candidate = detail.get("code")
+        elif isinstance(detail, str):
+            candidate = detail
+        else:
+            candidate = None
+        if candidate is None:
+            candidate = payload.get("code")
+        if isinstance(candidate, str):
+            code = candidate
+
+    return classify_auth_error(code, http_status=status)
 
 
 def verify_credentials(*, client_factory=None, emit=print) -> int:
@@ -39,12 +97,10 @@ def verify_credentials(*, client_factory=None, emit=print) -> int:
         emit("Exchange writes: NOT USED")
         return 0
     except Exception as error:  # redact exception text; it may contain request data
-        emit(
-            "Delta credential verification: FAIL ({})".format(
-                type(error).__name__
-            )
-        )
-        emit("Details redacted. Check region, environment, key pair and read permissions.")
+        category = _safe_auth_failure_category(error)
+        emit("Delta credential verification: FAIL ({})".format(category))
+        emit(_FAILURE_HINTS.get(category, _FAILURE_HINTS[AUTHENTICATION_FAILED]))
+        emit("Provider response and exception details are redacted.")
         return 1
     finally:
         rest = getattr(client, "rest", None)
