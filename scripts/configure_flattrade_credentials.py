@@ -229,7 +229,7 @@ def main() -> int:
         print(login_url)
         webbrowser.open(login_url)
         request_code = capture_request_code(port=port)
-        store_credentials_after_exchange = configure_credentials(
+        configure_credentials(
             api_key=key, api_secret=secret, request_code=request_code
         )
     except (OSError, FlattradeSetupError):
