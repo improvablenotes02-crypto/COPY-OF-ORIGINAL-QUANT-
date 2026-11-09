@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.exchanges.delta.delta_environments import EnvironmentError
 from scripts.quantengine_preflight import inspect_configuration
 
 
@@ -60,7 +61,7 @@ def test_preflight_reports_missing_credentials_without_fallback():
         PAPER_MODE=True, ALLOW_LIVE=False, LIVE_EXECUTE=False, LIVE_MODE=False,
     )
     def missing(env, reg):
-        raise ValueError("credential details must not leak")
+        raise EnvironmentError("credential details must not leak")
     report = inspect_configuration(config=config, credential_resolver=missing)
     assert report["ready_for_authenticated_read_only_check"] is False
     assert report["credentials"] == "UNAVAILABLE"
