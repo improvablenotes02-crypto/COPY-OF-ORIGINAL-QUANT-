@@ -167,38 +167,59 @@ def scan_staged(root: Path) -> list[Finding]:
 
 
 def scan_env_history(root: Path) -> list[str]:
-    """Return commits whose historical .env has a known non-empty Delta key."""
-    try:
-        revisions = subprocess.run(
-            ["git", "rev-list", "--all", "--", ".env"],
-            cwd=root,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        ).stdout.splitlines()
-    except (OSError, subprocess.SubprocessError):
-        return []
+    """Return commits containing credentials in any historical env-style file.
 
-    unsafe: list[str] = []
-    for revision in revisions:
+    Scan all reachable refs and all root/nested .env variants, including
+    interrupted credential-writer files.  Only commit IDs and paths are
+    returned; matched values are never included in diagnostics.
+    """
+    pathspecs = (
+        ":(glob)**/.env",
+        ":(glob)**/.env.*",
+        ":(glob)**/.quantengine-env-*",
+    )
+    try:
+        listed = subprocess.run(
+            ["git", "log", "--all", "--format=", "--name-only", "--",
+             *pathspecs],
+            cwd=root, check=True, capture_output=True, text=True, timeout=60,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        # A non-repository or unavailable history is not evidence of safety.
+        # The caller treats this sentinel as a history-scan failure.
+        return ["HISTORY_SCAN_UNAVAILABLE"]
+
+    candidate_paths = sorted({
+        item.replace("\\", "/")
+        for item in listed.splitlines()
+        if item and _uses_env_assignment_rules(Path(item))
+        and not Path(item).is_absolute() and ".." not in Path(item).parts
+    })
+    unsafe: set[str] = set()
+    for relative in candidate_paths:
         try:
-            content = subprocess.run(
-                ["git", "show", f"{revision}:.env"],
-                cwd=root,
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            ).stdout
+            revisions = subprocess.run(
+                ["git", "log", "--all", "--format=%H", "--", relative],
+                cwd=root, check=True, capture_output=True, text=True,
+                timeout=60,
+            ).stdout.splitlines()
         except (OSError, subprocess.SubprocessError):
-            continue
-        if any(
-            _KNOWN_SECRET.match(line)
-            for line in content.splitlines()
-        ):
-            unsafe.append(revision)
-    return unsafe
+            return ["HISTORY_SCAN_UNAVAILABLE"]
+
+        for revision in revisions:
+            try:
+                content = subprocess.run(
+                    ["git", "show", f"{revision}:{relative}"],
+                    cwd=root, check=True, capture_output=True, text=True,
+                    errors="replace", timeout=30,
+                ).stdout
+            except (OSError, subprocess.SubprocessError):
+                # The path may have been deleted in this commit.
+                continue
+            if any(_KNOWN_SECRET.match(line) for line in content.splitlines()):
+                unsafe.add(f"{revision}:{relative}")
+
+    return sorted(unsafe)
 
 
 # Operator-local runtime configuration that release packaging excludes by
