@@ -84,10 +84,7 @@ def build_option_chain(instruments: Sequence[Instrument], quotes: Mapping[str, N
             raise ValueError("option instrument exchange is required")
         if instrument.symbol in seen_symbols:
             raise ValueError("duplicate option instrument symbol")
-        if instrument.instrument_id in seen_instrument_ids:
-            raise ValueError("duplicate option instrument ID")
         seen_symbols.add(instrument.symbol)
-        seen_instrument_ids.add(instrument.instrument_id)
         if instrument.product_type not in (PRODUCT_CALL_OPTION, PRODUCT_PUT_OPTION):
             raise ValueError("option chain contains a non-option instrument")
         if instrument.underlying_asset != underlying:
@@ -106,6 +103,9 @@ def build_option_chain(instruments: Sequence[Instrument], quotes: Mapping[str, N
         legs = grouped.setdefault(strike, {})
         if right in legs:
             raise ValueError("duplicate %s contract at strike" % right)
+        if instrument.instrument_id in seen_instrument_ids:
+            raise ValueError("duplicate option instrument ID")
+        seen_instrument_ids.add(instrument.instrument_id)
         quote = quotes.get(instrument.symbol)
         if quote is not None:
             if not isinstance(quote, NormalizedQuote):
