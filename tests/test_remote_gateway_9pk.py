@@ -46,6 +46,7 @@ from core.remote.gateway import (
     GatewayConfig,
     RemoteGateway,
     RemoteGatewayError,
+    _RateLimiter,
 )
 from core.monitoring.api_server import ControlApiServer
 from core.runtime.lifecycle import EngineLifecycle
@@ -634,3 +635,36 @@ class TestTlsTransport(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+def test_rate_limiter_is_independent_per_remote_client():
+    limiter = _RateLimiter(max_events=2, window_seconds=60)
+    assert limiter.allow("198.51.100.10")
+    assert limiter.allow("198.51.100.10")
+    assert not limiter.allow("198.51.100.10")
+    # A busy client must not throttle a separate remote address.
+    assert limiter.allow("198.51.100.11")
+    assert limiter.allow("198.51.100.11")
+    assert not limiter.allow("198.51.100.11")
+
+
+def test_rate_limiter_bounds_client_state():
+    limiter = _RateLimiter(max_events=5, window_seconds=60, max_clients=2)
+    assert limiter.allow("192.0.2.1")
+    assert limiter.allow("192.0.2.2")
+    assert len(limiter._clients) == 2
+    assert limiter.allow("192.0.2.3")
+    assert len(limiter._clients) == 2
+
+
+def test_rate_limiter_expires_client_events(monkeypatch):
+    from core.remote import gateway as gateway_module
+
+    now = [1000.0]
+    monkeypatch.setattr(gateway_module.time, "time", lambda: now[0])
+    limiter = _RateLimiter(max_events=1, window_seconds=10)
+    assert limiter.allow("203.0.113.7")
+    assert not limiter.allow("203.0.113.7")
+    now[0] = 1011.0
+    assert limiter.allow("203.0.113.7")
