@@ -81,7 +81,8 @@ def _snapshot_instrument(instrument: Instrument) -> OptionContractSnapshot:
 
 def build_option_chain(instruments: Sequence[Instrument], quotes: Mapping[str, NormalizedQuote], *,
                        underlying: str, expiry_time: int, as_of: datetime,
-                       max_quote_age_seconds: float = 5.0) -> OptionChain:
+                       max_quote_age_seconds: float = 5.0,
+                       max_quote_skew_seconds: float = 2.0) -> OptionChain:
     """Pair calls/puts by strike; reject ambiguous identity and stale input.
 
     Quote mappings may contain a broader provider snapshot; only selected
@@ -105,6 +106,14 @@ def build_option_chain(instruments: Sequence[Instrument], quotes: Mapping[str, N
         raise ValueError("max_quote_age_seconds must be finite and non-negative") from None
     if not math.isfinite(max_age) or max_age < 0:
         raise ValueError("max_quote_age_seconds must be finite and non-negative")
+    if isinstance(max_quote_skew_seconds, bool):
+        raise ValueError("max_quote_skew_seconds must be finite and non-negative")
+    try:
+        max_skew = float(max_quote_skew_seconds)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("max_quote_skew_seconds must be finite and non-negative") from None
+    if not math.isfinite(max_skew) or max_skew < 0:
+        raise ValueError("max_quote_skew_seconds must be finite and non-negative")
     if not isinstance(instruments, Sequence) or isinstance(instruments, (str, bytes)) or not instruments:
         raise ValueError("option chain requires at least one instrument")
     if not isinstance(quotes, Mapping):
@@ -113,6 +122,7 @@ def build_option_chain(instruments: Sequence[Instrument], quotes: Mapping[str, N
     seen_symbols: set[str] = set()
     seen_instrument_ids: set[str] = set()
     sources: set[str] = set()
+    quote_timestamps: list[datetime] = []
     common_lot: int | None = None
     common_multiplier: float | None = None
     common_exchange: str | None = None
@@ -172,9 +182,14 @@ def build_option_chain(instruments: Sequence[Instrument], quotes: Mapping[str, N
             if not report.valid:
                 raise ValueError("invalid option quote: %s" % ", ".join(report.errors))
             sources.add(quote.source)
+            quote_timestamps.append(quote.timestamp)
         legs[right] = OptionLeg(instrument=_snapshot_instrument(instrument), quote=quote)
     if len(sources) > 1:
         raise ValueError("option chain quotes must use one consistent source")
+    if len(quote_timestamps) > 1:
+        skew = (max(quote_timestamps) - min(quote_timestamps)).total_seconds()
+        if skew > max_skew:
+            raise ValueError("option chain quote timestamp skew exceeds limit")
     entries = tuple(OptionChainEntry(strike=strike, call=legs.get("call"), put=legs.get("put"))
                     for strike, legs in sorted(grouped.items()))
     return OptionChain(underlying=underlying, exchange=common_exchange, expiry_time=expiry_time, lot_size=common_lot,
