@@ -264,12 +264,12 @@ class L2BookTracker:
 
         # Check if initialized
         if self.last_sequence is None or self.state in (BookValidityState.INITIALIZING, BookValidityState.RESYNCING):
-            if len(bids) > 5 and len(asks) > 5:
-                return self.process_snapshot(bids, asks, sequence, venue_timestamp_us, now_mono, now_utc)
+            # A delta is never a substitute for an explicit full snapshot, even
+            # when it happens to contain many levels on both sides.
             self.metrics.rejected_count += 1
             self._record_state_change(
                 BookValidityState.INVALID,
-                f"Delta update received at seq {sequence} before initial snapshot"
+                f"Delta update received at seq {sequence} while awaiting full snapshot"
             )
             return False
 

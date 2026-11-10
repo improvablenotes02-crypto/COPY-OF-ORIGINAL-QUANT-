@@ -178,7 +178,7 @@ class ContinuousStreamingL2CapturePipeline:
             return False
         tracker = self.trackers[symbol]
         action = msg.get("action")
-        if action == "snapshot" or tracker.last_sequence is None:
+        if action == "snapshot":
             accepted = tracker.process_snapshot(bids=bids, asks=asks, sequence=sequence, venue_timestamp_us=venue_timestamp_us, receipt_mono_ns=receipt_mono_ns, receipt_utc_ns=receipt_utc_ns)
         else:
             accepted = tracker.process_update(bids=bids, asks=asks, sequence=sequence, venue_timestamp_us=venue_timestamp_us, receipt_mono_ns=receipt_mono_ns, receipt_utc_ns=receipt_utc_ns)
