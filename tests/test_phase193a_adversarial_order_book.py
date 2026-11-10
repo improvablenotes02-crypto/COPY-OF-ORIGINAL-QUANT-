@@ -575,3 +575,39 @@ def test_equal_venue_timestamps_are_allowed_for_distinct_sequences():
         bids=[["80001.0", "1.0"]], asks=[],
         sequence=11, venue_timestamp_us=1_000_000,
     )
+
+
+def test_malformed_replacement_snapshot_preserves_committed_book_atomically():
+    tracker = L2BookTracker("BTCUSD")
+    assert tracker.process_snapshot(
+        bids=[["80000.0", "2.0"]], asks=[["80010.0", "3.0"]],
+        sequence=10, venue_timestamp_us=1_000_000,
+    )
+    original = (dict(tracker.bids), dict(tracker.asks), tracker.last_sequence,
+                tracker.last_venue_timestamp_us)
+    assert not tracker.process_snapshot(
+        bids=[["79900.0", "1.0"], ["BAD_PRICE", "2.0"]],
+        asks=[["80100.0", "1.0"]], sequence=11, venue_timestamp_us=1_100_000,
+    )
+    assert (tracker.bids, tracker.asks, tracker.last_sequence,
+            tracker.last_venue_timestamp_us) == original
+    assert tracker.state == BookValidityState.INVALID
+    assert not tracker.execution_eligible
+
+
+def test_crossed_replacement_snapshot_preserves_committed_book_atomically():
+    tracker = L2BookTracker("BTCUSD")
+    assert tracker.process_snapshot(
+        bids=[["80000.0", "2.0"]], asks=[["80010.0", "3.0"]],
+        sequence=10, venue_timestamp_us=1_000_000,
+    )
+    original = (dict(tracker.bids), dict(tracker.asks), tracker.last_sequence,
+                tracker.last_venue_timestamp_us)
+    assert not tracker.process_snapshot(
+        bids=[["80100.0", "1.0"]], asks=[["80090.0", "1.0"]],
+        sequence=11, venue_timestamp_us=1_100_000,
+    )
+    assert (tracker.bids, tracker.asks, tracker.last_sequence,
+            tracker.last_venue_timestamp_us) == original
+    assert tracker.metrics.crossed_book_count == 1
+    assert tracker.state == BookValidityState.INVALID
