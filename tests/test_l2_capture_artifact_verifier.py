@@ -417,5 +417,36 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 verify_capture(summary)
 
 
+    def test_rejects_duplicate_keys_in_summary_json(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            content = summary.read_text(encoding="utf-8")
+            content = content.replace(
+                '"raw_capture_file": "raw.jsonl",',
+                '"raw_capture_file": "raw.jsonl", "raw_capture_file": "raw.jsonl",',
+                1,
+            )
+            summary.write_text(content, encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "Duplicate JSON object key: raw_capture_file"):
+                verify_capture(summary)
+
+    def test_rejects_duplicate_nested_keys_in_raw_jsonl(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            content = raw.read_text(encoding="utf-8")
+            content = content.replace('"seq": 1', '"seq": 1, "seq": 1', 1)
+            raw_bytes = content.encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 is invalid: Duplicate JSON object key: seq"):
+                verify_capture(summary)
+
+
 if __name__ == "__main__":
     unittest.main()
