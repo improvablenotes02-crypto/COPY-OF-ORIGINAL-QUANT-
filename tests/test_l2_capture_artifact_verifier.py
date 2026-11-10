@@ -29,8 +29,26 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             "total_raw_frames": 1,
             "connection_epoch_count": 1,
             "duration_seconds": 86400 if accepted else 120,
+            "reconnect_count": 0,
+            "malformed_frames_count": 0,
             "rejected_frames_count": 0 if accepted else 1,
-            "continuity_checks": {"zero_rejected_frames": accepted, "raw_capture_persistence_complete": True},
+            "unexpected_frames_count": 0,
+            "persistence_errors_count": 0,
+            "freshness_violations_count": 0,
+            "freshness_violations_by_symbol": {"BTCUSD": 0},
+            "raw_capture_persistence_complete": True,
+            "continuity_checks": {
+                "minimum_24h_duration": accepted,
+                "zero_transport_reconnects": True,
+                "zero_malformed_frames": True,
+                "zero_rejected_frames": accepted,
+                "zero_unexpected_frames": True,
+                "zero_persistence_errors": True,
+                "zero_symbol_freshness_violations": True,
+                "raw_capture_persistence_complete": True,
+                "all_symbol_books_valid": accepted,
+                "not_operator_or_safety_stopped": True,
+            },
             "continuity_evidence_verdict": "VERIFIED_24H" if accepted else "PARTIAL",
             "symbol_quality": {"BTCUSD": {"total_messages": 1, "valid_updates": 1 if accepted else 0, "rejected_count": 0 if accepted else 1}},
         }
@@ -249,6 +267,38 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             data["connection_epoch_count"] = 1
             summary.write_text(json.dumps(data))
             with self.assertRaisesRegex(CaptureVerificationError, "duplicate or regressing"):
+                verify_capture(summary)
+
+
+    def test_rejects_summary_persistence_flag_conflicting_with_continuity_checks(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["raw_capture_persistence_complete"] = False
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "raw_capture_persistence_complete conflicts"):
+                verify_capture(summary)
+
+    def test_rejects_counter_conflicting_with_derived_continuity_check(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["persistence_errors_count"] = 1
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "persistence_errors_count conflicts"):
+                verify_capture(summary)
+
+    def test_rejects_per_symbol_freshness_counter_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["freshness_violations_count"] = 1
+            data["continuity_checks"]["zero_symbol_freshness_violations"] = False
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "Per-symbol freshness counters do not sum"):
                 verify_capture(summary)
 
     def test_rejects_verified_verdict_with_short_duration(self):
