@@ -26,6 +26,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             "raw_capture_sha256": hashlib.sha256(raw_bytes).hexdigest(),
             "total_bytes_written": len(raw_bytes),
             "total_raw_frames": 1,
+            "duration_seconds": 86400 if accepted else 120,
             "rejected_frames_count": 0 if accepted else 1,
             "continuity_checks": {"zero_rejected_frames": accepted, "raw_capture_persistence_complete": True},
             "continuity_evidence_verdict": "VERIFIED_24H" if accepted else "PARTIAL",
@@ -79,3 +80,14 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_rejects_verified_verdict_with_short_duration(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["duration_seconds"] = 60
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "short duration"):
+                verify_capture(summary)
