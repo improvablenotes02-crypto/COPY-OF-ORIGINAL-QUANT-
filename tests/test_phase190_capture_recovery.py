@@ -305,3 +305,40 @@ class TestPhase190ContinuityVerdict(unittest.TestCase):
         self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
         self.assertFalse(summary["continuity_checks"]["zero_rejected_frames"])
         self.assertFalse(summary["continuity_checks"]["not_operator_or_safety_stopped"])
+
+
+class TestPhase190UnexpectedFrameClassification(unittest.TestCase):
+    def _pipeline(self, td):
+        pipeline = ContinuousStreamingL2CapturePipeline(
+            symbols=["BTCUSD"], output_dir=Path(td), duration_seconds=86400.0
+        )
+        pipeline._open_streaming_file()
+        return pipeline
+
+    def test_non_object_json_is_counted_as_malformed_without_crashing(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = self._pipeline(td)
+            self.assertFalse(pipeline._stream_frame("[]", 1, 1))
+            self.assertFalse(pipeline._stream_frame("null", 2, 2))
+            self.assertEqual(pipeline.malformed_frames_count, 2)
+            summary = pipeline.finalize_artifacts()
+        self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
+
+    def test_unexpected_message_type_is_not_persisted_as_valid_capture_frame(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = self._pipeline(td)
+            self.assertFalse(pipeline._stream_frame(json.dumps({"type": "ticker"}), 1, 1))
+            self.assertEqual(pipeline.unexpected_frames_count, 1)
+            summary = pipeline.finalize_artifacts()
+        self.assertEqual(summary["unexpected_frames_count"], 1)
+        self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
+
+    def test_unconfigured_symbol_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = self._pipeline(td)
+            frame = {"type": "ob_updates", "sy": "DOGEUSD", "seq": 1, "ts": 100,
+                     "b": [["1.0", "1.0"]], "a": [["1.1", "1.0"]]}
+            self.assertFalse(pipeline._stream_frame(json.dumps(frame), 1, 1))
+            self.assertEqual(pipeline.rejected_frames_count, 1)
+            summary = pipeline.finalize_artifacts()
+        self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
