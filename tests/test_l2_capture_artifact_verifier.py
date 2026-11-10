@@ -318,7 +318,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             data = json.loads(summary.read_text())
             data["rejected_frames_count"] = 1
             summary.write_text(json.dumps(data))
-            with self.assertRaisesRegex(CaptureVerificationError, "rejected frames"):
+            with self.assertRaisesRegex(CaptureVerificationError, "rejected_frames_count conflicts"):
                 verify_capture(summary)
 
 
