@@ -231,29 +231,35 @@ def verify_detached_record(artifact: Path, record: Path) -> dict:
         raise RuntimeError(f"artifact not found: {artifact}")
     if not record.is_file():
         raise RuntimeError(f"detached record not found: {record}")
+    if record.stat().st_size > 16 * 1024:
+        raise RuntimeError("detached record exceeds the 16 KiB size limit")
     lines = record.read_text(encoding="utf-8").splitlines()
     if not lines or lines[0] != "QuantEngine CI release candidate verification":
         raise RuntimeError("detached record header is missing or invalid")
     fields: dict[str, str] = {}
+    ordered_keys: list[str] = []
     for line in lines[1:]:
-        if not line.strip():
-            continue
-        if ": " not in line:
+        if not line or ": " not in line:
             raise RuntimeError(f"malformed detached-record line: {line!r}")
         key, value = line.split(": ", 1)
+        if not key or key.strip() != key or not value or value.strip() != value:
+            raise RuntimeError(f"non-canonical detached-record field: {line!r}")
         if key in fields:
             raise RuntimeError(f"duplicate detached-record field: {key}")
         fields[key] = value
-    required = {"Artifact", "SHA-256", "Bytes", "Archive members",
-                "Reproducible second build", "ZIP integrity",
-                "Manifest coverage", "Manifest payload digests", "Secret-file exclusion"}
-    missing = required - fields.keys()
-    unexpected = fields.keys() - (required | {"Host extraction"})
-    if missing or unexpected:
-        raise RuntimeError(
-            f"detached record field mismatch: missing={sorted(missing)}, "
-            f"unexpected={sorted(unexpected)}"
-        )
+        ordered_keys.append(key)
+    legacy_order = [
+        "Artifact", "SHA-256", "Bytes", "Archive members",
+        "Reproducible second build", "ZIP integrity", "Manifest coverage",
+        "Manifest payload digests", "Secret-file exclusion",
+    ]
+    extraction_order = [
+        "Artifact", "SHA-256", "Bytes", "Archive members",
+        "Reproducible second build", "ZIP integrity", "Host extraction",
+        "Manifest coverage", "Manifest payload digests", "Secret-file exclusion",
+    ]
+    if ordered_keys not in (legacy_order, extraction_order):
+        raise RuntimeError("detached record fields are missing, unexpected, or out of canonical order")
     expected_name = fields["Artifact"]
     actual_hash = sha256(artifact)
     actual_bytes = artifact.stat().st_size
