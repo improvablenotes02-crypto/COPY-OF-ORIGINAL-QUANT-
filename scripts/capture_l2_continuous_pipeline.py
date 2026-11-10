@@ -168,7 +168,7 @@ class ContinuousStreamingL2CapturePipeline:
         if not accepted:
             self.rejected_frames_count += 1
         record = {"receipt_mono_ns":receipt_mono_ns,"receipt_utc_ns":receipt_utc_ns,"raw":msg,"tracker_accepted":accepted}
-        encoded_bytes = (json.dumps(record, sort_keys=True) + "\\n").encode("utf-8")
+        encoded_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
         if self._raw_file_handle is None:
             self.persistence_errors_count += 1
             self.persistence_complete = False
@@ -329,8 +329,8 @@ class ContinuousStreamingL2CapturePipeline:
         if self._summary_path:
             temporary_summary = self._summary_path.with_suffix(self._summary_path.suffix + ".tmp")
             try:
-                with temporary_summary.open("w", encoding="utf-8", newline="\\n") as handle:
-                    handle.write(json.dumps(summary, indent=2, sort_keys=True) + "\\n")
+                with temporary_summary.open("w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(json.dumps(summary, indent=2, sort_keys=True) + "\n")
                     handle.flush()
                     os.fsync(handle.fileno())
                 os.replace(temporary_summary, self._summary_path)
