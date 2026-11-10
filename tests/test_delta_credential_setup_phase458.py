@@ -12,6 +12,7 @@ def test_setup_writes_only_selected_pair_and_preserves_other_settings(tmp_path):
     env.write_text(
         "SYMBOLS=NIFTY\n"
         "DELTA_API_KEY=old-global-key\n"
+        "export DELTA_API_KEY=old-export-key\n"
         "DELTA_INDIA_TESTNET_API_SECRET=old-name\n"
         "PAPER_MODE=True\n",
         encoding="utf-8",
@@ -33,6 +34,7 @@ def test_setup_writes_only_selected_pair_and_preserves_other_settings(tmp_path):
     assert "DELTA_INDIA_SANDBOX_API_KEY=synthetic-new-key" in rendered
     assert "DELTA_INDIA_SANDBOX_API_SECRET=synthetic-new-secret" in rendered
     assert "DELTA_API_KEY=" not in rendered
+    assert "old-export-key" not in rendered
     assert "DELTA_INDIA_TESTNET_API_SECRET" not in rendered
     assert rendered.count("DELTA_REGION=") == 1
 
@@ -99,3 +101,66 @@ def test_setup_refuses_noninteractive_secret_input(monkeypatch):
     assert setup.main() == 2
     assert "interactive terminal" in captured.getvalue()
 
+
+
+def test_setup_cli_never_echoes_entered_credentials(monkeypatch, tmp_path):
+    import builtins
+    import getpass
+    import io
+    import sys
+
+    from scripts import configure_delta_credentials as setup
+
+    class TTYStream(io.StringIO):
+        def isatty(self):
+            return True
+
+    answers = iter(("INDIA", "SANDBOX", "yes"))
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": next(answers))
+    # Return the key and secret in sequence without retaining either in output.
+    hidden_values = iter(("synthetic-hidden-key", "synthetic-hidden-secret"))
+    monkeypatch.setattr(getpass, "getpass", lambda _prompt="": next(hidden_values))
+    target_env = tmp_path / ".env"
+    configure = setup.configure_credentials
+    monkeypatch.setattr(
+        setup, "configure_credentials",
+        lambda **kwargs: configure(**kwargs, env_path=target_env),
+    )
+    captured = TTYStream()
+    monkeypatch.setattr(sys, "stdin", TTYStream())
+    monkeypatch.setattr(sys, "stdout", captured)
+
+    assert setup.main() == 0
+    rendered = captured.getvalue()
+    assert "synthetic-hidden-key" not in rendered
+    assert "synthetic-hidden-secret" not in rendered
+    saved = target_env.read_text(encoding="utf-8")
+    assert "DELTA_INDIA_SANDBOX_API_KEY=synthetic-hidden-key" in saved
+    assert "DELTA_INDIA_SANDBOX_API_SECRET=synthetic-hidden-secret" in saved
+
+
+def test_setup_removes_export_prefixed_all_managed_variables(tmp_path):
+    from scripts.configure_delta_credentials import MANAGED_NAMES
+
+    env = tmp_path / ".env"
+    env.write_text(
+        "\n".join("export %s=stale-value" % name for name in sorted(MANAGED_NAMES))
+        + "\nUNRELATED_SETTING=keep-me\n",
+        encoding="utf-8",
+    )
+
+    configure_credentials(
+        region="GLOBAL",
+        environment="SANDBOX",
+        api_key="replacement-key",
+        api_secret="replacement-secret",
+        env_path=env,
+    )
+
+    rendered = env.read_text(encoding="utf-8")
+    assert "UNRELATED_SETTING=keep-me" in rendered
+    assert "stale-value" not in rendered
+    assert rendered.count("DELTA_REGION=") == 1
+    assert rendered.count("DELTA_ENVIRONMENT=") == 1
+    assert "DELTA_SANDBOX_API_KEY=replacement-key" in rendered
+    assert "DELTA_SANDBOX_API_SECRET=replacement-secret" in rendered

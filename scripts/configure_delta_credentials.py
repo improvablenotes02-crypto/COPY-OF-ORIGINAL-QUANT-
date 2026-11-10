@@ -81,6 +81,10 @@ def configure_credentials(
             preserved.append(line)
             continue
         name = candidate.split("=", 1)[0].strip()
+        # python-dotenv accepts optional export prefixes; remove those too.
+        name_parts = name.split(None, 1)
+        if len(name_parts) == 2 and name_parts[0] == "export":
+            name = name_parts[1].strip()
         if name not in MANAGED_NAMES:
             preserved.append(line)
 
