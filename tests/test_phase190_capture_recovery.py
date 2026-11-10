@@ -397,3 +397,49 @@ class TestPhase257CapturePersistenceIntegrity(unittest.TestCase):
             p.trackers["BTCUSD"].process_snapshot(bids=[["82000","1"]],asks=[["82010","1"]],sequence=1,venue_timestamp_us=1729500000000000)
             summary=p.finalize_artifacts();self.assertEqual(summary["continuity_evidence_verdict"],"PARTIAL")
             self.assertFalse(summary["continuity_checks"]["zero_persistence_errors"])
+
+
+class TestPhase258PerSymbolFreshness(unittest.TestCase):
+    def test_reconnect_clears_receipt_freshness_but_preserves_venue_clock(self):
+        from core.research.l2_book_tracker import BookValidityState, L2BookTracker
+        tracker = L2BookTracker("BTCUSD")
+        self.assertTrue(tracker.process_snapshot(
+            bids=[["82000", "1"]], asks=[["82010", "1"]],
+            sequence=99, venue_timestamp_us=1729500000000000,
+            receipt_mono_ns=1000000000, receipt_utc_ns=2000000000,
+        ))
+        tracker.reset("test reconnect")
+        self.assertIsNone(tracker.last_sequence)
+        self.assertIsNone(tracker.last_receipt_mono_ns)
+        self.assertIsNone(tracker.last_receipt_utc_ns)
+        self.assertIsNone(tracker.last_bid_mono_ns)
+        self.assertIsNone(tracker.last_ask_mono_ns)
+        self.assertEqual(tracker.last_venue_timestamp_us, 1729500000000000)
+        self.assertEqual(tracker.state, BookValidityState.RESYNCING)
+
+    def test_active_symbol_cannot_mask_another_symbols_staleness(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = ContinuousStreamingL2CapturePipeline(
+                symbols=["BTCUSD", "ETHUSD"], output_dir=Path(td),
+                stale_threshold_seconds=5.0,
+            )
+            for symbol in ("BTCUSD", "ETHUSD"):
+                tracker = pipeline.trackers[symbol]
+                self.assertTrue(tracker.process_snapshot(
+                    bids=[["100", "1"]], asks=[["101", "1"]],
+                    sequence=1, venue_timestamp_us=1729500000000000,
+                    receipt_mono_ns=1000000000, receipt_utc_ns=2000000000,
+                ))
+            # BTCUSD receives a fresh valid update; ETHUSD receives nothing.
+            self.assertTrue(pipeline.trackers["BTCUSD"].process_update(
+                bids=[["100", "2"]], asks=[["101", "2"]],
+                sequence=2, venue_timestamp_us=1729500000001000,
+                receipt_mono_ns=7000000000, receipt_utc_ns=8000000000,
+            ))
+            pipeline._check_symbol_freshness(7000000000)
+            self.assertEqual(pipeline.freshness_violations_count, 1)
+            self.assertEqual(pipeline.freshness_violations_by_symbol["BTCUSD"], 0)
+            self.assertEqual(pipeline.freshness_violations_by_symbol["ETHUSD"], 1)
+            summary = pipeline.finalize_artifacts()
+            self.assertFalse(summary["continuity_checks"]["zero_symbol_freshness_violations"])
+            self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
