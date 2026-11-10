@@ -36,6 +36,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             "persistence_errors_count": 0,
             "freshness_violations_count": 0,
             "freshness_violations_by_symbol": {"BTCUSD": 0},
+            "configured_symbols": ["BTCUSD"],
             "raw_capture_persistence_complete": True,
             "continuity_checks": {
                 "minimum_24h_duration": accepted,
@@ -55,6 +56,47 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
         path = root / "summary.json"
         path.write_text(json.dumps(summary), encoding="utf-8")
         return path
+
+    def test_rejects_duplicate_configured_symbols(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["configured_symbols"] = ["BTCUSD", "BTCUSD"]
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "unique normalized symbol list"):
+                verify_capture(summary)
+
+    def test_rejects_symbol_quality_inventory_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["symbol_quality"]["ETHUSD"] = {
+                "total_messages": 0, "valid_updates": 0, "rejected_count": 0
+            }
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "exactly match configured_symbols"):
+                verify_capture(summary)
+
+    def test_rejects_raw_frame_for_unconfigured_symbol(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            record = json.loads(raw.read_text())
+            record["raw"]["sy"] = "ETHUSD"
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            data["symbol_quality"] = {"BTCUSD": {
+                "total_messages": 0, "valid_updates": 0, "rejected_count": 0
+            }}
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "unconfigured symbols"):
+                verify_capture(summary)
 
     def test_verifies_exact_hash_size_and_frame_count(self):
         with tempfile.TemporaryDirectory() as td:
