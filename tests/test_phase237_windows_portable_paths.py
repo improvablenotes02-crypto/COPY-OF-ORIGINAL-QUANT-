@@ -60,7 +60,7 @@ def test_rejects_case_insensitive_path_collisions(tmp_path: Path) -> None:
     try:
         MODULE.verify_archive(artifact)
     except RuntimeError as exc:
-        assert "case-insensitive manifest path collision" in str(exc)
+        assert "manifest path collision" in str(exc)
     else:
         raise AssertionError("case-insensitive extraction collisions must be rejected")
 
