@@ -432,7 +432,7 @@ class TestPhase258PerSymbolFreshness(unittest.TestCase):
                 ))
             # BTCUSD receives a fresh valid update; ETHUSD receives nothing.
             self.assertTrue(pipeline.trackers["BTCUSD"].process_update(
-                bids=[["100", "2"]], asks=[],
+                bids=[["100", "2"]], asks=[["101", "2"]],
                 sequence=2, venue_timestamp_us=1729500000001000,
                 receipt_mono_ns=7000000000, receipt_utc_ns=8000000000,
             ))
