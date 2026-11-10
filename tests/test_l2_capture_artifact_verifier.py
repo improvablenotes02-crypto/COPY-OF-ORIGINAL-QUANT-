@@ -56,6 +56,38 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
         path.write_text(json.dumps(summary), encoding="utf-8")
         return path
 
+    def test_rejects_non_list_bid_container(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            record = json.loads(raw.read_text())
+            record["raw"]["b"] = "not-a-level-list"
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "invalid bid/ask containers"):
+                verify_capture(summary)
+
+    def test_rejects_malformed_nested_level_when_marked_accepted(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            record = json.loads(raw.read_text())
+            record["raw"]["b"] = [["99"]]
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "malformed accepted bids level"):
+                verify_capture(summary)
+
     def test_verifies_exact_hash_size_and_frame_count(self):
         with tempfile.TemporaryDirectory() as td:
             result = verify_capture(self._write_fixture(Path(td)))
