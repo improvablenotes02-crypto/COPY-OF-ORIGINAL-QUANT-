@@ -11,6 +11,7 @@ import json
 import math
 import re
 import sys
+import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ _MAX_SUMMARY_BYTES = 1024 * 1024
 _MAX_JSONL_RECORD_BYTES = 1024 * 1024
 _MAX_RAW_CAPTURE_BYTES = 10 * 1024 * 1024 * 1024
 _MAX_RAW_CAPTURE_FRAMES = 10_000_000
+_MAX_VERIFICATION_CPU_SECONDS = 900.0
 
 
 class CaptureVerificationError(ValueError):
@@ -86,6 +88,7 @@ def _validate_accepted_book_levels(raw: dict[str, Any], record_number: int) -> N
 
 def verify_capture(summary_path: Path) -> dict[str, Any]:
     summary_path = Path(summary_path)
+    verification_cpu_started = time.process_time()
     if summary_path.is_symlink() or not summary_path.is_file():
         raise CaptureVerificationError("Summary must be a regular, non-symlink file")
     try:
@@ -100,6 +103,8 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         raise CaptureVerificationError("Summary JSON nesting exceeds verifier limit") from exc
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise CaptureVerificationError(f"Cannot read summary JSON: {exc}") from exc
+    if time.process_time() - verification_cpu_started > _MAX_VERIFICATION_CPU_SECONDS:
+        raise CaptureVerificationError("Artifact verification exceeded CPU-time budget")
     if not isinstance(summary, dict):
         raise CaptureVerificationError("Summary root must be a JSON object")
 
@@ -139,6 +144,8 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             if frame_count >= _MAX_RAW_CAPTURE_FRAMES:
                 raise CaptureVerificationError("Raw capture exceeds verifier frame-count limit")
             digest.update(line)
+            if time.process_time() - verification_cpu_started > _MAX_VERIFICATION_CPU_SECONDS:
+                raise CaptureVerificationError("Artifact verification exceeded CPU-time budget")
             if not line.endswith(b"\n"):
                 raise CaptureVerificationError(f"JSONL record {number} is not LF terminated")
             try:
@@ -149,6 +156,8 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
                 raise CaptureVerificationError(f"JSONL record {number} exceeds verifier nesting limit") from exc
             except (UnicodeError, json.JSONDecodeError) as exc:
                 raise CaptureVerificationError(f"JSONL record {number} is invalid: {exc}") from exc
+            if time.process_time() - verification_cpu_started > _MAX_VERIFICATION_CPU_SECONDS:
+                raise CaptureVerificationError("Artifact verification exceeded CPU-time budget")
             if not isinstance(record, dict):
                 raise CaptureVerificationError(f"JSONL record {number} must be an object")
             connection_epoch = record.get("connection_epoch")
