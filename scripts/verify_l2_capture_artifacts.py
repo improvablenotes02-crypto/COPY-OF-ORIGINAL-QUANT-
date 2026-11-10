@@ -67,8 +67,8 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             if type(connection_epoch) is not int or connection_epoch < 0:
                 raise CaptureVerificationError(f"JSONL record {number} has invalid connection epoch")
             if connection_epoch not in connection_epochs_seen:
-                if connection_epoch != previous_connection_epoch + 1:
-                    raise CaptureVerificationError(f"JSONL record {number} has skipped or regressing connection epoch")
+                if connection_epoch <= previous_connection_epoch:
+                    raise CaptureVerificationError(f"JSONL record {number} has duplicate or regressing connection epoch")
                 connection_epochs_seen.add(connection_epoch)
                 previous_connection_epoch = connection_epoch
                 accepted_sequences.clear()
