@@ -79,6 +79,8 @@ class ContinuousStreamingL2CapturePipeline:
         self.malformed_frames_count = 0
         self.rejected_frames_count = 0
         self.unexpected_frames_count = 0
+        self.persistence_errors_count = 0
+        self.persistence_complete = True
         
         self._raw_file_handle: Optional[BinaryIO] = None
         self._raw_capture_path: Optional[Path] = None
@@ -153,60 +155,49 @@ class ContinuousStreamingL2CapturePipeline:
             self.malformed_frames_count += 1
             return False
 
-        record = {
-            "receipt_mono_ns": receipt_mono_ns,
-            "receipt_utc_ns": receipt_utc_ns,
-            "raw": msg,
-        }
-
-        # Deterministic byte encoding with exact LF newline byte
+        symbol = msg.get("sy")
+        if not isinstance(symbol, str) or symbol not in self.trackers:
+            self.rejected_frames_count += 1
+            return False
+        tracker = self.trackers[symbol]
+        action = msg.get("action")
+        if action == "snapshot" or tracker.last_sequence is None:
+            accepted = tracker.process_snapshot(bids=bids, asks=asks, sequence=sequence, venue_timestamp_us=venue_timestamp_us, receipt_mono_ns=receipt_mono_ns, receipt_utc_ns=receipt_utc_ns)
+        else:
+            accepted = tracker.process_update(bids=bids, asks=asks, sequence=sequence, venue_timestamp_us=venue_timestamp_us, receipt_mono_ns=receipt_mono_ns, receipt_utc_ns=receipt_utc_ns)
+        if not accepted:
+            self.rejected_frames_count += 1
+        record = {"receipt_mono_ns":receipt_mono_ns,"receipt_utc_ns":receipt_utc_ns,"raw":msg,"tracker_accepted":accepted}
         encoded_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
-        if self._raw_file_handle is not None:
-            self._raw_file_handle.write(encoded_bytes)
+        if self._raw_file_handle is None:
+            self.persistence_errors_count += 1
+            self.persistence_complete = False
+            self.stop_requested = True
+            return False
+        committed_offset = self.total_bytes_written
+        try:
+            written = self._raw_file_handle.write(encoded_bytes)
+            if written != len(encoded_bytes):
+                raise OSError("Short write while persisting L2 frame")
             self._raw_file_handle.flush()
-            self._hasher.update(encoded_bytes)
-            self.total_frames_written += 1
-            self.total_bytes_written += len(encoded_bytes)
-
-        # Ingest into symbol tracker
-        if msg_type == "ob_updates":
-            symbol = msg.get("sy")
-            if not isinstance(symbol, str) or symbol not in self.trackers:
-                self.rejected_frames_count += 1
-                return False
-            if symbol in self.trackers:
-                tracker = self.trackers[symbol]
-                seq = sequence
-                ts_us = venue_timestamp_us
-                action = msg.get("action")
-
-                if action == "snapshot" or tracker.last_sequence is None:
-                    ok = tracker.process_snapshot(
-                        bids=bids,
-                        asks=asks,
-                        sequence=seq,
-                        venue_timestamp_us=ts_us,
-                        receipt_mono_ns=receipt_mono_ns,
-                        receipt_utc_ns=receipt_utc_ns,
-                    )
-                else:
-                    ok = tracker.process_update(
-                        bids=bids,
-                        asks=asks,
-                        sequence=seq,
-                        venue_timestamp_us=ts_us,
-                        receipt_mono_ns=receipt_mono_ns,
-                        receipt_utc_ns=receipt_utc_ns,
-                    )
-                if not ok:
-                    self.rejected_frames_count += 1
-
-        # Check safety ceiling
+        except (OSError, ValueError):
+            self.persistence_errors_count += 1
+            self.persistence_complete = False
+            self.stop_requested = True
+            try:
+                self._raw_file_handle.seek(committed_offset)
+                self._raw_file_handle.truncate()
+                self._raw_file_handle.flush()
+            except (OSError, ValueError):
+                pass
+            return False
+        self._hasher.update(encoded_bytes)
+        self.total_frames_written += 1
+        self.total_bytes_written += len(encoded_bytes)
         if self.total_bytes_written >= self.max_disk_bytes:
             print(f"[!] Safety disk limit reached ({self.total_bytes_written} bytes >= {self.max_disk_bytes}). Stopping cleanly.")
             self.stop_requested = True
-
-        return True
+        return accepted
 
     async def run(self) -> Dict[str, Any]:
         """Run continuous capture session with streaming disk persistence and reconnect handling."""
@@ -267,7 +258,20 @@ class ContinuousStreamingL2CapturePipeline:
     def finalize_artifacts(self) -> Dict[str, Any]:
         """Close binary streaming file handle, record detached SHA-256 digest, and output summary JSON."""
         if self._raw_file_handle and not self._raw_file_handle.closed:
-            self._raw_file_handle.close()
+            try:
+                self._raw_file_handle.flush()
+                os.fsync(self._raw_file_handle.fileno())
+            except (OSError, ValueError):
+                self.persistence_errors_count += 1
+                self.persistence_complete = False
+                self.stop_requested = True
+            finally:
+                try:
+                    self._raw_file_handle.close()
+                except OSError:
+                    self.persistence_errors_count += 1
+                    self.persistence_complete = False
+                    self.stop_requested = True
 
         raw_sha256 = self._hasher.hexdigest()
         elapsed_sec = (self.end_mono_ns - self.start_mono_ns) / 1_000_000_000.0 if (self.end_mono_ns and self.start_mono_ns) else 0.0
@@ -286,6 +290,8 @@ class ContinuousStreamingL2CapturePipeline:
             "zero_malformed_frames": self.malformed_frames_count == 0,
             "zero_rejected_frames": self.rejected_frames_count == 0,
             "zero_unexpected_frames": self.unexpected_frames_count == 0,
+            "zero_persistence_errors": self.persistence_errors_count == 0,
+            "raw_capture_persistence_complete": self.persistence_complete,
             "all_symbol_books_valid": symbol_books_valid,
             "not_operator_or_safety_stopped": not self.stop_requested,
         }
@@ -311,6 +317,8 @@ class ContinuousStreamingL2CapturePipeline:
             "malformed_frames_count": self.malformed_frames_count,
             "rejected_frames_count": self.rejected_frames_count,
             "unexpected_frames_count": self.unexpected_frames_count,
+            "persistence_errors_count": self.persistence_errors_count,
+            "raw_capture_persistence_complete": self.persistence_complete,
             "raw_capture_file": str(self._raw_capture_path.name) if self._raw_capture_path else None,
             "raw_capture_sha256": raw_sha256,
             "symbol_quality": per_symbol_metrics,
@@ -319,7 +327,27 @@ class ContinuousStreamingL2CapturePipeline:
         }
 
         if self._summary_path:
-            self._summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            temporary_summary = self._summary_path.with_suffix(self._summary_path.suffix + ".tmp")
+            try:
+                with temporary_summary.open("w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary_summary, self._summary_path)
+            except (OSError, ValueError):
+                self.persistence_errors_count += 1
+                self.persistence_complete = False
+                self.stop_requested = True
+                try:
+                    temporary_summary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                summary["persistence_errors_count"] = self.persistence_errors_count
+                summary["raw_capture_persistence_complete"] = False
+                summary["continuity_checks"]["zero_persistence_errors"] = False
+                summary["continuity_checks"]["raw_capture_persistence_complete"] = False
+                summary["continuity_checks"]["not_operator_or_safety_stopped"] = False
+                summary["continuity_evidence_verdict"] = "PARTIAL"
 
         print(f"[+] Capture finalized. Streamed {self.total_frames_written} frames ({self.total_bytes_written} bytes).")
         print(f"[+] Raw binary capture: {self._raw_capture_path} (SHA-256: {raw_sha256})")
