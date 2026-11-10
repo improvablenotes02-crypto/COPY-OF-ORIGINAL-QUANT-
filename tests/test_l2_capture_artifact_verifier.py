@@ -242,7 +242,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             raw = root / "raw.jsonl"
             record = json.loads(raw.read_text())
             record["connection_epoch"] = 1
-            raw_bytes = (json.dumps(record, sort_keys=True) + "\\n").encode("utf-8")
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
             raw.write_bytes(raw_bytes)
             data = json.loads(summary.read_text())
             data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
