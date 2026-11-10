@@ -361,3 +361,129 @@ class TestPhase190UnexpectedFrameClassification(unittest.TestCase):
             self.assertEqual(pipeline.rejected_frames_count, 1)
             summary = pipeline.finalize_artifacts()
         self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
+
+
+class TestPhase257CapturePersistenceIntegrity(unittest.TestCase):
+    def _frame(self, seq=1, symbol="BTCUSD"):
+        return {"type":"ob_updates","sy":symbol,"seq":seq,"ts":1729500000000000+seq,"b":[["82000.0","1.0"]],"a":[["82010.0","1.0"]],"action":"snapshot"}
+    def test_unknown_symbol_not_persisted(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=ContinuousStreamingL2CapturePipeline(symbols=["BTCUSD"],output_dir=Path(td));p._open_streaming_file()
+            self.assertFalse(p._stream_frame(json.dumps(self._frame(symbol="DOGEUSD")),1,2));self.assertEqual(p.total_frames_written,0)
+            p.finalize_artifacts();self.assertEqual(p._raw_capture_path.read_bytes(),b"")
+    def test_rejected_frame_preserved_with_acceptance_flag(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=ContinuousStreamingL2CapturePipeline(symbols=["BTCUSD"],output_dir=Path(td));p._open_streaming_file()
+            self.assertTrue(p._stream_frame(json.dumps(self._frame(1)),1,2));f=self._frame(3);f["action"]="update"
+            self.assertFalse(p._stream_frame(json.dumps(f),3,4));summary=p.finalize_artifacts()
+            rows=[json.loads(x) for x in p._raw_capture_path.read_text().splitlines()]
+            self.assertEqual(len(rows),2);self.assertFalse(rows[1]["tracker_accepted"]);self.assertEqual(summary["continuity_evidence_verdict"],"PARTIAL")
+    def test_disk_write_error_fails_closed_without_hashing_frame(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as td:
+            p=ContinuousStreamingL2CapturePipeline(symbols=["BTCUSD"],output_dir=Path(td));p._open_streaming_file()
+            p._raw_file_handle=Mock();p._raw_file_handle.write.side_effect=OSError("disk full")
+            self.assertFalse(p._stream_frame(json.dumps(self._frame()),1,2));self.assertEqual(p.total_frames_written,0)
+            self.assertEqual(p._hasher.hexdigest(),hashlib.sha256(b"").hexdigest());self.assertTrue(p.stop_requested)
+            self.assertEqual(p.persistence_errors_count,1)
+    def test_missing_file_handle_fails_closed(self):
+        p=ContinuousStreamingL2CapturePipeline(symbols=["BTCUSD"])
+        self.assertFalse(p._stream_frame(json.dumps(self._frame()),1,2));self.assertTrue(p.stop_requested)
+        self.assertEqual(p.persistence_errors_count,1)
+    def test_persistence_failure_prevents_24h_verdict(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=ContinuousStreamingL2CapturePipeline(symbols=["BTCUSD"],output_dir=Path(td));p._open_streaming_file()
+            p.start_mono_ns=1;p.end_mono_ns=86400000000001;p.persistence_errors_count=1;p.persistence_complete=False
+            p.trackers["BTCUSD"].process_snapshot(bids=[["82000","1"]],asks=[["82010","1"]],sequence=1,venue_timestamp_us=1729500000000000)
+            summary=p.finalize_artifacts();self.assertEqual(summary["continuity_evidence_verdict"],"PARTIAL")
+            self.assertFalse(summary["continuity_checks"]["zero_persistence_errors"])
+
+
+class TestPhase258PerSymbolFreshness(unittest.TestCase):
+    def test_reconnect_clears_receipt_freshness_but_preserves_venue_clock(self):
+        from core.research.l2_book_tracker import BookValidityState, L2BookTracker
+        tracker = L2BookTracker("BTCUSD")
+        self.assertTrue(tracker.process_snapshot(
+            bids=[["82000", "1"]], asks=[["82010", "1"]],
+            sequence=99, venue_timestamp_us=1729500000000000,
+            receipt_mono_ns=1000000000, receipt_utc_ns=2000000000,
+        ))
+        tracker.reset("test reconnect")
+        self.assertIsNone(tracker.last_sequence)
+        self.assertIsNone(tracker.last_receipt_mono_ns)
+        self.assertIsNone(tracker.last_receipt_utc_ns)
+        self.assertIsNone(tracker.last_bid_mono_ns)
+        self.assertIsNone(tracker.last_ask_mono_ns)
+        self.assertEqual(tracker.last_venue_timestamp_us, 1729500000000000)
+        self.assertEqual(tracker.state, BookValidityState.RESYNCING)
+
+    def test_active_symbol_cannot_mask_another_symbols_staleness(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = ContinuousStreamingL2CapturePipeline(
+                symbols=["BTCUSD", "ETHUSD"], output_dir=Path(td),
+                stale_threshold_seconds=5.0,
+            )
+            for symbol in ("BTCUSD", "ETHUSD"):
+                tracker = pipeline.trackers[symbol]
+                self.assertTrue(tracker.process_snapshot(
+                    bids=[["100", "1"]], asks=[["101", "1"]],
+                    sequence=1, venue_timestamp_us=1729500000000000,
+                    receipt_mono_ns=1000000000, receipt_utc_ns=2000000000,
+                ))
+            # BTCUSD receives a fresh valid update; ETHUSD receives nothing.
+            self.assertTrue(pipeline.trackers["BTCUSD"].process_update(
+                bids=[["100", "2"]], asks=[["101", "2"]],
+                sequence=2, venue_timestamp_us=1729500000001000,
+                receipt_mono_ns=7000000000, receipt_utc_ns=8000000000,
+            ))
+            pipeline._check_symbol_freshness(7000000000)
+            self.assertEqual(pipeline.freshness_violations_count, 1)
+            self.assertEqual(pipeline.freshness_violations_by_symbol["BTCUSD"], 0)
+            self.assertEqual(pipeline.freshness_violations_by_symbol["ETHUSD"], 1)
+            summary = pipeline.finalize_artifacts()
+            self.assertFalse(summary["continuity_checks"]["zero_symbol_freshness_violations"])
+            self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
+
+
+class TestPhase260ExplicitSnapshotRecovery(unittest.TestCase):
+    def test_deep_delta_cannot_initialize_book_without_explicit_snapshot(self):
+        tracker = L2BookTracker("BTCUSD")
+        deep_bids = [[str(82000 - i), "1"] for i in range(6)]
+        deep_asks = [[str(82010 + i), "1"] for i in range(6)]
+        self.assertFalse(tracker.process_update(
+            bids=deep_bids, asks=deep_asks, sequence=1,
+            venue_timestamp_us=1729500000000000,
+        ))
+        self.assertIsNone(tracker.last_sequence)
+        self.assertEqual(tracker.state, BookValidityState.INVALID)
+        self.assertFalse(tracker.bids)
+        self.assertFalse(tracker.asks)
+
+    def test_reconnect_requires_explicit_snapshot_action(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = ContinuousStreamingL2CapturePipeline(
+                symbols=["BTCUSD"], output_dir=Path(td)
+            )
+            tracker = pipeline.trackers["BTCUSD"]
+            self.assertTrue(tracker.process_snapshot(
+                bids=[["82000", "1"]], asks=[["82010", "1"]],
+                sequence=100, venue_timestamp_us=1729500000000000,
+            ))
+            tracker.reset("test reconnect")
+            pipeline._open_streaming_file()
+            delta = {
+                "type": "ob_updates", "sy": "BTCUSD", "seq": 1,
+                "ts": 1729500000001000,
+                "b": [[str(82000 - i), "1"] for i in range(6)],
+                "a": [[str(82010 + i), "1"] for i in range(6)],
+                "action": "update",
+            }
+            self.assertFalse(pipeline._stream_frame(json.dumps(delta), 100, 200))
+            self.assertIsNone(tracker.last_sequence)
+            self.assertFalse(tracker.bids)
+            snapshot = dict(delta)
+            snapshot["action"] = "snapshot"
+            self.assertTrue(pipeline._stream_frame(json.dumps(snapshot), 300, 400))
+            self.assertEqual(tracker.last_sequence, 1)
+            self.assertEqual(tracker.state, BookValidityState.VALID)
+            pipeline.finalize_artifacts()
