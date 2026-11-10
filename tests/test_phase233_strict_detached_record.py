@@ -73,8 +73,8 @@ def test_rejects_invalid_record_header(tmp_path: Path) -> None:
 def test_rejects_reordered_detached_record_fields(tmp_path: Path) -> None:
     artifact, record = _fixture(tmp_path)
     lines = record.read_text(encoding="utf-8").splitlines()
-    lines[1], lines[2] = lines[2], lines[1]
-    record.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
+    lines[2], lines[3] = lines[3], lines[2]
+    record.write_text("\n".join(lines) + "\n", encoding="utf-8")
     try:
         MODULE.verify_detached_record(artifact, record)
     except RuntimeError as exc:
@@ -86,7 +86,7 @@ def test_rejects_reordered_detached_record_fields(tmp_path: Path) -> None:
 def test_rejects_blank_detached_record_lines(tmp_path: Path) -> None:
     artifact, record = _fixture(tmp_path)
     record.write_text(record.read_text(encoding="utf-8").replace(
-        "Artifact: ", "\\nArtifact: ", 1), encoding="utf-8")
+        "Artifact: ", "\nArtifact: ", 1), encoding="utf-8")
     try:
         MODULE.verify_detached_record(artifact, record)
     except RuntimeError as exc:
