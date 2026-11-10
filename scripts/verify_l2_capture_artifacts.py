@@ -47,6 +47,8 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     frame_count = 0
     rejected_persisted = 0
     previous_receipt_mono_ns = 0
+    previous_connection_epoch = -1
+    connection_epochs_seen: set[int] = set()
     symbol_counts: dict[str, dict[str, int]] = {}
     accepted_sequences: dict[str, int] = {}
     with raw_path.open("rb") as stream:
@@ -61,6 +63,15 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
                 raise CaptureVerificationError(f"JSONL record {number} is invalid: {exc}") from exc
             if not isinstance(record, dict):
                 raise CaptureVerificationError(f"JSONL record {number} must be an object")
+            connection_epoch = record.get("connection_epoch")
+            if type(connection_epoch) is not int or connection_epoch < 0:
+                raise CaptureVerificationError(f"JSONL record {number} has invalid connection epoch")
+            if connection_epoch not in connection_epochs_seen:
+                if connection_epoch != previous_connection_epoch + 1:
+                    raise CaptureVerificationError(f"JSONL record {number} has skipped or regressing connection epoch")
+                connection_epochs_seen.add(connection_epoch)
+                previous_connection_epoch = connection_epoch
+                accepted_sequences.clear()
             if type(record.get("receipt_mono_ns")) is not int or record["receipt_mono_ns"] <= 0:
                 raise CaptureVerificationError(f"JSONL record {number} has invalid monotonic receipt time")
             receipt_mono_ns = record["receipt_mono_ns"]
@@ -114,6 +125,12 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     expected_frames = summary.get("total_raw_frames")
     if type(expected_frames) is not int or expected_frames < 0 or expected_frames != frame_count:
         raise CaptureVerificationError("Raw frame count does not match summary")
+    expected_epochs = summary.get("connection_epoch_count")
+    if type(expected_epochs) is not int or expected_epochs < 1 or expected_epochs != len(connection_epochs_seen):
+        raise CaptureVerificationError("Connection epoch count does not match raw capture")
+    if connection_epochs_seen and min(connection_epochs_seen) != 0:
+        raise CaptureVerificationError("Raw capture connection epochs must begin at zero")
+
     rejected_count = summary.get("rejected_frames_count")
     if type(rejected_count) is not int or rejected_count < rejected_persisted:
         raise CaptureVerificationError("Persisted rejected frames exceed summary rejected count")
