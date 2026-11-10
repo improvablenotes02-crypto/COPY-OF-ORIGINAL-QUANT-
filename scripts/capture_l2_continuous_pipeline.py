@@ -78,6 +78,7 @@ class ContinuousStreamingL2CapturePipeline:
         self.total_bytes_written = 0
         self.malformed_frames_count = 0
         self.rejected_frames_count = 0
+        self.unexpected_frames_count = 0
         
         self._raw_file_handle: Optional[BinaryIO] = None
         self._raw_capture_path: Optional[Path] = None
@@ -122,12 +123,19 @@ class ContinuousStreamingL2CapturePipeline:
         """Parse, validate against tracker, and stream frame to disk with exact-byte running hash."""
         try:
             msg = json.loads(raw_str)
-        except Exception:
+        except (TypeError, ValueError):
+            self.malformed_frames_count += 1
+            return False
+
+        if not isinstance(msg, dict):
             self.malformed_frames_count += 1
             return False
 
         msg_type = msg.get("type")
         if msg_type in ("heartbeat", "subscriptions"):
+            return False
+        if msg_type != "ob_updates":
+            self.unexpected_frames_count += 1
             return False
 
         record = {
@@ -148,7 +156,10 @@ class ContinuousStreamingL2CapturePipeline:
         # Ingest into symbol tracker
         if msg_type == "ob_updates":
             symbol = msg.get("sy")
-            if symbol and symbol in self.trackers:
+            if not isinstance(symbol, str) or symbol not in self.trackers:
+                self.rejected_frames_count += 1
+                return False
+            if symbol in self.trackers:
                 tracker = self.trackers[symbol]
                 seq = msg.get("seq", 0)
                 ts_us = msg.get("ts", 0)
@@ -261,6 +272,7 @@ class ContinuousStreamingL2CapturePipeline:
             "zero_transport_reconnects": self.reconnect_count == 0,
             "zero_malformed_frames": self.malformed_frames_count == 0,
             "zero_rejected_frames": self.rejected_frames_count == 0,
+            "zero_unexpected_frames": self.unexpected_frames_count == 0,
             "all_symbol_books_valid": symbol_books_valid,
             "not_operator_or_safety_stopped": not self.stop_requested,
         }
@@ -285,6 +297,7 @@ class ContinuousStreamingL2CapturePipeline:
             "total_bytes_written": self.total_bytes_written,
             "malformed_frames_count": self.malformed_frames_count,
             "rejected_frames_count": self.rejected_frames_count,
+            "unexpected_frames_count": self.unexpected_frames_count,
             "raw_capture_file": str(self._raw_capture_path.name) if self._raw_capture_path else None,
             "raw_capture_sha256": raw_sha256,
             "symbol_quality": per_symbol_metrics,
