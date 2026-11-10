@@ -539,5 +539,30 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             self.assertEqual(result["persisted_tracker_rejections"], 1)
 
 
+    def test_rejects_excessive_summary_json_nesting_without_recursion_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            content = summary.read_text(encoding="utf-8").rstrip()
+            summary.write_text(content[:-1] + ', "deep": ' + ("[" * 1500) + "0" + ("]" * 1500) + "}", encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "Summary JSON nesting exceeds verifier limit"):
+                verify_capture(summary)
+
+    def test_rejects_excessive_raw_jsonl_nesting_without_recursion_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            line = raw.read_text(encoding="utf-8").rstrip()
+            raw_bytes = (line[:-1] + ', "deep": ' + ("[" * 1500) + "0" + ("]" * 1500) + "}\\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 exceeds verifier nesting limit"):
+                verify_capture(summary)
+
+
 if __name__ == "__main__":
     unittest.main()
