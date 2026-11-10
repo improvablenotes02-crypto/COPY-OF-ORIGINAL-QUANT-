@@ -137,3 +137,30 @@ def test_setup_cli_never_echoes_entered_credentials(monkeypatch, tmp_path):
     saved = target_env.read_text(encoding="utf-8")
     assert "DELTA_INDIA_SANDBOX_API_KEY=synthetic-hidden-key" in saved
     assert "DELTA_INDIA_SANDBOX_API_SECRET=synthetic-hidden-secret" in saved
+
+
+def test_setup_removes_export_prefixed_all_managed_variables(tmp_path):
+    from scripts.configure_delta_credentials import MANAGED_NAMES
+
+    env = tmp_path / ".env"
+    env.write_text(
+        "\n".join("export %s=stale-value" % name for name in sorted(MANAGED_NAMES))
+        + "\nUNRELATED_SETTING=keep-me\n",
+        encoding="utf-8",
+    )
+
+    configure_credentials(
+        region="GLOBAL",
+        environment="SANDBOX",
+        api_key="replacement-key",
+        api_secret="replacement-secret",
+        env_path=env,
+    )
+
+    rendered = env.read_text(encoding="utf-8")
+    assert "UNRELATED_SETTING=keep-me" in rendered
+    assert "stale-value" not in rendered
+    assert rendered.count("DELTA_REGION=") == 1
+    assert rendered.count("DELTA_ENVIRONMENT=") == 1
+    assert "DELTA_SANDBOX_API_KEY=replacement-key" in rendered
+    assert "DELTA_SANDBOX_API_SECRET=replacement-secret" in rendered
