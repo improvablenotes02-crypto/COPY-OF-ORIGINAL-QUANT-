@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -48,6 +49,15 @@ def verify_archive(path: Path) -> tuple[int, list[str]]:
         members = archive.namelist()
         if len(members) != len(set(members)):
             raise RuntimeError("archive contains duplicate member names")
+        for info in archive.infolist():
+            if info.flag_bits & 0x1:
+                raise RuntimeError(f"encrypted ZIP member is not permitted: {info.filename}")
+            mode = (info.external_attr >> 16) & 0xFFFF
+            file_type = stat.S_IFMT(mode)
+            if info.is_dir() or info.filename.endswith("/"):
+                raise RuntimeError(f"directory ZIP entries are not permitted: {info.filename}")
+            if file_type not in (0, stat.S_IFREG):
+                raise RuntimeError(f"non-regular ZIP member is not permitted: {info.filename}")
         damaged = archive.testzip()
         if damaged:
             raise RuntimeError("ZIP CRC failure: " + damaged)
@@ -111,6 +121,20 @@ def verify_archive(path: Path) -> tuple[int, list[str]]:
                     "case/Unicode-normalization manifest path collision: "
                     f"{portable_names[portable_key]!r} and {name!r}"
                 )
+            normalized_parts = portable_key.split("/")
+            for index in range(1, len(normalized_parts)):
+                parent_key = "/".join(normalized_parts[:index])
+                if parent_key in portable_names:
+                    raise RuntimeError(
+                        "file/directory manifest path collision: "
+                        f"{portable_names[parent_key]!r} is a parent of {name!r}"
+                    )
+            for existing_key, existing_name in portable_names.items():
+                if existing_key.startswith(portable_key + "/"):
+                    raise RuntimeError(
+                        "file/directory manifest path collision: "
+                        f"{name!r} is a parent of {existing_name!r}"
+                    )
             portable_names[portable_key] = name
             manifest_hashes[name] = digest
         manifest_paths = set(manifest_hashes)
