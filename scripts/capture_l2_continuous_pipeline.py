@@ -344,6 +344,7 @@ class ContinuousStreamingL2CapturePipeline:
             "persistence_errors_count": self.persistence_errors_count,
             "freshness_violations_count": self.freshness_violations_count,
             "freshness_violations_by_symbol": dict(self.freshness_violations_by_symbol),
+            "configured_symbols": list(self.symbols),
             "raw_capture_persistence_complete": self.persistence_complete,
             "raw_capture_file": str(self._raw_capture_path.name) if self._raw_capture_path else None,
             "raw_capture_sha256": raw_sha256,
