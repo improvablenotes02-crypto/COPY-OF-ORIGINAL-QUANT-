@@ -77,6 +77,6 @@ Use the CI workflows under `.github/workflows/` as the authoritative hosted evid
 
 ## Project status and handoff
 
-The repository's current release posture remains **HOLD / NOT PRODUCTION READY / EDGE NOT ESTABLISHED**. Outstanding work includes the documented cross-platform extraction proof, multi-day market-data evidence, operator credential audit, external tax-invoice reconciliation, complete regression certification, and independent execution/strategy validation.
+The repository's current release posture remains **HOLD / NOT PRODUCTION READY / EDGE NOT ESTABLISHED**. Phases 239–245 have completed the documented cross-platform release-archive and credential-setup hardening work on the continuation branch. Remaining operator and evidence gates include owner-run Sandbox credential verification, multi-day market-data evidence, external tax-invoice reconciliation, independent execution/strategy validation, and release governance.
 
 Read [NEXT_ACTIONS.md](NEXT_ACTIONS.md) before selecting the next engineering task. Update status documents only when supported by reproducible evidence.
