@@ -208,8 +208,64 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         raise CaptureVerificationError("Per-symbol rejected_count does not match rejected raw frames")
 
     checks = summary.get("continuity_checks")
-    if not isinstance(checks, dict) or not checks or any(type(value) is not bool for value in checks.values()):
-        raise CaptureVerificationError("continuity_checks must be a non-empty boolean map")
+    expected_check_names = {
+        "minimum_24h_duration",
+        "zero_transport_reconnects",
+        "zero_malformed_frames",
+        "zero_rejected_frames",
+        "zero_unexpected_frames",
+        "zero_persistence_errors",
+        "zero_symbol_freshness_violations",
+        "raw_capture_persistence_complete",
+        "all_symbol_books_valid",
+        "not_operator_or_safety_stopped",
+    }
+    if (
+        not isinstance(checks, dict)
+        or set(checks) != expected_check_names
+        or any(type(value) is not bool for value in checks.values())
+    ):
+        raise CaptureVerificationError("continuity_checks must contain the exact boolean evidence contract")
+
+    tracker_error_counters = (
+        "gap_count",
+        "duplicate_count",
+        "out_of_order_count",
+        "stale_count",
+        "crossed_book_count",
+        "malformed_count",
+        "rejected_count",
+    )
+    all_books_valid = bool(symbol_quality)
+    for symbol, metrics in symbol_quality.items():
+        state = metrics.get("state")
+        if not isinstance(state, str) or not state:
+            raise CaptureVerificationError(f"Per-symbol tracker state is missing or invalid for {symbol}")
+        if state != "VALID":
+            all_books_valid = False
+        for counter_name in tracker_error_counters:
+            counter_value = metrics.get(counter_name)
+            if type(counter_value) is not int or counter_value < 0:
+                raise CaptureVerificationError(
+                    f"Per-symbol tracker {counter_name} is missing or invalid for {symbol}"
+                )
+    duration_for_checks = summary.get("duration_seconds")
+    if type(duration_for_checks) not in (int, float) or not math.isfinite(duration_for_checks) or duration_for_checks < 0:
+        raise CaptureVerificationError("duration_seconds is missing or invalid")
+    derived_checks = {
+        "minimum_24h_duration": duration_for_checks >= 86400.0,
+        "zero_transport_reconnects": summary.get("reconnect_count") == 0,
+        "zero_malformed_frames": summary.get("malformed_frames_count") == 0,
+        "zero_rejected_frames": summary.get("rejected_frames_count") == 0,
+        "zero_unexpected_frames": summary.get("unexpected_frames_count") == 0,
+        "zero_persistence_errors": summary.get("persistence_errors_count") == 0,
+        "zero_symbol_freshness_violations": summary.get("freshness_violations_count") == 0,
+        "raw_capture_persistence_complete": summary.get("raw_capture_persistence_complete") is True,
+        "all_symbol_books_valid": all_books_valid,
+    }
+    for check_name, expected_value in derived_checks.items():
+        if checks[check_name] is not expected_value:
+            raise CaptureVerificationError(f"continuity_checks.{check_name} conflicts with underlying evidence")
 
     # Summary counters and their derived continuity flags are separate claims.
     # Verify both representations agree so a tampered counter cannot hide behind
