@@ -88,6 +88,8 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         summary = json.loads(summary_path.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float)
     except CaptureVerificationError:
         raise
+    except RecursionError as exc:
+        raise CaptureVerificationError("Summary JSON nesting exceeds verifier limit") from exc
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise CaptureVerificationError(f"Cannot read summary JSON: {exc}") from exc
     if not isinstance(summary, dict):
@@ -124,6 +126,8 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
                 record = json.loads(line, object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float)
             except CaptureVerificationError as exc:
                 raise CaptureVerificationError(f"JSONL record {number} is invalid: {exc}") from exc
+            except RecursionError as exc:
+                raise CaptureVerificationError(f"JSONL record {number} exceeds verifier nesting limit") from exc
             except (UnicodeError, json.JSONDecodeError) as exc:
                 raise CaptureVerificationError(f"JSONL record {number} is invalid: {exc}") from exc
             if not isinstance(record, dict):
