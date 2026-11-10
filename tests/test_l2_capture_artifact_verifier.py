@@ -140,7 +140,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             second = dict(first)
             second["raw"] = dict(first["raw"], seq=2, action="update")
             second["tracker_accepted"] = True
-            raw_bytes = ((json.dumps(first, sort_keys=True) + "\\n") + (json.dumps(second, sort_keys=True) + "\\n")).encode("utf-8")
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\n") + (json.dumps(second, sort_keys=True) + "\n")).encode("utf-8")
             raw.write_bytes(raw_bytes)
             data = json.loads(summary.read_text())
             data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
