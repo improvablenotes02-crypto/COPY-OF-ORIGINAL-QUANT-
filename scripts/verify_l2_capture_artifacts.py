@@ -93,7 +93,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             if type(venue_timestamp_us) is not int or venue_timestamp_us <= 0:
                 raise CaptureVerificationError(f"JSONL record {number} has invalid venue timestamp")
             action = raw.get("action", "update")
-            if action not in {"snapshot", "update"}:
+            if not isinstance(action, str) or action not in {"snapshot", "update"}:
                 raise CaptureVerificationError(f"JSONL record {number} has invalid order-book action")
             if type(record.get("tracker_accepted")) is not bool:
                 raise CaptureVerificationError(f"JSONL record {number} lacks tracker_accepted boolean")
@@ -198,7 +198,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     if sum(freshness_by_symbol.values()) != summary["freshness_violations_count"]:
         raise CaptureVerificationError("Per-symbol freshness counters do not sum to freshness_violations_count")
     verdict = summary.get("continuity_evidence_verdict")
-    if verdict not in {"PARTIAL", "VERIFIED_24H"}:
+    if not isinstance(verdict, str) or verdict not in {"PARTIAL", "VERIFIED_24H"}:
         raise CaptureVerificationError("Unknown continuity evidence verdict")
     duration = summary.get("duration_seconds")
     if type(duration) not in (int, float) or not math.isfinite(duration) or duration < 0:

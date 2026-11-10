@@ -242,7 +242,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             raw = root / "raw.jsonl"
             record = json.loads(raw.read_text())
             record["connection_epoch"] = 1
-            raw_bytes = (json.dumps(record, sort_keys=True) + "\\n").encode("utf-8")
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
             raw.write_bytes(raw_bytes)
             data = json.loads(summary.read_text())
             data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
@@ -299,6 +299,32 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             data["continuity_checks"]["zero_symbol_freshness_violations"] = False
             summary.write_text(json.dumps(data))
             with self.assertRaisesRegex(CaptureVerificationError, "Per-symbol freshness counters do not sum"):
+                verify_capture(summary)
+
+    def test_rejects_non_string_order_book_action_without_type_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            record = json.loads(raw.read_text())
+            record["raw"]["action"] = ["snapshot"]
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "invalid order-book action"):
+                verify_capture(summary)
+
+    def test_rejects_non_string_evidence_verdict_without_type_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["continuity_evidence_verdict"] = ["VERIFIED_24H"]
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "Unknown continuity evidence verdict"):
                 verify_capture(summary)
 
     def test_rejects_verified_verdict_with_short_duration(self):
