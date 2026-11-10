@@ -258,3 +258,50 @@ class TestPhase190BinaryStreamingAndExactHashReproduction(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPhase190ContinuityVerdict(unittest.TestCase):
+    """A long duration alone must never certify uninterrupted capture."""
+
+    def _finalize_24h(self, pipeline):
+        pipeline._open_streaming_file()
+        pipeline.start_mono_ns = 1
+        pipeline.end_mono_ns = 86400000000001
+        pipeline.start_utc_iso = "2026-01-01T00:00:00+00:00"
+        pipeline.end_utc_iso = "2026-01-02T00:00:00+00:00"
+        pipeline.trackers["BTCUSD"].process_snapshot(
+            bids=[["82000.0", "1.0"]], asks=[["82010.0", "1.0"]],
+            sequence=1, venue_timestamp_us=1729500000000000,
+        )
+        return pipeline.finalize_artifacts()
+
+    def test_24h_verdict_requires_all_continuity_checks(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = ContinuousStreamingL2CapturePipeline(
+                symbols=["BTCUSD"], output_dir=Path(td), duration_seconds=86400.0
+            )
+            summary = self._finalize_24h(pipeline)
+        self.assertEqual(summary["continuity_evidence_verdict"], "VERIFIED_24H")
+        self.assertTrue(all(summary["continuity_checks"].values()))
+
+    def test_transport_reconnect_prevents_24h_verification(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = ContinuousStreamingL2CapturePipeline(
+                symbols=["BTCUSD"], output_dir=Path(td), duration_seconds=86400.0
+            )
+            pipeline.reconnect_count = 1
+            summary = self._finalize_24h(pipeline)
+        self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
+        self.assertFalse(summary["continuity_checks"]["zero_transport_reconnects"])
+
+    def test_rejected_or_operator_stopped_capture_remains_partial(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = ContinuousStreamingL2CapturePipeline(
+                symbols=["BTCUSD"], output_dir=Path(td), duration_seconds=86400.0
+            )
+            pipeline.rejected_frames_count = 1
+            pipeline.stop_requested = True
+            summary = self._finalize_24h(pipeline)
+        self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
+        self.assertFalse(summary["continuity_checks"]["zero_rejected_frames"])
+        self.assertFalse(summary["continuity_checks"]["not_operator_or_safety_stopped"])
