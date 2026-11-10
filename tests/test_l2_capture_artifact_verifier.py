@@ -30,6 +30,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             "venue": "delta",
             "environment": "SANDBOX / TESTNET",
             "orders_written_to_exchange": 0,
+            "operator_or_safety_stopped": False,
             "start_utc": start_utc,
             "end_utc": end_utc,
             "target_duration_seconds": 86400.0,
@@ -60,7 +61,13 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 "not_operator_or_safety_stopped": True,
             },
             "continuity_evidence_verdict": "VERIFIED_24H" if accepted else "PARTIAL",
-            "symbol_quality": {"BTCUSD": {"symbol": "BTCUSD", "total_messages": 1, "valid_updates": 1 if accepted else 0, "rejected_count": 0 if accepted else 1}},
+            "symbol_quality": {"BTCUSD": {
+                "symbol": "BTCUSD", "state": "VALID" if accepted else "INVALID",
+                "total_messages": 1, "valid_updates": 1 if accepted else 0,
+                "rejected_count": 0 if accepted else 1,
+                "gap_count": 0, "duplicate_count": 0, "out_of_order_count": 0,
+                "stale_count": 0, "crossed_book_count": 0, "malformed_count": 0,
+            }},
         }
         path = root / "summary.json"
         path.write_text(json.dumps(summary), encoding="utf-8")
@@ -131,6 +138,51 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             data["symbol_quality"]["BTCUSD"]["valid_updates"] = -1
             summary.write_text(json.dumps(data))
             with self.assertRaisesRegex(CaptureVerificationError, "valid_updates is missing or invalid"):
+                verify_capture(summary)
+
+    def test_rejects_stop_flag_conflict(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            data = json.loads(summary.read_text())
+            data["operator_or_safety_stopped"] = True
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "not_operator_or_safety_stopped conflicts"):
+                verify_capture(summary)
+
+    def test_rejects_missing_continuity_check_contract(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            data = json.loads(summary.read_text())
+            del data["continuity_checks"]["all_symbol_books_valid"]
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "exact boolean evidence contract"):
+                verify_capture(summary)
+
+    def test_rejects_tracker_state_flag_conflict(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            data = json.loads(summary.read_text())
+            data["symbol_quality"]["BTCUSD"]["state"] = "INVALID"
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "all_symbol_books_valid conflicts"):
+                verify_capture(summary)
+
+    def test_rejects_negative_tracker_quality_counter(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            data = json.loads(summary.read_text())
+            data["symbol_quality"]["BTCUSD"]["gap_count"] = -1
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "tracker gap_count"):
+                verify_capture(summary)
+
+    def test_rejects_duration_flag_conflict_for_partial_capture(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td), accepted=False)
+            data = json.loads(summary.read_text())
+            data["continuity_checks"]["minimum_24h_duration"] = True
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "minimum_24h_duration conflicts"):
                 verify_capture(summary)
 
     def test_verifies_exact_hash_size_and_frame_count(self):

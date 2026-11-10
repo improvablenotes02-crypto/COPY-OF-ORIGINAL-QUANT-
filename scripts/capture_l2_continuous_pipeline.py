@@ -330,6 +330,7 @@ class ContinuousStreamingL2CapturePipeline:
             "endpoint": self.endpoint,
             "read_only_verified": True,
             "orders_written_to_exchange": 0,
+            "operator_or_safety_stopped": self.stop_requested,
             "start_utc": self.start_utc_iso,
             "end_utc": self.end_utc_iso,
             "duration_seconds": round(elapsed_sec, 3),
@@ -370,6 +371,7 @@ class ContinuousStreamingL2CapturePipeline:
                     pass
                 summary["persistence_errors_count"] = self.persistence_errors_count
                 summary["raw_capture_persistence_complete"] = False
+                summary["operator_or_safety_stopped"] = True
                 summary["continuity_checks"]["zero_persistence_errors"] = False
                 summary["continuity_checks"]["raw_capture_persistence_complete"] = False
                 summary["continuity_checks"]["not_operator_or_safety_stopped"] = False
