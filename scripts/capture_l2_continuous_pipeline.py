@@ -335,7 +335,7 @@ class ContinuousStreamingL2CapturePipeline:
             "duration_seconds": round(elapsed_sec, 3),
             "target_duration_seconds": self.duration_seconds,
             "reconnect_count": self.reconnect_count,
-            "connection_epoch_count": len(self.connection_epochs_with_frames),
+            "connection_epoch_count": self.connection_epoch + 1,
             "total_raw_frames": self.total_frames_written,
             "total_bytes_written": self.total_bytes_written,
             "malformed_frames_count": self.malformed_frames_count,
