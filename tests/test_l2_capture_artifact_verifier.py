@@ -173,6 +173,46 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             with self.assertRaisesRegex(CaptureVerificationError, "before an accepted snapshot"):
                 verify_capture(summary)
 
+
+    def test_allows_empty_connection_epoch_between_persisted_epochs(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            first = json.loads(raw.read_text())
+            second = dict(first)
+            second["connection_epoch"] = 2
+            second["receipt_mono_ns"] = 11
+            second["raw"] = dict(first["raw"], seq=1, action="snapshot")
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\\n") + (json.dumps(second, sort_keys=True) + "\\n")).encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            data["total_raw_frames"] = 2
+            data["connection_epoch_count"] = 3
+            data["symbol_quality"]["BTCUSD"] = {"total_messages": 2, "valid_updates": 2, "rejected_count": 0}
+            summary.write_text(json.dumps(data))
+            result = verify_capture(summary)
+        self.assertTrue(result["integrity_valid"])
+
+    def test_rejects_frame_epoch_outside_summary_connection_count(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            record = json.loads(raw.read_text())
+            record["connection_epoch"] = 1
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            data["connection_epoch_count"] = 1
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "exceeds summary connection count"):
+                verify_capture(summary)
+
     def test_rejects_regressing_connection_epoch(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

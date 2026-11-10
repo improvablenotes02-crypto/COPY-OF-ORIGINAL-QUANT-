@@ -126,10 +126,15 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     if type(expected_frames) is not int or expected_frames < 0 or expected_frames != frame_count:
         raise CaptureVerificationError("Raw frame count does not match summary")
     expected_epochs = summary.get("connection_epoch_count")
-    if type(expected_epochs) is not int or expected_epochs < 1 or expected_epochs != len(connection_epochs_seen):
-        raise CaptureVerificationError("Connection epoch count does not match raw capture")
+    if type(expected_epochs) is not int or expected_epochs < 1:
+        raise CaptureVerificationError("Connection epoch count is missing or invalid")
     if connection_epochs_seen and min(connection_epochs_seen) != 0:
         raise CaptureVerificationError("Raw capture connection epochs must begin at zero")
+    if connection_epochs_seen and max(connection_epochs_seen) >= expected_epochs:
+        raise CaptureVerificationError("Raw capture connection epoch exceeds summary connection count")
+    # Epoch IDs count successful transport connections, including connections
+    # that closed before yielding a persistable frame. Gaps are therefore valid;
+    # ordering and the summary's upper bound are the independently verifiable facts.
 
     rejected_count = summary.get("rejected_frames_count")
     if type(rejected_count) is not int or rejected_count < rejected_persisted:
