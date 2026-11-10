@@ -165,6 +165,38 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     checks = summary.get("continuity_checks")
     if not isinstance(checks, dict) or not checks or any(type(value) is not bool for value in checks.values()):
         raise CaptureVerificationError("continuity_checks must be a non-empty boolean map")
+
+    # Summary counters and their derived continuity flags are separate claims.
+    # Verify both representations agree so a tampered counter cannot hide behind
+    # a stale/forged boolean map (or vice versa).
+    counter_checks = {
+        "reconnect_count": "zero_transport_reconnects",
+        "malformed_frames_count": "zero_malformed_frames",
+        "rejected_frames_count": "zero_rejected_frames",
+        "unexpected_frames_count": "zero_unexpected_frames",
+        "persistence_errors_count": "zero_persistence_errors",
+        "freshness_violations_count": "zero_symbol_freshness_violations",
+    }
+    for counter_name, check_name in counter_checks.items():
+        counter = summary.get(counter_name)
+        if type(counter) is not int or counter < 0:
+            raise CaptureVerificationError(f"{counter_name} is missing or invalid")
+        if checks.get(check_name) is not (counter == 0):
+            raise CaptureVerificationError(f"{counter_name} conflicts with continuity_checks.{check_name}")
+
+    persistence_complete = summary.get("raw_capture_persistence_complete")
+    if type(persistence_complete) is not bool:
+        raise CaptureVerificationError("raw_capture_persistence_complete is missing or invalid")
+    if checks.get("raw_capture_persistence_complete") is not persistence_complete:
+        raise CaptureVerificationError("raw_capture_persistence_complete conflicts with continuity_checks")
+    freshness_by_symbol = summary.get("freshness_violations_by_symbol")
+    if not isinstance(freshness_by_symbol, dict) or any(
+        not isinstance(symbol, str) or type(count) is not int or count < 0
+        for symbol, count in freshness_by_symbol.items()
+    ):
+        raise CaptureVerificationError("freshness_violations_by_symbol is missing or invalid")
+    if sum(freshness_by_symbol.values()) != summary["freshness_violations_count"]:
+        raise CaptureVerificationError("Per-symbol freshness counters do not sum to freshness_violations_count")
     verdict = summary.get("continuity_evidence_verdict")
     if verdict not in {"PARTIAL", "VERIFIED_24H"}:
         raise CaptureVerificationError("Unknown continuity evidence verdict")
