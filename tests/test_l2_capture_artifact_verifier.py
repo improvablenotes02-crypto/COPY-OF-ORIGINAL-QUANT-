@@ -565,6 +565,19 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 verify_capture(summary)
 
 
+    def test_rejects_verification_cpu_budget_exhaustion(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            with patch("scripts.verify_l2_capture_artifacts.time.process_time", side_effect=[0.0, 901.0]):
+                with self.assertRaisesRegex(CaptureVerificationError, "Artifact verification exceeded CPU-time budget"):
+                    verify_capture(summary)
+
+    def test_accepts_verification_within_cpu_budget(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            with patch("scripts.verify_l2_capture_artifacts.time.process_time", return_value=0.0):
+                self.assertTrue(verify_capture(summary)["integrity_valid"])
+
     def test_rejects_oversized_summary(self):
         with tempfile.TemporaryDirectory() as td:
             summary = self._write_fixture(Path(td))
