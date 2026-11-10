@@ -78,6 +78,7 @@ class ContinuousStreamingL2CapturePipeline:
         self.total_bytes_written = 0
         self.malformed_frames_count = 0
         self.rejected_frames_count = 0
+        self.unexpected_frames_count = 0
         
         self._raw_file_handle: Optional[BinaryIO] = None
         self._raw_capture_path: Optional[Path] = None
@@ -86,9 +87,10 @@ class ContinuousStreamingL2CapturePipeline:
 
     def _build_subscription_payload(self) -> Dict[str, Any]:
         """Construct read-only subscription payload for public orderbook and trades."""
+        # This pipeline certifies L2 continuity only; subscribe only to the
+        # channel that this handler ingests.
         channels = [
             {"name": "ob_updates", "symbols": self.symbols},
-            {"name": "all_trades", "symbols": self.symbols},
         ]
         return {
             "type": "subscribe",
@@ -122,12 +124,33 @@ class ContinuousStreamingL2CapturePipeline:
         """Parse, validate against tracker, and stream frame to disk with exact-byte running hash."""
         try:
             msg = json.loads(raw_str)
-        except Exception:
+        except (TypeError, ValueError):
+            self.malformed_frames_count += 1
+            return False
+
+        if not isinstance(msg, dict):
             self.malformed_frames_count += 1
             return False
 
         msg_type = msg.get("type")
         if msg_type in ("heartbeat", "subscriptions"):
+            return False
+        if msg_type != "ob_updates":
+            self.unexpected_frames_count += 1
+            return False
+
+        # Validate required envelope fields before persistence or ingestion.
+        # bool is excluded explicitly because it subclasses int in Python.
+        sequence = msg.get("seq")
+        venue_timestamp_us = msg.get("ts")
+        bids = msg.get("b")
+        asks = msg.get("a")
+        if (
+            type(sequence) is not int or sequence <= 0
+            or type(venue_timestamp_us) is not int or venue_timestamp_us <= 0
+            or not isinstance(bids, list) or not isinstance(asks, list)
+        ):
+            self.malformed_frames_count += 1
             return False
 
         record = {
@@ -148,12 +171,13 @@ class ContinuousStreamingL2CapturePipeline:
         # Ingest into symbol tracker
         if msg_type == "ob_updates":
             symbol = msg.get("sy")
-            if symbol and symbol in self.trackers:
+            if not isinstance(symbol, str) or symbol not in self.trackers:
+                self.rejected_frames_count += 1
+                return False
+            if symbol in self.trackers:
                 tracker = self.trackers[symbol]
-                seq = msg.get("seq", 0)
-                ts_us = msg.get("ts", 0)
-                bids = msg.get("b", [])
-                asks = msg.get("a", [])
+                seq = sequence
+                ts_us = venue_timestamp_us
                 action = msg.get("action")
 
                 if action == "snapshot" or tracker.last_sequence is None:
@@ -252,6 +276,23 @@ class ContinuousStreamingL2CapturePipeline:
         for sym, tr in self.trackers.items():
             per_symbol_metrics[sym] = tr.summary_dict()
 
+        symbol_books_valid = bool(self.trackers) and all(
+            tracker.state == BookValidityState.VALID
+            for tracker in self.trackers.values()
+        )
+        continuity_checks = {
+            "minimum_24h_duration": elapsed_sec >= 86400.0,
+            "zero_transport_reconnects": self.reconnect_count == 0,
+            "zero_malformed_frames": self.malformed_frames_count == 0,
+            "zero_rejected_frames": self.rejected_frames_count == 0,
+            "zero_unexpected_frames": self.unexpected_frames_count == 0,
+            "all_symbol_books_valid": symbol_books_valid,
+            "not_operator_or_safety_stopped": not self.stop_requested,
+        }
+        continuity_verdict = (
+            "VERIFIED_24H" if all(continuity_checks.values()) else "PARTIAL"
+        )
+
         summary = {
             "phase": self.phase,
             "session_id": f"phase{self.phase}-l2-{self._raw_capture_path.stem if self._raw_capture_path else 'unknown'}",
@@ -269,10 +310,12 @@ class ContinuousStreamingL2CapturePipeline:
             "total_bytes_written": self.total_bytes_written,
             "malformed_frames_count": self.malformed_frames_count,
             "rejected_frames_count": self.rejected_frames_count,
+            "unexpected_frames_count": self.unexpected_frames_count,
             "raw_capture_file": str(self._raw_capture_path.name) if self._raw_capture_path else None,
             "raw_capture_sha256": raw_sha256,
             "symbol_quality": per_symbol_metrics,
-            "continuity_evidence_verdict": "PARTIAL" if elapsed_sec < 86400.0 else "VERIFIED_24H",
+            "continuity_evidence_verdict": continuity_verdict,
+            "continuity_checks": continuity_checks,
         }
 
         if self._summary_path:

@@ -123,6 +123,31 @@ class L2BookTracker:
             self.state = new_state
             self.state_history.append((time.time(), new_state, reason))
 
+    def _validate_event_metadata(self, sequence: int, venue_timestamp_us: int) -> bool:
+        """Reject invalid counters and venue-clock regressions before mutating book state."""
+        if type(sequence) is not int or sequence <= 0:
+            self.metrics.malformed_count += 1
+            self.metrics.rejected_count += 1
+            self._record_state_change(BookValidityState.INVALID, "Invalid sequence metadata")
+            return False
+        if type(venue_timestamp_us) is not int or venue_timestamp_us <= 0:
+            self.metrics.malformed_count += 1
+            self.metrics.rejected_count += 1
+            self._record_state_change(BookValidityState.INVALID, "Invalid venue timestamp metadata")
+            return False
+        if (
+            self.last_venue_timestamp_us is not None
+            and venue_timestamp_us < self.last_venue_timestamp_us
+        ):
+            self.metrics.out_of_order_count += 1
+            self.metrics.rejected_count += 1
+            self._record_state_change(
+                BookValidityState.SEQUENCE_GAP,
+                f"Venue timestamp regressed: {venue_timestamp_us} < {self.last_venue_timestamp_us}",
+            )
+            return False
+        return True
+
     def reset(self, reason: str = "Manual reset") -> None:
         """Reset book to initializing state upon disconnect or unrecoverable gap."""
         self.bids.clear()
@@ -145,45 +170,71 @@ class L2BookTracker:
         """Initialize or resynchronize book from full L2 snapshot."""
         now_mono = receipt_mono_ns if receipt_mono_ns is not None else time.monotonic_ns()
         now_utc = receipt_utc_ns if receipt_utc_ns is not None else time.time_ns()
-        
-        self._record_timestamps(now_utc, now_mono)
-        self.metrics.total_messages += 1
-        self.metrics.resync_count += 1
 
-        self.bids.clear()
-        self.asks.clear()
-        if bids:
-            self.last_bid_mono_ns = now_mono
-        if asks:
-            self.last_ask_mono_ns = now_mono
-        
+        self.metrics.total_messages += 1
+        if not self._validate_event_metadata(sequence, venue_timestamp_us):
+            return False
+        # Parse and validate into temporary maps. A bad replacement snapshot must
+        # never erase or partially overwrite the last committed book.
+        next_bids: Dict[Decimal, Decimal] = {}
+        next_asks: Dict[Decimal, Decimal] = {}
         try:
             for p_str, q_str in bids:
                 p = Decimal(str(p_str))
                 q = Decimal(str(q_str))
+                if not p.is_finite() or not q.is_finite():
+                    raise ValueError("Non-finite snapshot price/size")
                 if q > Decimal("0"):
-                    self.bids[p] = q
-                    
+                    next_bids[p] = q
+
             for p_str, q_str in asks:
                 p = Decimal(str(p_str))
                 q = Decimal(str(q_str))
+                if not p.is_finite() or not q.is_finite():
+                    raise ValueError("Non-finite snapshot price/size")
                 if q > Decimal("0"):
-                    self.asks[p] = q
-        except Exception:
+                    next_asks[p] = q
+        except (TypeError, ValueError, ArithmeticError):
             self.metrics.malformed_count += 1
             self.metrics.rejected_count += 1
             self._record_state_change(BookValidityState.INVALID, "Malformed snapshot price/size")
             return False
 
+        if not next_bids or not next_asks:
+            self._record_state_change(BookValidityState.INVALID, "Empty bid or ask snapshot")
+            self.metrics.rejected_count += 1
+            return False
+        best_bid = max(next_bids)
+        best_ask = min(next_asks)
+        if best_bid <= Decimal("0") or best_ask <= Decimal("0"):
+            self._record_state_change(BookValidityState.INVALID, "Non-positive snapshot touch price")
+            self.metrics.rejected_count += 1
+            return False
+        if best_bid >= best_ask:
+            self.metrics.crossed_book_count += 1
+            self.metrics.rejected_count += 1
+            self._record_state_change(
+                BookValidityState.INVALID,
+                f"Crossed snapshot: best_bid ({best_bid}) >= best_ask ({best_ask})",
+            )
+            return False
+        if self.tick_size is not None and self.tick_size > Decimal("0"):
+            if best_bid % self.tick_size != Decimal("0") or best_ask % self.tick_size != Decimal("0"):
+                self.metrics.rejected_count += 1
+                self._record_state_change(BookValidityState.INVALID, "Snapshot touch price violates tick size")
+                return False
+
+        # Commit only after the complete snapshot has passed validation.
+        self.bids = next_bids
+        self.asks = next_asks
+        self._record_timestamps(now_utc, now_mono)
+        self.metrics.resync_count += 1
+        self.last_bid_mono_ns = now_mono
+        self.last_ask_mono_ns = now_mono
         self.last_sequence = sequence
         self.last_venue_timestamp_us = venue_timestamp_us
         self.last_receipt_mono_ns = now_mono
         self.last_receipt_utc_ns = now_utc
-
-        # Validate book integrity
-        if not self._validate_book_integrity():
-            self.metrics.rejected_count += 1
-            return False
 
         self._record_state_change(BookValidityState.VALID, f"Snapshot loaded at seq {sequence}")
         self.metrics.valid_updates += 1
@@ -202,8 +253,10 @@ class L2BookTracker:
         """Apply incremental L2 book delta with strict sequence validation."""
         now_mono = receipt_mono_ns if receipt_mono_ns is not None else time.monotonic_ns()
         now_utc = receipt_utc_ns if receipt_utc_ns is not None else time.time_ns()
-        self._record_timestamps(now_utc, now_mono)
         self.metrics.total_messages += 1
+        if not self._validate_event_metadata(sequence, venue_timestamp_us):
+            return False
+        self._record_timestamps(now_utc, now_mono)
 
         # Check if initialized
         if self.last_sequence is None or self.state in (BookValidityState.INITIALIZING, BookValidityState.RESYNCING):

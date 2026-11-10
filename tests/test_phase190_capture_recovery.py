@@ -258,3 +258,106 @@ class TestPhase190BinaryStreamingAndExactHashReproduction(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPhase190ContinuityVerdict(unittest.TestCase):
+    """A long duration alone must never certify uninterrupted capture."""
+
+    def _finalize_24h(self, pipeline):
+        pipeline._open_streaming_file()
+        pipeline.start_mono_ns = 1
+        pipeline.end_mono_ns = 86400000000001
+        pipeline.start_utc_iso = "2026-01-01T00:00:00+00:00"
+        pipeline.end_utc_iso = "2026-01-02T00:00:00+00:00"
+        pipeline.trackers["BTCUSD"].process_snapshot(
+            bids=[["82000.0", "1.0"]], asks=[["82010.0", "1.0"]],
+            sequence=1, venue_timestamp_us=1729500000000000,
+        )
+        return pipeline.finalize_artifacts()
+
+    def test_24h_verdict_requires_all_continuity_checks(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = ContinuousStreamingL2CapturePipeline(
+                symbols=["BTCUSD"], output_dir=Path(td), duration_seconds=86400.0
+            )
+            summary = self._finalize_24h(pipeline)
+        self.assertEqual(summary["continuity_evidence_verdict"], "VERIFIED_24H")
+        self.assertTrue(all(summary["continuity_checks"].values()))
+
+    def test_transport_reconnect_prevents_24h_verification(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = ContinuousStreamingL2CapturePipeline(
+                symbols=["BTCUSD"], output_dir=Path(td), duration_seconds=86400.0
+            )
+            pipeline.reconnect_count = 1
+            summary = self._finalize_24h(pipeline)
+        self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
+        self.assertFalse(summary["continuity_checks"]["zero_transport_reconnects"])
+
+    def test_rejected_or_operator_stopped_capture_remains_partial(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = ContinuousStreamingL2CapturePipeline(
+                symbols=["BTCUSD"], output_dir=Path(td), duration_seconds=86400.0
+            )
+            pipeline.rejected_frames_count = 1
+            pipeline.stop_requested = True
+            summary = self._finalize_24h(pipeline)
+        self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
+        self.assertFalse(summary["continuity_checks"]["zero_rejected_frames"])
+        self.assertFalse(summary["continuity_checks"]["not_operator_or_safety_stopped"])
+
+
+class TestPhase190UnexpectedFrameClassification(unittest.TestCase):
+    def test_subscription_requests_only_order_book_updates(self):
+        pipeline = ContinuousStreamingL2CapturePipeline(symbols=["BTCUSD"])
+        channels = pipeline._build_subscription_payload()["payload"]["channels"]
+        self.assertEqual(channels, [{"name": "ob_updates", "symbols": ["BTCUSD"]}])
+
+    def test_boolean_or_nonpositive_sequence_and_timestamp_are_malformed(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = self._pipeline(td)
+            base = {"type": "ob_updates", "sy": "BTCUSD", "seq": 1, "ts": 100,
+                    "b": [["82000.0", "1.0"]], "a": [["82010.0", "1.0"]]}
+            for field, value in (("seq", True), ("seq", 0), ("ts", False), ("ts", -1)):
+                frame = dict(base)
+                frame[field] = value
+                self.assertFalse(pipeline._stream_frame(json.dumps(frame), 1, 1))
+            self.assertEqual(pipeline.malformed_frames_count, 4)
+            self.assertEqual(pipeline.total_frames_written, 0)
+            summary = pipeline.finalize_artifacts()
+        self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
+
+    def _pipeline(self, td):
+        pipeline = ContinuousStreamingL2CapturePipeline(
+            symbols=["BTCUSD"], output_dir=Path(td), duration_seconds=86400.0
+        )
+        pipeline._open_streaming_file()
+        return pipeline
+
+    def test_non_object_json_is_counted_as_malformed_without_crashing(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = self._pipeline(td)
+            self.assertFalse(pipeline._stream_frame("[]", 1, 1))
+            self.assertFalse(pipeline._stream_frame("null", 2, 2))
+            self.assertEqual(pipeline.malformed_frames_count, 2)
+            summary = pipeline.finalize_artifacts()
+        self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
+
+    def test_unexpected_message_type_is_not_persisted_as_valid_capture_frame(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = self._pipeline(td)
+            self.assertFalse(pipeline._stream_frame(json.dumps({"type": "ticker"}), 1, 1))
+            self.assertEqual(pipeline.unexpected_frames_count, 1)
+            summary = pipeline.finalize_artifacts()
+        self.assertEqual(summary["unexpected_frames_count"], 1)
+        self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
+
+    def test_unconfigured_symbol_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = self._pipeline(td)
+            frame = {"type": "ob_updates", "sy": "DOGEUSD", "seq": 1, "ts": 100,
+                     "b": [["1.0", "1.0"]], "a": [["1.1", "1.0"]]}
+            self.assertFalse(pipeline._stream_frame(json.dumps(frame), 1, 1))
+            self.assertEqual(pipeline.rejected_frames_count, 1)
+            summary = pipeline.finalize_artifacts()
+        self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
