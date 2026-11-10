@@ -611,3 +611,70 @@ def test_crossed_replacement_snapshot_preserves_committed_book_atomically():
             tracker.last_venue_timestamp_us) == original
     assert tracker.metrics.crossed_book_count == 1
     assert tracker.state == BookValidityState.INVALID
+
+
+
+def test_malformed_delta_preserves_committed_book_and_metadata_atomically():
+    tracker = L2BookTracker("BTCUSD")
+    assert tracker.process_snapshot(
+        bids=[["80000", "2"]], asks=[["80010", "3"]],
+        sequence=10, venue_timestamp_us=1_000_000,
+        receipt_mono_ns=100, receipt_utc_ns=1_000,
+    )
+    original = (
+        dict(tracker.bids), dict(tracker.asks), tracker.last_sequence,
+        tracker.last_venue_timestamp_us, tracker.last_receipt_mono_ns,
+        tracker.last_receipt_utc_ns, tracker.last_bid_mono_ns,
+        tracker.last_ask_mono_ns,
+    )
+    assert not tracker.process_update(
+        bids=[["80005", "1"], ["BAD_PRICE", "2"]], asks=[],
+        sequence=11, venue_timestamp_us=1_100_000,
+        receipt_mono_ns=200, receipt_utc_ns=2_000,
+    )
+    current = (
+        tracker.bids, tracker.asks, tracker.last_sequence,
+        tracker.last_venue_timestamp_us, tracker.last_receipt_mono_ns,
+        tracker.last_receipt_utc_ns, tracker.last_bid_mono_ns,
+        tracker.last_ask_mono_ns,
+    )
+    assert current == original
+    assert tracker.state == BookValidityState.INVALID
+    assert not tracker.execution_eligible
+
+
+def test_malformed_ask_delta_rolls_back_prior_bid_changes():
+    tracker = L2BookTracker("BTCUSD")
+    assert tracker.process_snapshot(
+        bids=[["80000", "2"]], asks=[["80010", "3"]],
+        sequence=10, venue_timestamp_us=1_000_000,
+    )
+    original_bids = dict(tracker.bids)
+    original_asks = dict(tracker.asks)
+    assert not tracker.process_update(
+        bids=[["80005", "1"]], asks=[["BAD_PRICE", "2"]],
+        sequence=11, venue_timestamp_us=1_100_000,
+    )
+    assert tracker.bids == original_bids
+    assert tracker.asks == original_asks
+    assert tracker.last_sequence == 10
+    assert tracker.last_venue_timestamp_us == 1_000_000
+
+
+def test_crossing_delta_is_rejected_without_committing_any_level():
+    tracker = L2BookTracker("BTCUSD")
+    assert tracker.process_snapshot(
+        bids=[["80000", "2"]], asks=[["80010", "3"]],
+        sequence=10, venue_timestamp_us=1_000_000,
+    )
+    original_bids = dict(tracker.bids)
+    original_asks = dict(tracker.asks)
+    assert not tracker.process_update(
+        bids=[["80010", "1"]], asks=[],
+        sequence=11, venue_timestamp_us=1_100_000,
+    )
+    assert tracker.bids == original_bids
+    assert tracker.asks == original_asks
+    assert tracker.last_sequence == 10
+    assert tracker.state == BookValidityState.INVALID
+    assert not tracker.execution_eligible
