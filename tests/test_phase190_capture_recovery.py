@@ -308,6 +308,25 @@ class TestPhase190ContinuityVerdict(unittest.TestCase):
 
 
 class TestPhase190UnexpectedFrameClassification(unittest.TestCase):
+    def test_subscription_requests_only_order_book_updates(self):
+        pipeline = ContinuousStreamingL2CapturePipeline(symbols=["BTCUSD"])
+        channels = pipeline._build_subscription_payload()["payload"]["channels"]
+        self.assertEqual(channels, [{"name": "ob_updates", "symbols": ["BTCUSD"]}])
+
+    def test_boolean_or_nonpositive_sequence_and_timestamp_are_malformed(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = self._pipeline(td)
+            base = {"type": "ob_updates", "sy": "BTCUSD", "seq": 1, "ts": 100,
+                    "b": [["82000.0", "1.0"]], "a": [["82010.0", "1.0"]]}
+            for field, value in (("seq", True), ("seq", 0), ("ts", False), ("ts", -1)):
+                frame = dict(base)
+                frame[field] = value
+                self.assertFalse(pipeline._stream_frame(json.dumps(frame), 1, 1))
+            self.assertEqual(pipeline.malformed_frames_count, 4)
+            self.assertEqual(pipeline.total_frames_written, 0)
+            summary = pipeline.finalize_artifacts()
+        self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
+
     def _pipeline(self, td):
         pipeline = ContinuousStreamingL2CapturePipeline(
             symbols=["BTCUSD"], output_dir=Path(td), duration_seconds=86400.0
