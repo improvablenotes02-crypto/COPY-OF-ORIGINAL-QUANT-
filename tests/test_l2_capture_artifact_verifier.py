@@ -60,7 +60,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 "not_operator_or_safety_stopped": True,
             },
             "continuity_evidence_verdict": "VERIFIED_24H" if accepted else "PARTIAL",
-            "symbol_quality": {"BTCUSD": {"total_messages": 1, "valid_updates": 1 if accepted else 0, "rejected_count": 0 if accepted else 1}},
+            "symbol_quality": {"BTCUSD": {"symbol": "BTCUSD", "total_messages": 1, "valid_updates": 1 if accepted else 0, "rejected_count": 0 if accepted else 1}},
         }
         path = root / "summary.json"
         path.write_text(json.dumps(summary), encoding="utf-8")
@@ -95,6 +95,42 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             data["session_id"] = "phase190-l2-wrong-phase"
             summary.write_text(json.dumps(data))
             with self.assertRaisesRegex(CaptureVerificationError, "does not match summary phase"):
+                verify_capture(summary)
+
+    def test_rejects_freshness_inventory_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            data = json.loads(summary.read_text())
+            data["freshness_violations_by_symbol"] = {"ETHUSD": 0}
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "freshness inventory"):
+                verify_capture(summary)
+
+    def test_rejects_symbol_quality_identity_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            data = json.loads(summary.read_text())
+            data["symbol_quality"]["BTCUSD"]["symbol"] = "ETHUSD"
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "identity mismatch"):
+                verify_capture(summary)
+
+    def test_rejects_inconsistent_per_symbol_aggregate(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            data = json.loads(summary.read_text())
+            data["symbol_quality"]["BTCUSD"]["total_messages"] = 2
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "total_messages do not sum"):
+                verify_capture(summary)
+
+    def test_rejects_negative_per_symbol_metric(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            data = json.loads(summary.read_text())
+            data["symbol_quality"]["BTCUSD"]["valid_updates"] = -1
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "valid_updates is missing or invalid"):
                 verify_capture(summary)
 
     def test_verifies_exact_hash_size_and_frame_count(self):
