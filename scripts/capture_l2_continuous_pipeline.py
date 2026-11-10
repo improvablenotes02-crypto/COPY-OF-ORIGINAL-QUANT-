@@ -81,11 +81,28 @@ class ContinuousStreamingL2CapturePipeline:
         self.unexpected_frames_count = 0
         self.persistence_errors_count = 0
         self.persistence_complete = True
+        self.freshness_violations_count = 0
+        self.freshness_violations_by_symbol = {symbol: 0 for symbol in self.symbols}
+        self._stale_symbols = set()
         
         self._raw_file_handle: Optional[BinaryIO] = None
         self._raw_capture_path: Optional[Path] = None
         self._summary_path: Optional[Path] = None
         self._hasher = hashlib.sha256()
+
+    def _check_symbol_freshness(self, now_mono_ns: int) -> None:
+        """Record every per-symbol stale episode; activity on another symbol cannot mask it."""
+        for symbol, tracker in self.trackers.items():
+            if tracker.last_sequence is None:
+                continue
+            stale = tracker.check_staleness(now_mono_ns)
+            if stale:
+                if symbol not in self._stale_symbols:
+                    self._stale_symbols.add(symbol)
+                    self.freshness_violations_count += 1
+                    self.freshness_violations_by_symbol[symbol] = self.freshness_violations_by_symbol.get(symbol, 0) + 1
+            elif tracker.state == BookValidityState.VALID:
+                self._stale_symbols.discard(symbol)
 
     def _build_subscription_payload(self) -> Dict[str, Any]:
         """Construct read-only subscription payload for public orderbook and trades."""
@@ -167,6 +184,8 @@ class ContinuousStreamingL2CapturePipeline:
             accepted = tracker.process_update(bids=bids, asks=asks, sequence=sequence, venue_timestamp_us=venue_timestamp_us, receipt_mono_ns=receipt_mono_ns, receipt_utc_ns=receipt_utc_ns)
         if not accepted:
             self.rejected_frames_count += 1
+        elif tracker.state == BookValidityState.VALID:
+            self._stale_symbols.discard(symbol)
         record = {"receipt_mono_ns":receipt_mono_ns,"receipt_utc_ns":receipt_utc_ns,"raw":msg,"tracker_accepted":accepted}
         encoded_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
         if self._raw_file_handle is None:
@@ -229,8 +248,7 @@ class ContinuousStreamingL2CapturePipeline:
 
                     while time.monotonic() < deadline_mono and not self.stop_requested:
                         now_mono = time.monotonic_ns()
-                        for tr in self.trackers.values():
-                            tr.check_staleness(now_mono)
+                        self._check_symbol_freshness(now_mono)
 
                         remaining = max(0.1, deadline_mono - time.monotonic())
                         try:
@@ -291,6 +309,7 @@ class ContinuousStreamingL2CapturePipeline:
             "zero_rejected_frames": self.rejected_frames_count == 0,
             "zero_unexpected_frames": self.unexpected_frames_count == 0,
             "zero_persistence_errors": self.persistence_errors_count == 0,
+            "zero_symbol_freshness_violations": self.freshness_violations_count == 0,
             "raw_capture_persistence_complete": self.persistence_complete,
             "all_symbol_books_valid": symbol_books_valid,
             "not_operator_or_safety_stopped": not self.stop_requested,
@@ -318,6 +337,8 @@ class ContinuousStreamingL2CapturePipeline:
             "rejected_frames_count": self.rejected_frames_count,
             "unexpected_frames_count": self.unexpected_frames_count,
             "persistence_errors_count": self.persistence_errors_count,
+            "freshness_violations_count": self.freshness_violations_count,
+            "freshness_violations_by_symbol": dict(self.freshness_violations_by_symbol),
             "raw_capture_persistence_complete": self.persistence_complete,
             "raw_capture_file": str(self._raw_capture_path.name) if self._raw_capture_path else None,
             "raw_capture_sha256": raw_sha256,
