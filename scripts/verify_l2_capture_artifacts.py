@@ -51,11 +51,11 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         raise CaptureVerificationError("Raw capture byte count does not match summary")
 
     rows = raw_bytes.splitlines(keepends=True)
-    if raw_bytes and (not rows or not rows[-1].endswith(b"\\n")):
+    if raw_bytes and (not rows or not rows[-1].endswith(b"\n")):
         raise CaptureVerificationError("Raw capture ends with an incomplete JSONL record")
     rejected_persisted = 0
     for number, line in enumerate(rows, start=1):
-        if not line.endswith(b"\\n"):
+        if not line.endswith(b"\n"):
             raise CaptureVerificationError(f"JSONL record {number} is not LF terminated")
         try:
             record = json.loads(line)
