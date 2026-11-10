@@ -22,7 +22,17 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
         }
         raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
         raw.write_bytes(raw_bytes)
+        start_utc = "2025-01-01T00:00:00+00:00"
+        end_utc = "2025-01-02T00:00:00+00:00" if accepted else "2025-01-01T00:02:00+00:00"
         summary = {
+            "phase": 191,
+            "session_id": "phase191-l2-test-fixture",
+            "venue": "delta",
+            "environment": "SANDBOX / TESTNET",
+            "orders_written_to_exchange": 0,
+            "start_utc": start_utc,
+            "end_utc": end_utc,
+            "target_duration_seconds": 86400.0,
             "raw_capture_file": raw.name,
             "raw_capture_sha256": hashlib.sha256(raw_bytes).hexdigest(),
             "total_bytes_written": len(raw_bytes),
@@ -55,6 +65,37 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
         path = root / "summary.json"
         path.write_text(json.dumps(summary), encoding="utf-8")
         return path
+
+
+    def test_rejects_summary_claiming_exchange_orders(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["orders_written_to_exchange"] = 1
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "orders_written_to_exchange"):
+                verify_capture(summary)
+
+    def test_rejects_timestamp_duration_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["end_utc"] = "2025-01-01T23:59:59+00:00"
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "does not match start_utc/end_utc"):
+                verify_capture(summary)
+
+    def test_rejects_session_phase_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["session_id"] = "phase190-l2-wrong-phase"
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "does not match summary phase"):
+                verify_capture(summary)
 
     def test_verifies_exact_hash_size_and_frame_count(self):
         with tempfile.TemporaryDirectory() as td:
