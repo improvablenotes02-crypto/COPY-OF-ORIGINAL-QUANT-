@@ -361,3 +361,39 @@ class TestPhase190UnexpectedFrameClassification(unittest.TestCase):
             self.assertEqual(pipeline.rejected_frames_count, 1)
             summary = pipeline.finalize_artifacts()
         self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
+
+
+class TestPhase257CapturePersistenceIntegrity(unittest.TestCase):
+    def _frame(self, seq=1, symbol="BTCUSD"):
+        return {"type":"ob_updates","sy":symbol,"seq":seq,"ts":1729500000000000+seq,"b":[["82000.0","1.0"]],"a":[["82010.0","1.0"]],"action":"snapshot"}
+    def test_unknown_symbol_not_persisted(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=ContinuousStreamingL2CapturePipeline(symbols=["BTCUSD"],output_dir=Path(td));p._open_streaming_file()
+            self.assertFalse(p._stream_frame(json.dumps(self._frame(symbol="DOGEUSD")),1,2));self.assertEqual(p.total_frames_written,0)
+            p.finalize_artifacts();self.assertEqual(p._raw_capture_path.read_bytes(),b"")
+    def test_rejected_frame_preserved_with_acceptance_flag(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=ContinuousStreamingL2CapturePipeline(symbols=["BTCUSD"],output_dir=Path(td));p._open_streaming_file()
+            self.assertTrue(p._stream_frame(json.dumps(self._frame(1)),1,2));f=self._frame(3);f["action"]="update"
+            self.assertFalse(p._stream_frame(json.dumps(f),3,4));summary=p.finalize_artifacts()
+            rows=[json.loads(x) for x in p._raw_capture_path.read_text().splitlines()]
+            self.assertEqual(len(rows),2);self.assertFalse(rows[1]["tracker_accepted"]);self.assertEqual(summary["continuity_evidence_verdict"],"PARTIAL")
+    def test_disk_write_error_fails_closed_without_hashing_frame(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as td:
+            p=ContinuousStreamingL2CapturePipeline(symbols=["BTCUSD"],output_dir=Path(td));p._open_streaming_file()
+            p._raw_file_handle=Mock();p._raw_file_handle.write.side_effect=OSError("disk full")
+            self.assertFalse(p._stream_frame(json.dumps(self._frame()),1,2));self.assertEqual(p.total_frames_written,0)
+            self.assertEqual(p._hasher.hexdigest(),hashlib.sha256(b"").hexdigest());self.assertTrue(p.stop_requested)
+            self.assertEqual(p.persistence_errors_count,1)
+    def test_missing_file_handle_fails_closed(self):
+        p=ContinuousStreamingL2CapturePipeline(symbols=["BTCUSD"])
+        self.assertFalse(p._stream_frame(json.dumps(self._frame()),1,2));self.assertTrue(p.stop_requested)
+        self.assertEqual(p.persistence_errors_count,1)
+    def test_persistence_failure_prevents_24h_verdict(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=ContinuousStreamingL2CapturePipeline(symbols=["BTCUSD"],output_dir=Path(td));p._open_streaming_file()
+            p.start_mono_ns=1;p.end_mono_ns=86400000000001;p.persistence_errors_count=1;p.persistence_complete=False
+            p.trackers["BTCUSD"].process_snapshot(bids=[["82000","1"]],asks=[["82010","1"]],sequence=1,venue_timestamp_us=1729500000000000)
+            summary=p.finalize_artifacts();self.assertEqual(summary["continuity_evidence_verdict"],"PARTIAL")
+            self.assertFalse(summary["continuity_checks"]["zero_persistence_errors"])
