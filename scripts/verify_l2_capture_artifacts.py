@@ -11,6 +11,7 @@ import json
 import math
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,31 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         raise CaptureVerificationError(f"Cannot read summary JSON: {exc}") from exc
     if not isinstance(summary, dict):
         raise CaptureVerificationError("Summary root must be a JSON object")
+
+    # Bind the artifact to its declared read-only capture context. These fields
+    # are part of the producer's summary contract, not optional annotations.
+    phase = summary.get("phase")
+    if type(phase) is not int or phase <= 0:
+        raise CaptureVerificationError("phase is missing or invalid")
+    session_id = summary.get("session_id")
+    if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256:
+        raise CaptureVerificationError("session_id is missing or invalid")
+    if not session_id.startswith(f"phase{phase}-l2-"):
+        raise CaptureVerificationError("session_id does not match summary phase")
+    if summary.get("venue") != "delta" or summary.get("environment") != "SANDBOX / TESTNET":
+        raise CaptureVerificationError("Capture venue or environment is not the expected read-only test context")
+    if type(summary.get("orders_written_to_exchange")) is not int or summary["orders_written_to_exchange"] != 0:
+        raise CaptureVerificationError("orders_written_to_exchange must be exactly zero")
+    target_duration = summary.get("target_duration_seconds")
+    if type(target_duration) not in (int, float) or not math.isfinite(target_duration) or target_duration <= 0:
+        raise CaptureVerificationError("target_duration_seconds is missing or invalid")
+    try:
+        start_utc = datetime.fromisoformat(summary["start_utc"])
+        end_utc = datetime.fromisoformat(summary["end_utc"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CaptureVerificationError("start_utc/end_utc timestamps are missing or invalid") from exc
+    if start_utc.tzinfo is None or end_utc.tzinfo is None or end_utc < start_utc:
+        raise CaptureVerificationError("Capture timestamps must be timezone-aware and ordered")
 
     raw_name = summary.get("raw_capture_file")
     if not isinstance(raw_name, str) or not raw_name or Path(raw_name).name != raw_name:
@@ -203,6 +229,9 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     duration = summary.get("duration_seconds")
     if type(duration) not in (int, float) or not math.isfinite(duration) or duration < 0:
         raise CaptureVerificationError("duration_seconds is missing or invalid")
+    timestamp_duration = (end_utc - start_utc).total_seconds()
+    if abs(timestamp_duration - duration) > 0.0011:
+        raise CaptureVerificationError("duration_seconds does not match start_utc/end_utc")
     if verdict == "VERIFIED_24H" and (
         not all(checks.values())
         or rejected_persisted
