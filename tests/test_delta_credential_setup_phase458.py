@@ -101,3 +101,38 @@ def test_setup_refuses_noninteractive_secret_input(monkeypatch):
     assert setup.main() == 2
     assert "interactive terminal" in captured.getvalue()
 
+
+
+def test_setup_cli_never_echoes_entered_credentials(monkeypatch, tmp_path):
+    import builtins
+    import getpass
+    import io
+    import sys
+
+    from scripts import configure_delta_credentials as setup
+
+    class TTYStream(io.StringIO):
+        def isatty(self):
+            return True
+
+    answers = iter(("INDIA", "SANDBOX", "yes"))
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": next(answers))
+    monkeypatch.setattr(
+        getpass, "getpass",
+        lambda _prompt="": next(iter(("synthetic-hidden-key", "synthetic-hidden-secret"))),
+    )
+    # Return the key and secret in sequence without retaining either in output.
+    hidden_values = iter(("synthetic-hidden-key", "synthetic-hidden-secret"))
+    monkeypatch.setattr(getpass, "getpass", lambda _prompt="": next(hidden_values))
+    monkeypatch.setattr(setup, "ENV_PATH", tmp_path / ".env")
+    captured = TTYStream()
+    monkeypatch.setattr(sys, "stdin", TTYStream())
+    monkeypatch.setattr(sys, "stdout", captured)
+
+    assert setup.main() == 0
+    rendered = captured.getvalue()
+    assert "synthetic-hidden-key" not in rendered
+    assert "synthetic-hidden-secret" not in rendered
+    saved = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "DELTA_INDIA_SANDBOX_API_KEY=synthetic-hidden-key" in saved
+    assert "DELTA_INDIA_SANDBOX_API_SECRET=synthetic-hidden-secret" in saved
