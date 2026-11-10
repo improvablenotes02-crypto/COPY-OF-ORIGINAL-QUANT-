@@ -30,6 +30,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             "venue": "delta",
             "environment": "SANDBOX / TESTNET",
             "orders_written_to_exchange": 0,
+            "operator_or_safety_stopped": False,
             "start_utc": start_utc,
             "end_utc": end_utc,
             "target_duration_seconds": 86400.0,
@@ -137,6 +138,15 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             data["symbol_quality"]["BTCUSD"]["valid_updates"] = -1
             summary.write_text(json.dumps(data))
             with self.assertRaisesRegex(CaptureVerificationError, "valid_updates is missing or invalid"):
+                verify_capture(summary)
+
+    def test_rejects_stop_flag_conflict(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            data = json.loads(summary.read_text())
+            data["operator_or_safety_stopped"] = True
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "not_operator_or_safety_stopped conflicts"):
                 verify_capture(summary)
 
     def test_rejects_missing_continuity_check_contract(self):
