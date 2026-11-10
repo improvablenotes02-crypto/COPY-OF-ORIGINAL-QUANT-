@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")
+_MAX_SUMMARY_BYTES = 1024 * 1024
+_MAX_RAW_RECORD_BYTES = 1024 * 1024
 
 
 class CaptureVerificationError(ValueError):
@@ -85,6 +87,8 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     if summary_path.is_symlink() or not summary_path.is_file():
         raise CaptureVerificationError("Summary must be a regular, non-symlink file")
     try:
+        if summary_path.stat().st_size > _MAX_SUMMARY_BYTES:
+            raise CaptureVerificationError("Summary JSON exceeds 1 MiB verifier limit")
         summary = json.loads(summary_path.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float)
     except CaptureVerificationError:
         raise
@@ -117,7 +121,14 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     highest_accepted_sequences: dict[str, int] = {}
     accepted_snapshots_by_epoch: dict[str, dict[str, int]] = {}
     with raw_path.open("rb") as stream:
-        for number, line in enumerate(stream, start=1):
+        number = 0
+        while True:
+            line = stream.readline(_MAX_RAW_RECORD_BYTES + 1)
+            if not line:
+                break
+            number += 1
+            if len(line) > _MAX_RAW_RECORD_BYTES:
+                raise CaptureVerificationError(f"JSONL record {number} exceeds 1 MiB verifier limit")
             digest.update(line)
             byte_count += len(line)
             if not line.endswith(b"\n"):
