@@ -50,7 +50,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         for number, line in enumerate(stream, start=1):
             digest.update(line)
             byte_count += len(line)
-            if not line.endswith(b"\\n"):
+            if not line.endswith(b"\n"):
                 raise CaptureVerificationError(f"JSONL record {number} is not LF terminated")
             try:
                 record = json.loads(line)
