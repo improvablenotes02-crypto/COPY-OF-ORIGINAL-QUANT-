@@ -11,6 +11,7 @@ import json
 import math
 import re
 import sys
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,41 @@ def _parse_finite_json_float(value: str) -> float:
     if not math.isfinite(parsed):
         raise CaptureVerificationError(f"Non-finite JSON numeric value: {value}")
     return parsed
+
+
+def _validate_accepted_book_levels(raw: dict[str, Any], record_number: int) -> None:
+    """Require accepted snapshots/updates to contain finite positive price and size levels."""
+    for side in ("b", "a"):
+        levels = raw.get(side)
+        if not isinstance(levels, list):
+            raise CaptureVerificationError(
+                f"JSONL record {record_number} accepted order book has invalid {side} levels"
+            )
+        for level_number, level in enumerate(levels, start=1):
+            if not isinstance(level, list) or len(level) != 2:
+                raise CaptureVerificationError(
+                    f"JSONL record {record_number} accepted {side} level {level_number} must be a price/size pair"
+                )
+            for field, value in zip(("price", "size"), level):
+                if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+                    raise CaptureVerificationError(
+                        f"JSONL record {record_number} accepted {side} level {level_number} has invalid {field}"
+                    )
+                text_value = str(value)
+                if not text_value or text_value != text_value.strip() or len(text_value) > 128:
+                    raise CaptureVerificationError(
+                        f"JSONL record {record_number} accepted {side} level {level_number} has invalid {field}"
+                    )
+                try:
+                    parsed = Decimal(text_value)
+                except InvalidOperation as exc:
+                    raise CaptureVerificationError(
+                        f"JSONL record {record_number} accepted {side} level {level_number} has invalid {field}"
+                    ) from exc
+                if not parsed.is_finite() or parsed <= 0:
+                    raise CaptureVerificationError(
+                        f"JSONL record {record_number} accepted {side} level {level_number} {field} must be finite and positive"
+                    )
 
 
 def verify_capture(summary_path: Path) -> dict[str, Any]:
@@ -129,6 +165,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             counts = symbol_counts.setdefault(symbol, {"frames": 0, "accepted": 0, "rejected": 0})
             counts["frames"] += 1
             if record["tracker_accepted"]:
+                _validate_accepted_book_levels(raw, number)
                 previous_sequence = accepted_sequences.get(symbol)
                 if action == "snapshot":
                     highest_sequence = highest_accepted_sequences.get(symbol)
