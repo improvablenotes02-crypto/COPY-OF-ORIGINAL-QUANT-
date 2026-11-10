@@ -485,5 +485,59 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 verify_capture(summary)
 
 
+    def _rewrite_raw_record(self, root: Path, summary: Path, mutate) -> None:
+        raw = root / "raw.jsonl"
+        record = json.loads(raw.read_text(encoding="utf-8"))
+        mutate(record)
+        raw_bytes = (json.dumps(record, sort_keys=True) + "\\n").encode("utf-8")
+        raw.write_bytes(raw_bytes)
+        data = json.loads(summary.read_text(encoding="utf-8"))
+        data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+        data["total_bytes_written"] = len(raw_bytes)
+        summary.write_text(json.dumps(data), encoding="utf-8")
+
+    def test_rejects_accepted_book_level_with_invalid_decimal_price(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            self._rewrite_raw_record(root, summary, lambda record: record["raw"].update(b=[["not-a-price", "1"]]))
+            with self.assertRaisesRegex(CaptureVerificationError, "has invalid price"):
+                verify_capture(summary)
+
+    def test_rejects_accepted_book_level_with_zero_price(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            self._rewrite_raw_record(root, summary, lambda record: record["raw"].update(b=[["0", "1"]]))
+            with self.assertRaisesRegex(CaptureVerificationError, "price must be finite and positive"):
+                verify_capture(summary)
+
+    def test_rejects_accepted_book_level_with_negative_size(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            self._rewrite_raw_record(root, summary, lambda record: record["raw"].update(a=[["101", "-0.1"]]))
+            with self.assertRaisesRegex(CaptureVerificationError, "size must be finite and positive"):
+                verify_capture(summary)
+
+    def test_rejects_accepted_book_level_with_malformed_pair(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            self._rewrite_raw_record(root, summary, lambda record: record["raw"].update(b=[["99"]]))
+            with self.assertRaisesRegex(CaptureVerificationError, "must be a price/size pair"):
+                verify_capture(summary)
+
+    def test_preserves_malformed_levels_on_tracker_rejected_frames(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root, accepted=False)
+            self._rewrite_raw_record(root, summary, lambda record: record["raw"].update(b=[["malformed"]]))
+            result = verify_capture(summary)
+            self.assertTrue(result["integrity_valid"])
+            self.assertFalse(result["evidence_eligible"])
+            self.assertEqual(result["persisted_tracker_rejections"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
