@@ -153,8 +153,12 @@ class L2BookTracker:
         self.bids.clear()
         self.asks.clear()
         self.last_sequence = None
+        self.last_receipt_mono_ns = None
+        self.last_receipt_utc_ns = None
         self.last_bid_mono_ns = None
         self.last_ask_mono_ns = None
+        # Keep last_venue_timestamp_us monotonic across reconnects; venue event
+        # clocks must not regress even when sequence numbers restart.
         self.metrics.resync_count += 1
         self._record_state_change(BookValidityState.RESYNCING, reason)
 
