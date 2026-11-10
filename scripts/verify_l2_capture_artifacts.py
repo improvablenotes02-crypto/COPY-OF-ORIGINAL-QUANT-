@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -89,8 +90,16 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     verdict = summary.get("continuity_evidence_verdict")
     if verdict not in {"PARTIAL", "VERIFIED_24H"}:
         raise CaptureVerificationError("Unknown continuity evidence verdict")
-    if verdict == "VERIFIED_24H" and (not all(checks.values()) or rejected_persisted):
-        raise CaptureVerificationError("VERIFIED_24H conflicts with failed checks or rejected persisted frames")
+    duration = summary.get("duration_seconds")
+    if type(duration) not in (int, float) or not math.isfinite(duration) or duration < 0:
+        raise CaptureVerificationError("duration_seconds is missing or invalid")
+    if verdict == "VERIFIED_24H" and (
+        not all(checks.values())
+        or rejected_persisted
+        or checks.get("minimum_24h_duration") is not True
+        or duration < 86400.0
+    ):
+        raise CaptureVerificationError("VERIFIED_24H conflicts with failed checks, short duration, or rejected persisted frames")
 
     return {
         "integrity_valid": True,
