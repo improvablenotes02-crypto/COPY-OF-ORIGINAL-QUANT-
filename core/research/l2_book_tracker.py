@@ -306,42 +306,69 @@ class L2BookTracker:
             )
             return False
 
-        # Apply updates
+        # Apply the complete delta to temporary maps. A malformed level or a
+        # crossed/invalid resulting book must not partially mutate committed state.
+        next_bids = dict(self.bids)
+        next_asks = dict(self.asks)
         try:
             for p_str, q_str in bids:
                 p = Decimal(str(p_str))
                 q = Decimal(str(q_str))
+                if not p.is_finite() or not q.is_finite() or p <= Decimal("0"):
+                    raise ValueError("Non-finite or non-positive update price/size")
                 if q <= Decimal("0"):
-                    self.bids.pop(p, None)
+                    next_bids.pop(p, None)
                 else:
-                    self.bids[p] = q
-            if bids:
-                self.last_bid_mono_ns = now_mono
+                    next_bids[p] = q
 
             for p_str, q_str in asks:
                 p = Decimal(str(p_str))
                 q = Decimal(str(q_str))
+                if not p.is_finite() or not q.is_finite() or p <= Decimal("0"):
+                    raise ValueError("Non-finite or non-positive update price/size")
                 if q <= Decimal("0"):
-                    self.asks.pop(p, None)
+                    next_asks.pop(p, None)
                 else:
-                    self.asks[p] = q
-            if asks:
-                self.last_ask_mono_ns = now_mono
-        except Exception:
+                    next_asks[p] = q
+        except (TypeError, ValueError, ArithmeticError):
             self.metrics.malformed_count += 1
             self.metrics.rejected_count += 1
             self._record_state_change(BookValidityState.INVALID, "Malformed update price/size")
             return False
 
+        if not next_bids or not next_asks:
+            self.metrics.rejected_count += 1
+            self._record_state_change(BookValidityState.INVALID, "Delta would empty bid or ask book")
+            return False
+
+        best_bid = max(next_bids)
+        best_ask = min(next_asks)
+        if best_bid >= best_ask:
+            self.metrics.crossed_book_count += 1
+            self.metrics.rejected_count += 1
+            self._record_state_change(
+                BookValidityState.INVALID,
+                f"Crossed delta result: best_bid ({best_bid}) >= best_ask ({best_ask})",
+            )
+            return False
+        if self.tick_size is not None and self.tick_size > Decimal("0"):
+            if best_bid % self.tick_size != Decimal("0") or best_ask % self.tick_size != Decimal("0"):
+                self.metrics.rejected_count += 1
+                self._record_state_change(BookValidityState.INVALID, "Delta touch price violates tick size")
+                return False
+
+        # Commit book, sequence, and receipt metadata together after validation.
+        self.bids = next_bids
+        self.asks = next_asks
+        if bids:
+            self.last_bid_mono_ns = now_mono
+        if asks:
+            self.last_ask_mono_ns = now_mono
         self.last_sequence = sequence
         self.last_venue_timestamp_us = venue_timestamp_us
         self.last_receipt_mono_ns = now_mono
         self.last_receipt_utc_ns = now_utc
-
-        # Validate book integrity
-        if not self._validate_book_integrity():
-            self.metrics.rejected_count += 1
-            return False
+        self._record_timestamps(now_utc, now_mono)
 
         if self.state != BookValidityState.VALID:
             self._record_state_change(BookValidityState.VALID, "Incremental update validated")
