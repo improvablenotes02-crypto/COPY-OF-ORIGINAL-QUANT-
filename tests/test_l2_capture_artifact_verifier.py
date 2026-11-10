@@ -14,9 +14,10 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
     def _write_fixture(self, root: Path, *, accepted: bool = True) -> Path:
         raw = root / "raw.jsonl"
         record = {
+            "connection_epoch": 0,
             "receipt_mono_ns": 10,
             "receipt_utc_ns": 20,
-            "raw": {"type": "ob_updates", "sy": "BTCUSD", "seq": 1, "ts": 30},
+            "raw": {"type": "ob_updates", "sy": "BTCUSD", "seq": 1, "ts": 30, "action": "snapshot", "b": [["99", "1"]], "a": [["101", "1"]]},
             "tracker_accepted": accepted,
         }
         raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
@@ -26,10 +27,30 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             "raw_capture_sha256": hashlib.sha256(raw_bytes).hexdigest(),
             "total_bytes_written": len(raw_bytes),
             "total_raw_frames": 1,
+            "connection_epoch_count": 1,
             "duration_seconds": 86400 if accepted else 120,
+            "reconnect_count": 0,
+            "malformed_frames_count": 0,
             "rejected_frames_count": 0 if accepted else 1,
-            "continuity_checks": {"zero_rejected_frames": accepted, "raw_capture_persistence_complete": True},
+            "unexpected_frames_count": 0,
+            "persistence_errors_count": 0,
+            "freshness_violations_count": 0,
+            "freshness_violations_by_symbol": {"BTCUSD": 0},
+            "raw_capture_persistence_complete": True,
+            "continuity_checks": {
+                "minimum_24h_duration": accepted,
+                "zero_transport_reconnects": True,
+                "zero_malformed_frames": True,
+                "zero_rejected_frames": accepted,
+                "zero_unexpected_frames": True,
+                "zero_persistence_errors": True,
+                "zero_symbol_freshness_violations": True,
+                "raw_capture_persistence_complete": True,
+                "all_symbol_books_valid": accepted,
+                "not_operator_or_safety_stopped": True,
+            },
             "continuity_evidence_verdict": "VERIFIED_24H" if accepted else "PARTIAL",
+            "symbol_quality": {"BTCUSD": {"total_messages": 1, "valid_updates": 1 if accepted else 0, "rejected_count": 0 if accepted else 1}},
         }
         path = root / "summary.json"
         path.write_text(json.dumps(summary), encoding="utf-8")
@@ -41,6 +62,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
         self.assertTrue(result["integrity_valid"])
         self.assertTrue(result["evidence_eligible"])
         self.assertEqual(result["raw_capture_frames"], 1)
+        self.assertEqual(result["per_symbol_frame_counts"], {"BTCUSD": 1})
 
     def test_detects_tampered_raw_capture(self):
         with tempfile.TemporaryDirectory() as td:
@@ -78,6 +100,207 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 verify_capture(summary)
 
 
+    
+    def test_rejects_per_symbol_summary_count_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["symbol_quality"]["BTCUSD"]["total_messages"] = 2
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "total_messages mismatch"):
+                verify_capture(summary)
+
+    def test_rejects_accepted_update_without_snapshot(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            record = json.loads(raw.read_text())
+            record["raw"]["action"] = "update"
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "before an accepted snapshot"):
+                verify_capture(summary)
+
+    def test_rejects_non_increasing_monotonic_receipt_time(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            first = json.loads(raw.read_text())
+            second = dict(first)
+            second["receipt_mono_ns"] = first["receipt_mono_ns"] - 1
+            second["raw"] = dict(first["raw"], seq=2, action="update")
+            second["tracker_accepted"] = True
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\n") + (json.dumps(second, sort_keys=True) + "\n")).encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            data["total_raw_frames"] = 2
+            data["symbol_quality"]["BTCUSD"] = {"total_messages": 2, "valid_updates": 2, "rejected_count": 0}
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "non-increasing monotonic"):
+                verify_capture(summary)
+
+
+    def test_rejects_duplicate_monotonic_receipt_time(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            first = json.loads(raw.read_text())
+            second = dict(first)
+            second["raw"] = dict(first["raw"], seq=2, action="update")
+            second["tracker_accepted"] = True
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\n") + (json.dumps(second, sort_keys=True) + "\n")).encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            data["total_raw_frames"] = 2
+            data["symbol_quality"]["BTCUSD"] = {"total_messages": 2, "valid_updates": 2, "rejected_count": 0}
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "non-increasing monotonic"):
+                verify_capture(summary)
+
+    def test_rejects_accepted_sequence_gap(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            first = json.loads(raw.read_text())
+            second = dict(first)
+            second["receipt_mono_ns"] = 11
+            second["raw"] = dict(first["raw"], seq=3, action="update")
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\n") + (json.dumps(second, sort_keys=True) + "\n")).encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            data["total_raw_frames"] = 2
+            data["symbol_quality"]["BTCUSD"] = {"total_messages": 2, "valid_updates": 2, "rejected_count": 0}
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "sequence gap"):
+                verify_capture(summary)
+
+
+    def test_rejects_accepted_update_as_first_frame_after_reconnect(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            first = json.loads(raw.read_text())
+            second = dict(first)
+            second["connection_epoch"] = 1
+            second["receipt_mono_ns"] = 11
+            second["raw"] = dict(first["raw"], seq=2, action="update")
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\n") + (json.dumps(second, sort_keys=True) + "\n")).encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            data["total_raw_frames"] = 2
+            data["connection_epoch_count"] = 2
+            data["symbol_quality"]["BTCUSD"] = {"total_messages": 2, "valid_updates": 2, "rejected_count": 0}
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "before an accepted snapshot"):
+                verify_capture(summary)
+
+
+    def test_allows_empty_connection_epoch_between_persisted_epochs(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            first = json.loads(raw.read_text())
+            second = dict(first)
+            second["connection_epoch"] = 2
+            second["receipt_mono_ns"] = 11
+            second["raw"] = dict(first["raw"], seq=1, action="snapshot")
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\\n") + (json.dumps(second, sort_keys=True) + "\\n")).encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            data["total_raw_frames"] = 2
+            data["connection_epoch_count"] = 3
+            data["symbol_quality"]["BTCUSD"] = {"total_messages": 2, "valid_updates": 2, "rejected_count": 0}
+            summary.write_text(json.dumps(data))
+            result = verify_capture(summary)
+        self.assertTrue(result["integrity_valid"])
+
+    def test_rejects_frame_epoch_outside_summary_connection_count(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            record = json.loads(raw.read_text())
+            record["connection_epoch"] = 1
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            data["connection_epoch_count"] = 1
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "exceeds summary connection count"):
+                verify_capture(summary)
+
+    def test_rejects_regressing_connection_epoch(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            record = json.loads(raw.read_text())
+            record["connection_epoch"] = 0
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            data["connection_epoch_count"] = 1
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "duplicate or regressing"):
+                verify_capture(summary)
+
+
+    def test_rejects_summary_persistence_flag_conflicting_with_continuity_checks(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["raw_capture_persistence_complete"] = False
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "raw_capture_persistence_complete conflicts"):
+                verify_capture(summary)
+
+    def test_rejects_counter_conflicting_with_derived_continuity_check(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["persistence_errors_count"] = 1
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "persistence_errors_count conflicts"):
+                verify_capture(summary)
+
+    def test_rejects_per_symbol_freshness_counter_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["freshness_violations_count"] = 1
+            data["continuity_checks"]["zero_symbol_freshness_violations"] = False
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "Per-symbol freshness counters do not sum"):
+                verify_capture(summary)
+
     def test_rejects_verified_verdict_with_short_duration(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -95,7 +318,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             data = json.loads(summary.read_text())
             data["rejected_frames_count"] = 1
             summary.write_text(json.dumps(data))
-            with self.assertRaisesRegex(CaptureVerificationError, "rejected frames"):
+            with self.assertRaisesRegex(CaptureVerificationError, "rejected_frames_count conflicts"):
                 verify_capture(summary)
 
 
