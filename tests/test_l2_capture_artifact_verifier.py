@@ -130,6 +130,27 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             with self.assertRaisesRegex(CaptureVerificationError, "non-increasing monotonic"):
                 verify_capture(summary)
 
+
+    def test_rejects_duplicate_monotonic_receipt_time(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            first = json.loads(raw.read_text())
+            second = dict(first)
+            second["raw"] = dict(first["raw"], seq=2, action="update")
+            second["tracker_accepted"] = True
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\n") + (json.dumps(second, sort_keys=True) + "\n")).encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            data["total_raw_frames"] = 2
+            data["symbol_quality"]["BTCUSD"] = {"total_messages": 2, "valid_updates": 2, "rejected_count": 0}
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "non-increasing monotonic"):
+                verify_capture(summary)
+
     def test_rejects_accepted_sequence_gap(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
