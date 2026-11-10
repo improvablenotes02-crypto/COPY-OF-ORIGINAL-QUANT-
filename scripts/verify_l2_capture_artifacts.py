@@ -11,14 +11,75 @@ import json
 import math
 import re
 import sys
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")
+_MAX_SUMMARY_BYTES = 1024 * 1024
+_MAX_RAW_RECORD_BYTES = 1024 * 1024
 
 
 class CaptureVerificationError(ValueError):
     """Raised when a capture artifact is missing, unsafe, or inconsistent."""
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject ambiguous JSON objects instead of silently keeping the last key."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise CaptureVerificationError(f"Duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_nonfinite_json_constant(value: str) -> None:
+    """Reject JavaScript-style NaN/Infinity tokens accepted by Python's JSON parser."""
+    raise CaptureVerificationError(f"Non-finite JSON numeric constant: {value}")
+
+
+def _parse_finite_json_float(value: str) -> float:
+    """Reject valid JSON numeric syntax that overflows Python's finite float range."""
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise CaptureVerificationError(f"Non-finite JSON numeric value: {value}")
+    return parsed
+
+
+def _validate_accepted_book_levels(raw: dict[str, Any], record_number: int) -> None:
+    """Require accepted snapshots/updates to contain finite positive price and size levels."""
+    for side in ("b", "a"):
+        levels = raw.get(side)
+        if not isinstance(levels, list):
+            raise CaptureVerificationError(
+                f"JSONL record {record_number} accepted order book has invalid {side} levels"
+            )
+        for level_number, level in enumerate(levels, start=1):
+            if not isinstance(level, list) or len(level) != 2:
+                raise CaptureVerificationError(
+                    f"JSONL record {record_number} accepted {side} level {level_number} must be a price/size pair"
+                )
+            for field, value in zip(("price", "size"), level):
+                if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+                    raise CaptureVerificationError(
+                        f"JSONL record {record_number} accepted {side} level {level_number} has invalid {field}"
+                    )
+                text_value = str(value)
+                if not text_value or text_value != text_value.strip() or len(text_value) > 128:
+                    raise CaptureVerificationError(
+                        f"JSONL record {record_number} accepted {side} level {level_number} has invalid {field}"
+                    )
+                try:
+                    parsed = Decimal(text_value)
+                except InvalidOperation as exc:
+                    raise CaptureVerificationError(
+                        f"JSONL record {record_number} accepted {side} level {level_number} has invalid {field}"
+                    ) from exc
+                if not parsed.is_finite() or parsed <= 0:
+                    raise CaptureVerificationError(
+                        f"JSONL record {record_number} accepted {side} level {level_number} {field} must be finite and positive"
+                    )
 
 
 def verify_capture(summary_path: Path) -> dict[str, Any]:
@@ -26,7 +87,13 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     if summary_path.is_symlink() or not summary_path.is_file():
         raise CaptureVerificationError("Summary must be a regular, non-symlink file")
     try:
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        if summary_path.stat().st_size > _MAX_SUMMARY_BYTES:
+            raise CaptureVerificationError("Summary JSON exceeds 1 MiB verifier limit")
+        summary = json.loads(summary_path.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float)
+    except CaptureVerificationError:
+        raise
+    except RecursionError as exc:
+        raise CaptureVerificationError("Summary JSON nesting exceeds verifier limit") from exc
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise CaptureVerificationError(f"Cannot read summary JSON: {exc}") from exc
     if not isinstance(summary, dict):
@@ -51,15 +118,27 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     connection_epochs_seen: set[int] = set()
     symbol_counts: dict[str, dict[str, int]] = {}
     accepted_sequences: dict[str, int] = {}
+    highest_accepted_sequences: dict[str, int] = {}
     accepted_snapshots_by_epoch: dict[str, dict[str, int]] = {}
     with raw_path.open("rb") as stream:
-        for number, line in enumerate(stream, start=1):
+        number = 0
+        while True:
+            line = stream.readline(_MAX_RAW_RECORD_BYTES + 1)
+            if not line:
+                break
+            number += 1
+            if len(line) > _MAX_RAW_RECORD_BYTES:
+                raise CaptureVerificationError(f"JSONL record {number} exceeds 1 MiB verifier limit")
             digest.update(line)
             byte_count += len(line)
             if not line.endswith(b"\n"):
                 raise CaptureVerificationError(f"JSONL record {number} is not LF terminated")
             try:
-                record = json.loads(line)
+                record = json.loads(line, object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float)
+            except CaptureVerificationError as exc:
+                raise CaptureVerificationError(f"JSONL record {number} is invalid: {exc}") from exc
+            except RecursionError as exc:
+                raise CaptureVerificationError(f"JSONL record {number} exceeds verifier nesting limit") from exc
             except (UnicodeError, json.JSONDecodeError) as exc:
                 raise CaptureVerificationError(f"JSONL record {number} is invalid: {exc}") from exc
             if not isinstance(record, dict):
@@ -101,9 +180,14 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             counts = symbol_counts.setdefault(symbol, {"frames": 0, "accepted": 0, "rejected": 0})
             counts["frames"] += 1
             if record["tracker_accepted"]:
+                _validate_accepted_book_levels(raw, number)
                 previous_sequence = accepted_sequences.get(symbol)
                 if action == "snapshot":
+                    highest_sequence = highest_accepted_sequences.get(symbol)
+                    if highest_sequence is not None and sequence < highest_sequence:
+                        raise CaptureVerificationError(f"JSONL record {number} has accepted snapshot sequence regression across connection epochs")
                     accepted_sequences[symbol] = sequence
+                    highest_accepted_sequences[symbol] = sequence
                     epoch_key = str(connection_epoch)
                     epoch_snapshots = accepted_snapshots_by_epoch.setdefault(epoch_key, {})
                     epoch_snapshots[symbol] = epoch_snapshots.get(symbol, 0) + 1
@@ -113,6 +197,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
                     if sequence != previous_sequence + 1:
                         raise CaptureVerificationError(f"JSONL record {number} has accepted sequence gap, duplicate, or regression")
                     accepted_sequences[symbol] = sequence
+                    highest_accepted_sequences[symbol] = sequence
                 counts["accepted"] += 1
             else:
                 rejected_persisted += 1
