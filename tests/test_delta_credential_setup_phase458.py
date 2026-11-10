@@ -12,6 +12,7 @@ def test_setup_writes_only_selected_pair_and_preserves_other_settings(tmp_path):
     env.write_text(
         "SYMBOLS=NIFTY\n"
         "DELTA_API_KEY=old-global-key\n"
+        "export DELTA_API_KEY=old-export-key\n"
         "DELTA_INDIA_TESTNET_API_SECRET=old-name\n"
         "PAPER_MODE=True\n",
         encoding="utf-8",
@@ -33,6 +34,7 @@ def test_setup_writes_only_selected_pair_and_preserves_other_settings(tmp_path):
     assert "DELTA_INDIA_SANDBOX_API_KEY=synthetic-new-key" in rendered
     assert "DELTA_INDIA_SANDBOX_API_SECRET=synthetic-new-secret" in rendered
     assert "DELTA_API_KEY=" not in rendered
+    assert "old-export-key" not in rendered
     assert "DELTA_INDIA_TESTNET_API_SECRET" not in rendered
     assert rendered.count("DELTA_REGION=") == 1
 
