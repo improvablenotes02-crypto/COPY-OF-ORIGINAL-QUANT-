@@ -11,6 +11,7 @@ import json
 import math
 import re
 import sys
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -86,20 +87,44 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             symbol = raw.get("sy")
             sequence = raw.get("seq")
             venue_timestamp_us = raw.get("ts")
+            bids = raw.get("b")
+            asks = raw.get("a")
             if not isinstance(symbol, str) or not symbol or symbol != symbol.strip():
                 raise CaptureVerificationError(f"JSONL record {number} has invalid symbol")
             if type(sequence) is not int or sequence <= 0:
                 raise CaptureVerificationError(f"JSONL record {number} has invalid sequence")
             if type(venue_timestamp_us) is not int or venue_timestamp_us <= 0:
                 raise CaptureVerificationError(f"JSONL record {number} has invalid venue timestamp")
+            if not isinstance(bids, list) or not isinstance(asks, list):
+                raise CaptureVerificationError(f"JSONL record {number} has invalid bid/ask containers")
             action = raw.get("action", "update")
-            if action not in {"snapshot", "update"}:
+            if not isinstance(action, str) or action not in {"snapshot", "update"}:
                 raise CaptureVerificationError(f"JSONL record {number} has invalid order-book action")
             if type(record.get("tracker_accepted")) is not bool:
                 raise CaptureVerificationError(f"JSONL record {number} lacks tracker_accepted boolean")
             counts = symbol_counts.setdefault(symbol, {"frames": 0, "accepted": 0, "rejected": 0})
             counts["frames"] += 1
             if record["tracker_accepted"]:
+                # An accepted frame must contain fully parseable price/size pairs.
+                # Rejected frames remain available even when their nested payload is
+                # malformed, preserving the pipeline's forensic-capture contract.
+                for side_name, levels in (("bids", bids), ("asks", asks)):
+                    for level in levels:
+                        if not isinstance(level, list) or len(level) != 2:
+                            raise CaptureVerificationError(
+                                f"JSONL record {number} has malformed accepted {side_name} level"
+                            )
+                        try:
+                            price = Decimal(str(level[0]))
+                            size = Decimal(str(level[1]))
+                        except (InvalidOperation, ValueError):
+                            raise CaptureVerificationError(
+                                f"JSONL record {number} has non-numeric accepted {side_name} level"
+                            ) from None
+                        if not price.is_finite() or not size.is_finite():
+                            raise CaptureVerificationError(
+                                f"JSONL record {number} has non-finite accepted {side_name} level"
+                            )
                 previous_sequence = accepted_sequences.get(symbol)
                 if action == "snapshot":
                     accepted_sequences[symbol] = sequence
