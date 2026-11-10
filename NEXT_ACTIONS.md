@@ -5,7 +5,8 @@
 - **Cross-platform release archive proof:** Phases 239–241 verified the exact release candidate on Ubuntu and Windows, including deterministic build, archive integrity, portable paths, extraction payload hashes, and detached-record verification.
 - **Adversarial archive checks:** Phase 240 added rejection tests for symlink/special-file metadata, directory entries, encrypted members, duplicate names, and file/directory path collisions.
 - **Detached-record integrity:** Phase 241 enforces a bounded, canonical record format while retaining compatibility with the earlier record format.
-- **Credential rotation hardening:** Phase 242 removes old managed Delta variables even when written with a dotenv `export` prefix. The dedicated credential setup test passed on Ubuntu; the Windows runtime workflow is still completing its remaining regression steps.
+- **Credential rotation hardening:** Phase 242 removes old managed Delta variables even when written with a dotenv `export` prefix. Full runtime data-gate certification, including the dedicated credential setup tests and PostgreSQL tenant isolation, passed on Ubuntu and Windows.
+- **Hidden prompt regression:** Phase 244 adds a CLI-level check that entered key/secret values never appear in terminal output. Its latest cross-platform CI run is pending.
 
 ## Remaining work, in priority order
 
