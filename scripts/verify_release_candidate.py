@@ -128,6 +128,38 @@ def verify_archive(path: Path) -> tuple[int, list[str]]:
         return len(members), members
 
 
+
+def verify_extracted_archive(path: Path) -> tuple[int, list[str]]:
+    """Verify ZIP contents after extracting them on the current host."""
+    member_count, members = verify_archive(path)
+    expected = set(members)
+    with tempfile.TemporaryDirectory(prefix="qe-release-extract-") as temp:
+        destination = Path(temp)
+        with zipfile.ZipFile(path) as archive:
+            payload_hashes = {
+                name: hashlib.sha256(archive.read(name)).hexdigest()
+                for name in members
+            }
+            archive.extractall(destination)
+        extracted = {
+            item.relative_to(destination).as_posix()
+            for item in destination.rglob("*") if item.is_file()
+        }
+        if extracted != expected:
+            raise RuntimeError(
+                "extracted archive coverage mismatch: "
+                f"missing={sorted(expected - extracted)[:10]}, "
+                f"extra={sorted(extracted - expected)[:10]}"
+            )
+        for name in members:
+            target = destination.joinpath(*name.split("/"))
+            if target.is_symlink() or not target.is_file():
+                raise RuntimeError(f"extracted member is not a regular file: {name}")
+            if sha256(target) != payload_hashes[name]:
+                raise RuntimeError(f"extracted payload digest mismatch: {name}")
+    return member_count, members
+
+
 def build_candidate(root: Path, output: Path) -> dict:
     root = root.resolve()
     output = output.resolve()
@@ -146,10 +178,10 @@ def build_candidate(root: Path, output: Path) -> dict:
         first_hash, second_hash = sha256(first), sha256(second)
         if first_hash != second_hash:
             raise RuntimeError(f"reproducibility failure: {first_hash} != {second_hash}")
-        members, _ = verify_archive(first)
+        members, _ = verify_extracted_archive(first)
         shutil.copyfile(first, output)
     # Verify the exact copied artifact, not only the temporary build.
-    copied_members, _ = verify_archive(output)
+    copied_members, _ = verify_extracted_archive(output)
     final_hash = sha256(output)
     if final_hash != first_hash or copied_members != members:
         raise RuntimeError("copied candidate differs from verified build")
@@ -158,7 +190,7 @@ def build_candidate(root: Path, output: Path) -> dict:
         "QuantEngine CI release candidate verification\n"
         f"Artifact: {output.name}\nSHA-256: {final_hash}\n"
         f"Bytes: {output.stat().st_size}\nArchive members: {copied_members}\n"
-        "Reproducible second build: PASS\nZIP integrity: PASS\n"
+        "Reproducible second build: PASS\nZIP integrity: PASS\nHost extraction: PASS\n"
         "Manifest coverage: PASS\nManifest payload digests: PASS\nSecret-file exclusion: PASS\n",
         encoding="utf-8", newline="\n",
     )
@@ -192,7 +224,7 @@ def verify_detached_record(artifact: Path, record: Path) -> dict:
                 "Reproducible second build", "ZIP integrity",
                 "Manifest coverage", "Manifest payload digests", "Secret-file exclusion"}
     missing = required - fields.keys()
-    unexpected = fields.keys() - required
+    unexpected = fields.keys() - (required | {"Host extraction"})
     if missing or unexpected:
         raise RuntimeError(
             f"detached record field mismatch: missing={sorted(missing)}, "
@@ -207,13 +239,15 @@ def verify_detached_record(artifact: Path, record: Path) -> dict:
         raise RuntimeError("detached SHA-256 does not match artifact")
     if fields.get("Bytes") != str(actual_bytes):
         raise RuntimeError("detached byte count does not match artifact")
-    member_count, _ = verify_archive(artifact)
+    member_count, _ = verify_extracted_archive(artifact)
     if fields.get("Archive members") != str(member_count):
         raise RuntimeError("detached archive member count does not match artifact")
     for label in ("Reproducible second build", "ZIP integrity",
                   "Manifest coverage", "Manifest payload digests", "Secret-file exclusion"):
         if fields.get(label) != "PASS":
             raise RuntimeError(f"detached record missing PASS for {label}")
+    if "Host extraction" in fields and fields["Host extraction"] != "PASS":
+        raise RuntimeError("detached record missing PASS for Host extraction")
     return {"artifact": str(artifact), "sha256": actual_hash,
             "bytes": actual_bytes, "members": member_count, "record": str(record),
             "detached_record": "PASS"}
