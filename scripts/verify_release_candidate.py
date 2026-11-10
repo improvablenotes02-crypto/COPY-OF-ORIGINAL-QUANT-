@@ -258,8 +258,17 @@ def verify_detached_record(artifact: Path, record: Path) -> dict:
         "Reproducible second build", "ZIP integrity", "Host extraction",
         "Manifest coverage", "Manifest payload digests", "Secret-file exclusion",
     ]
+    expected_key_sets = (set(legacy_order), set(extraction_order))
+    if set(ordered_keys) not in expected_key_sets:
+        expected = set(legacy_order)
+        missing = expected - set(ordered_keys)
+        unexpected = set(ordered_keys) - set(extraction_order)
+        raise RuntimeError(
+            f"detached record field mismatch: missing={sorted(missing)}, "
+            f"unexpected={sorted(unexpected)}"
+        )
     if ordered_keys not in (legacy_order, extraction_order):
-        raise RuntimeError("detached record fields are missing, unexpected, or out of canonical order")
+        raise RuntimeError("detached record fields are out of canonical order")
     expected_name = fields["Artifact"]
     actual_hash = sha256(artifact)
     actual_bytes = artifact.stat().st_size
