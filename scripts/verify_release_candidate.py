@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import zipfile
 from pathlib import Path
 
@@ -102,10 +103,12 @@ def verify_archive(path: Path) -> tuple[int, list[str]]:
                 raise RuntimeError("manifest must not contain its own hash")
             if name in manifest_hashes:
                 raise RuntimeError(f"duplicate manifest path: {name}")
-            portable_key = name.casefold()
+            # Normalize canonically equivalent Unicode names before case folding.
+            # This prevents NFC/NFD spellings from colliding on extraction targets.
+            portable_key = unicodedata.normalize("NFC", name).casefold()
             if portable_key in portable_names:
                 raise RuntimeError(
-                    "case-insensitive manifest path collision: "
+                    "case/Unicode-normalization manifest path collision: "
                     f"{portable_names[portable_key]!r} and {name!r}"
                 )
             portable_names[portable_key] = name

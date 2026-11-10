@@ -87,6 +87,21 @@ def test_rejects_overlong_windows_path_component(tmp_path: Path) -> None:
         raise AssertionError("overlong Windows path components must be rejected")
 
 
+def test_rejects_unicode_normalization_path_collisions(tmp_path: Path) -> None:
+    composed = "reports/caf\u00e9.txt"
+    decomposed = "reports/cafe\u0301.txt"
+    artifact = _archive(
+        tmp_path / "unicode-normalization-collision.zip",
+        {composed: b"composed", decomposed: b"decomposed"},
+    )
+    try:
+        MODULE.verify_archive(artifact)
+    except RuntimeError as exc:
+        assert "Unicode-normalization manifest path collision" in str(exc)
+    else:
+        raise AssertionError("canonically equivalent Unicode paths must be rejected")
+
+
 def test_accepts_portable_nested_unicode_path(tmp_path: Path) -> None:
     name = "reports/市場-data/summary-2026.txt"
     artifact = _archive(tmp_path / "unicode-portable.zip", {name: b"ok"})
