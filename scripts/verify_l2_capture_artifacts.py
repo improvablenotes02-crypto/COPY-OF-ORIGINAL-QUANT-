@@ -51,6 +51,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     connection_epochs_seen: set[int] = set()
     symbol_counts: dict[str, dict[str, int]] = {}
     accepted_sequences: dict[str, int] = {}
+    accepted_snapshots_by_epoch: dict[str, dict[str, int]] = {}
     with raw_path.open("rb") as stream:
         for number, line in enumerate(stream, start=1):
             digest.update(line)
@@ -103,6 +104,9 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
                 previous_sequence = accepted_sequences.get(symbol)
                 if action == "snapshot":
                     accepted_sequences[symbol] = sequence
+                    epoch_key = str(connection_epoch)
+                    epoch_snapshots = accepted_snapshots_by_epoch.setdefault(epoch_key, {})
+                    epoch_snapshots[symbol] = epoch_snapshots.get(symbol, 0) + 1
                 else:
                     if previous_sequence is None:
                         raise CaptureVerificationError(f"JSONL record {number} has accepted update before an accepted snapshot")
@@ -135,6 +139,25 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     # Epoch IDs count successful transport connections, including connections
     # that closed before yielding a persistable frame. Gaps are therefore valid;
     # ordering and the summary's upper bound are the independently verifiable facts.
+    reported_snapshots = summary.get("accepted_snapshots_by_epoch")
+    if not isinstance(reported_snapshots, dict):
+        raise CaptureVerificationError("accepted_snapshots_by_epoch is missing or invalid")
+    normalized_reported_snapshots: dict[str, dict[str, int]] = {}
+    for epoch_key, per_symbol in reported_snapshots.items():
+        if not isinstance(epoch_key, str) or not epoch_key.isdigit() or str(int(epoch_key)) != epoch_key:
+            raise CaptureVerificationError("accepted_snapshots_by_epoch contains an invalid epoch key")
+        if not isinstance(per_symbol, dict) or not per_symbol:
+            raise CaptureVerificationError("accepted_snapshots_by_epoch contains an invalid symbol map")
+        if any(
+            not isinstance(symbol, str)
+            or type(count) is not int
+            or count <= 0
+            for symbol, count in per_symbol.items()
+        ):
+            raise CaptureVerificationError("accepted_snapshots_by_epoch contains invalid snapshot counts")
+        normalized_reported_snapshots[epoch_key] = per_symbol
+    if normalized_reported_snapshots != accepted_snapshots_by_epoch:
+        raise CaptureVerificationError("Accepted snapshot evidence does not match raw capture by epoch and symbol")
 
     rejected_count = summary.get("rejected_frames_count")
     if type(rejected_count) is not int or rejected_count < rejected_persisted:
