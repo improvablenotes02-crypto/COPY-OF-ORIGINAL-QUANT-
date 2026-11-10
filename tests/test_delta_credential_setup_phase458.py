@@ -117,10 +117,6 @@ def test_setup_cli_never_echoes_entered_credentials(monkeypatch, tmp_path):
 
     answers = iter(("INDIA", "SANDBOX", "yes"))
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(answers))
-    monkeypatch.setattr(
-        getpass, "getpass",
-        lambda _prompt="": next(iter(("synthetic-hidden-key", "synthetic-hidden-secret"))),
-    )
     # Return the key and secret in sequence without retaining either in output.
     hidden_values = iter(("synthetic-hidden-key", "synthetic-hidden-secret"))
     monkeypatch.setattr(getpass, "getpass", lambda _prompt="": next(hidden_values))
