@@ -107,3 +107,11 @@ def test_accepts_portable_nested_unicode_path(tmp_path: Path) -> None:
     artifact = _archive(tmp_path / "unicode-portable.zip", {name: b"ok"})
     members, _ = MODULE.verify_archive(artifact)
     assert members == 2
+
+    
+def test_extracts_archive_and_verifies_payload_hashes(tmp_path: Path) -> None:
+    name = "reports/café.txt"
+    artifact = _archive(tmp_path / "extract-unicode.zip", {name: b"payload"})
+    members, names = MODULE.verify_extracted_archive(artifact)
+    assert members == 2
+    assert name in names
