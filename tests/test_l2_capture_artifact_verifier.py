@@ -564,5 +564,29 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 verify_capture(summary)
 
 
+    def test_rejects_summary_larger_than_verifier_limit(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            with summary.open("ab") as stream:
+                stream.write(b" " * (1024 * 1024 + 1))
+            with self.assertRaisesRegex(CaptureVerificationError, "Summary JSON exceeds 1 MiB verifier limit"):
+                verify_capture(summary)
+
+    def test_rejects_raw_record_larger_than_verifier_limit(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            raw_bytes = b" " * (1024 * 1024 + 1) + b"\\n"
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 exceeds 1 MiB verifier limit"):
+                verify_capture(summary)
+
+
 if __name__ == "__main__":
     unittest.main()
