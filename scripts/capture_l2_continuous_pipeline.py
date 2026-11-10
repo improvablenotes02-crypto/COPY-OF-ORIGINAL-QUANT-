@@ -87,9 +87,10 @@ class ContinuousStreamingL2CapturePipeline:
 
     def _build_subscription_payload(self) -> Dict[str, Any]:
         """Construct read-only subscription payload for public orderbook and trades."""
+        # This pipeline certifies L2 continuity only; subscribe only to the
+        # channel that this handler ingests.
         channels = [
             {"name": "ob_updates", "symbols": self.symbols},
-            {"name": "all_trades", "symbols": self.symbols},
         ]
         return {
             "type": "subscribe",
@@ -138,6 +139,20 @@ class ContinuousStreamingL2CapturePipeline:
             self.unexpected_frames_count += 1
             return False
 
+        # Validate required envelope fields before persistence or ingestion.
+        # bool is excluded explicitly because it subclasses int in Python.
+        sequence = msg.get("seq")
+        venue_timestamp_us = msg.get("ts")
+        bids = msg.get("b")
+        asks = msg.get("a")
+        if (
+            type(sequence) is not int or sequence <= 0
+            or type(venue_timestamp_us) is not int or venue_timestamp_us <= 0
+            or not isinstance(bids, list) or not isinstance(asks, list)
+        ):
+            self.malformed_frames_count += 1
+            return False
+
         record = {
             "receipt_mono_ns": receipt_mono_ns,
             "receipt_utc_ns": receipt_utc_ns,
@@ -161,10 +176,8 @@ class ContinuousStreamingL2CapturePipeline:
                 return False
             if symbol in self.trackers:
                 tracker = self.trackers[symbol]
-                seq = msg.get("seq", 0)
-                ts_us = msg.get("ts", 0)
-                bids = msg.get("b", [])
-                asks = msg.get("a", [])
+                seq = sequence
+                ts_us = venue_timestamp_us
                 action = msg.get("action")
 
                 if action == "snapshot" or tracker.last_sequence is None:
