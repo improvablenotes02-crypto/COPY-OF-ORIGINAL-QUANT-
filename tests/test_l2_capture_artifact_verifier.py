@@ -28,6 +28,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             "total_bytes_written": len(raw_bytes),
             "total_raw_frames": 1,
             "connection_epoch_count": 1,
+            "accepted_snapshots_by_epoch": {"0": {"BTCUSD": 1}} if accepted else {},
             "duration_seconds": 86400 if accepted else 120,
             "reconnect_count": 0,
             "malformed_frames_count": 0,
@@ -63,6 +64,26 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
         self.assertTrue(result["evidence_eligible"])
         self.assertEqual(result["raw_capture_frames"], 1)
         self.assertEqual(result["per_symbol_frame_counts"], {"BTCUSD": 1})
+
+    def test_rejects_snapshot_evidence_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["accepted_snapshots_by_epoch"] = {"0": {"BTCUSD": 2}}
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "snapshot evidence does not match"):
+                verify_capture(summary)
+
+    def test_rejects_invalid_snapshot_epoch_metadata(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["accepted_snapshots_by_epoch"] = {"00": {"BTCUSD": 1}}
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "invalid epoch key"):
+                verify_capture(summary)
 
     def test_detects_tampered_raw_capture(self):
         with tempfile.TemporaryDirectory() as td:
