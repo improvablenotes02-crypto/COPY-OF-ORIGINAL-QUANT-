@@ -12,6 +12,7 @@ def test_setup_writes_only_selected_pair_and_preserves_other_settings(tmp_path):
     env.write_text(
         "SYMBOLS=NIFTY\n"
         "DELTA_API_KEY=old-global-key\n"
+        "export DELTA_API_KEY=old-export-key\n"
         "DELTA_INDIA_TESTNET_API_SECRET=old-name\n"
         "PAPER_MODE=True\n",
         encoding="utf-8",
@@ -33,6 +34,7 @@ def test_setup_writes_only_selected_pair_and_preserves_other_settings(tmp_path):
     assert "DELTA_INDIA_SANDBOX_API_KEY=synthetic-new-key" in rendered
     assert "DELTA_INDIA_SANDBOX_API_SECRET=synthetic-new-secret" in rendered
     assert "DELTA_API_KEY=" not in rendered
+    assert "old-export-key" not in rendered
     assert "DELTA_INDIA_TESTNET_API_SECRET" not in rendered
     assert rendered.count("DELTA_REGION=") == 1
 
@@ -99,3 +101,34 @@ def test_setup_refuses_noninteractive_secret_input(monkeypatch):
     assert setup.main() == 2
     assert "interactive terminal" in captured.getvalue()
 
+
+
+def test_setup_cli_never_echoes_entered_credentials(monkeypatch, tmp_path):
+    import builtins
+    import getpass
+    import io
+    import sys
+
+    from scripts import configure_delta_credentials as setup
+
+    class TTYStream(io.StringIO):
+        def isatty(self):
+            return True
+
+    answers = iter(("INDIA", "SANDBOX", "yes"))
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": next(answers))
+    # Return the key and secret in sequence without retaining either in output.
+    hidden_values = iter(("synthetic-hidden-key", "synthetic-hidden-secret"))
+    monkeypatch.setattr(getpass, "getpass", lambda _prompt="": next(hidden_values))
+    monkeypatch.setattr(setup, "ENV_PATH", tmp_path / ".env")
+    captured = TTYStream()
+    monkeypatch.setattr(sys, "stdin", TTYStream())
+    monkeypatch.setattr(sys, "stdout", captured)
+
+    assert setup.main() == 0
+    rendered = captured.getvalue()
+    assert "synthetic-hidden-key" not in rendered
+    assert "synthetic-hidden-secret" not in rendered
+    saved = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "DELTA_INDIA_SANDBOX_API_KEY=synthetic-hidden-key" in saved
+    assert "DELTA_INDIA_SANDBOX_API_SECRET=synthetic-hidden-secret" in saved

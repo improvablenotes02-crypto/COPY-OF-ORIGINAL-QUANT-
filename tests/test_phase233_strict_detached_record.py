@@ -68,3 +68,52 @@ def test_rejects_invalid_record_header(tmp_path: Path) -> None:
         assert "header" in str(exc)
     else:
         raise AssertionError("invalid record header must be rejected")
+
+
+def test_rejects_reordered_detached_record_fields(tmp_path: Path) -> None:
+    artifact, record = _fixture(tmp_path)
+    lines = record.read_text(encoding="utf-8").splitlines()
+    lines[2], lines[3] = lines[3], lines[2]
+    record.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        MODULE.verify_detached_record(artifact, record)
+    except RuntimeError as exc:
+        assert "canonical order" in str(exc)
+    else:
+        raise AssertionError("reordered detached-record fields must be rejected")
+
+
+def test_rejects_blank_detached_record_lines(tmp_path: Path) -> None:
+    artifact, record = _fixture(tmp_path)
+    record.write_text(record.read_text(encoding="utf-8").replace(
+        "Artifact: ", "\nArtifact: ", 1), encoding="utf-8")
+    try:
+        MODULE.verify_detached_record(artifact, record)
+    except RuntimeError as exc:
+        assert "malformed detached-record line" in str(exc)
+    else:
+        raise AssertionError("blank detached-record lines must be rejected")
+
+
+def test_rejects_noncanonical_field_whitespace(tmp_path: Path) -> None:
+    artifact, record = _fixture(tmp_path)
+    record.write_text(record.read_text(encoding="utf-8").replace(
+        "Artifact: ", " Artifact: ", 1), encoding="utf-8")
+    try:
+        MODULE.verify_detached_record(artifact, record)
+    except RuntimeError as exc:
+        assert "non-canonical" in str(exc)
+    else:
+        raise AssertionError("field whitespace must be canonical")
+
+
+def test_rejects_oversized_detached_record(tmp_path: Path) -> None:
+    artifact, record = _fixture(tmp_path)
+    record.write_text(record.read_text(encoding="utf-8") + ("x" * 17000),
+                      encoding="utf-8")
+    try:
+        MODULE.verify_detached_record(artifact, record)
+    except RuntimeError as exc:
+        assert "16 KiB size limit" in str(exc)
+    else:
+        raise AssertionError("oversized detached records must be rejected")
