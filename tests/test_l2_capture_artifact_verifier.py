@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from scripts.verify_l2_capture_artifacts import CaptureVerificationError, verify_capture
 
@@ -562,6 +563,46 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             summary.write_text(json.dumps(data), encoding="utf-8")
             with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 exceeds verifier nesting limit"):
                 verify_capture(summary)
+
+
+    def test_rejects_oversized_summary(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            with patch("scripts.verify_l2_capture_artifacts._MAX_SUMMARY_BYTES", summary.stat().st_size - 1):
+                with self.assertRaisesRegex(CaptureVerificationError, "Summary JSON exceeds verifier byte limit"):
+                    verify_capture(summary)
+
+    def test_rejects_oversized_raw_record(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            with patch("scripts.verify_l2_capture_artifacts._MAX_JSONL_RECORD_BYTES", 16):
+                with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 exceeds verifier byte limit"):
+                    verify_capture(summary)
+
+    def test_rejects_total_raw_capture_byte_limit(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw_size = (root / "raw.jsonl").stat().st_size
+            with patch("scripts.verify_l2_capture_artifacts._MAX_RAW_CAPTURE_BYTES", raw_size - 1):
+                with self.assertRaisesRegex(CaptureVerificationError, "Raw capture exceeds verifier total byte limit"):
+                    verify_capture(summary)
+
+    def test_rejects_raw_capture_frame_count_limit(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            with patch("scripts.verify_l2_capture_artifacts._MAX_RAW_CAPTURE_FRAMES", 0):
+                with self.assertRaisesRegex(CaptureVerificationError, "Raw capture exceeds verifier frame-count limit"):
+                    verify_capture(summary)
+
+    def test_accepts_exact_resource_limits(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw_size = (root / "raw.jsonl").stat().st_size
+            with patch("scripts.verify_l2_capture_artifacts._MAX_SUMMARY_BYTES", summary.stat().st_size), patch("scripts.verify_l2_capture_artifacts._MAX_JSONL_RECORD_BYTES", raw_size), patch("scripts.verify_l2_capture_artifacts._MAX_RAW_CAPTURE_BYTES", raw_size), patch("scripts.verify_l2_capture_artifacts._MAX_RAW_CAPTURE_FRAMES", 1):
+                self.assertTrue(verify_capture(summary)["integrity_valid"])
 
 
 if __name__ == "__main__":
