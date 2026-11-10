@@ -74,6 +74,8 @@ class ContinuousStreamingL2CapturePipeline:
         self.start_utc_iso: Optional[str] = None
         self.end_utc_iso: Optional[str] = None
         self.reconnect_count = 0
+        self.connection_epoch = -1
+        self.connection_epochs_with_frames = set()
         self.total_frames_written = 0
         self.total_bytes_written = 0
         self.malformed_frames_count = 0
@@ -186,7 +188,7 @@ class ContinuousStreamingL2CapturePipeline:
             self.rejected_frames_count += 1
         elif tracker.state == BookValidityState.VALID:
             self._stale_symbols.discard(symbol)
-        record = {"receipt_mono_ns":receipt_mono_ns,"receipt_utc_ns":receipt_utc_ns,"raw":msg,"tracker_accepted":accepted}
+        record = {"connection_epoch": self.connection_epoch, "receipt_mono_ns":receipt_mono_ns,"receipt_utc_ns":receipt_utc_ns,"raw":msg,"tracker_accepted":accepted}
         encoded_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
         if self._raw_file_handle is None:
             self.persistence_errors_count += 1
@@ -211,6 +213,7 @@ class ContinuousStreamingL2CapturePipeline:
                 pass
             return False
         self._hasher.update(encoded_bytes)
+        self.connection_epochs_with_frames.add(self.connection_epoch)
         self.total_frames_written += 1
         self.total_bytes_written += len(encoded_bytes)
         if self.total_bytes_written >= self.max_disk_bytes:
@@ -243,6 +246,7 @@ class ContinuousStreamingL2CapturePipeline:
                     close_timeout=5,
                     max_size=16 * 1024 * 1024,
                 ) as ws:
+                    self.connection_epoch += 1
                     print(f"[+] Connected to {self.endpoint}. Subscribing...")
                     await ws.send(sub_msg)
 
@@ -331,6 +335,7 @@ class ContinuousStreamingL2CapturePipeline:
             "duration_seconds": round(elapsed_sec, 3),
             "target_duration_seconds": self.duration_seconds,
             "reconnect_count": self.reconnect_count,
+            "connection_epoch_count": self.connection_epoch + 1,
             "total_raw_frames": self.total_frames_written,
             "total_bytes_written": self.total_bytes_written,
             "malformed_frames_count": self.malformed_frames_count,
