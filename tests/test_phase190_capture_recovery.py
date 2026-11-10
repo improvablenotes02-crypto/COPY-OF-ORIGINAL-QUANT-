@@ -443,3 +443,47 @@ class TestPhase258PerSymbolFreshness(unittest.TestCase):
             summary = pipeline.finalize_artifacts()
             self.assertFalse(summary["continuity_checks"]["zero_symbol_freshness_violations"])
             self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
+
+
+class TestPhase260ExplicitSnapshotRecovery(unittest.TestCase):
+    def test_deep_delta_cannot_initialize_book_without_explicit_snapshot(self):
+        tracker = L2BookTracker("BTCUSD")
+        deep_bids = [[str(82000 - i), "1"] for i in range(6)]
+        deep_asks = [[str(82010 + i), "1"] for i in range(6)]
+        self.assertFalse(tracker.process_update(
+            bids=deep_bids, asks=deep_asks, sequence=1,
+            venue_timestamp_us=1729500000000000,
+        ))
+        self.assertIsNone(tracker.last_sequence)
+        self.assertEqual(tracker.state, BookValidityState.INVALID)
+        self.assertFalse(tracker.bids)
+        self.assertFalse(tracker.asks)
+
+    def test_reconnect_requires_explicit_snapshot_action(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = ContinuousStreamingL2CapturePipeline(
+                symbols=["BTCUSD"], output_dir=Path(td)
+            )
+            tracker = pipeline.trackers["BTCUSD"]
+            self.assertTrue(tracker.process_snapshot(
+                bids=[["82000", "1"]], asks=[["82010", "1"]],
+                sequence=100, venue_timestamp_us=1729500000000000,
+            ))
+            tracker.reset("test reconnect")
+            pipeline._open_streaming_file()
+            delta = {
+                "type": "ob_updates", "sy": "BTCUSD", "seq": 1,
+                "ts": 1729500000001000,
+                "b": [[str(82000 - i), "1"] for i in range(6)],
+                "a": [[str(82010 + i), "1"] for i in range(6)],
+                "action": "update",
+            }
+            self.assertFalse(pipeline._stream_frame(json.dumps(delta), 100, 200))
+            self.assertIsNone(tracker.last_sequence)
+            self.assertFalse(tracker.bids)
+            snapshot = dict(delta)
+            snapshot["action"] = "snapshot"
+            self.assertTrue(pipeline._stream_frame(json.dumps(snapshot), 300, 400))
+            self.assertEqual(tracker.last_sequence, 1)
+            self.assertEqual(tracker.state, BookValidityState.VALID)
+            pipeline.finalize_artifacts()
