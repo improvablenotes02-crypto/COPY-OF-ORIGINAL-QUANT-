@@ -252,8 +252,12 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     duration_for_checks = summary.get("duration_seconds")
     if type(duration_for_checks) not in (int, float) or not math.isfinite(duration_for_checks) or duration_for_checks < 0:
         raise CaptureVerificationError("duration_seconds is missing or invalid")
+    timestamp_duration_for_checks = (end_utc - start_utc).total_seconds()
+    operator_or_safety_stopped = summary.get("operator_or_safety_stopped")
+    if type(operator_or_safety_stopped) is not bool:
+        raise CaptureVerificationError("operator_or_safety_stopped is missing or invalid")
     derived_checks = {
-        "minimum_24h_duration": duration_for_checks >= 86400.0,
+        "minimum_24h_duration": timestamp_duration_for_checks >= 86400.0,
         "zero_transport_reconnects": summary.get("reconnect_count") == 0,
         "zero_malformed_frames": summary.get("malformed_frames_count") == 0,
         "zero_rejected_frames": summary.get("rejected_frames_count") == 0,
@@ -262,6 +266,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         "zero_symbol_freshness_violations": summary.get("freshness_violations_count") == 0,
         "raw_capture_persistence_complete": summary.get("raw_capture_persistence_complete") is True,
         "all_symbol_books_valid": all_books_valid,
+        "not_operator_or_safety_stopped": not operator_or_safety_stopped,
     }
     for check_name, expected_value in derived_checks.items():
         if checks[check_name] is not expected_value:
