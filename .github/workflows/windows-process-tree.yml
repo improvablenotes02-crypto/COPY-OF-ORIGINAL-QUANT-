@@ -8,6 +8,10 @@ on:
       - 'tests/test_phase22*'
       - 'tests/test_phase23*'
       - '.github/workflows/windows-process-tree.yml'
+      - 'BUILD_MANIFEST.sha256'
+      - 'scripts/build_release.py'
+      - 'scripts/generate_manifest.py'
+      - 'scripts/verify_release_candidate.py'
   pull_request:
     paths:
       - 'core/**process*'
@@ -15,6 +19,10 @@ on:
       - 'tests/test_phase22*'
       - 'tests/test_phase23*'
       - '.github/workflows/windows-process-tree.yml'
+      - 'BUILD_MANIFEST.sha256'
+      - 'scripts/build_release.py'
+      - 'scripts/generate_manifest.py'
+      - 'scripts/verify_release_candidate.py'
   workflow_dispatch:
 
 permissions:
