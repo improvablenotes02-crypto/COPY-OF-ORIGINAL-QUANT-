@@ -489,7 +489,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
         raw = root / "raw.jsonl"
         record = json.loads(raw.read_text(encoding="utf-8"))
         mutate(record)
-        raw_bytes = (json.dumps(record, sort_keys=True) + "\\n").encode("utf-8")
+        raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
         raw.write_bytes(raw_bytes)
         data = json.loads(summary.read_text(encoding="utf-8"))
         data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
@@ -554,7 +554,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             summary = self._write_fixture(root)
             raw = root / "raw.jsonl"
             line = raw.read_text(encoding="utf-8").rstrip()
-            raw_bytes = (line[:-1] + ', "deep": ' + ("[" * 1500) + "0" + ("]" * 1500) + "}\\n").encode("utf-8")
+            raw_bytes = (line[:-1] + ', "deep": ' + ("[" * 1500) + "0" + ("]" * 1500) + "}\n").encode("utf-8")
             raw.write_bytes(raw_bytes)
             data = json.loads(summary.read_text(encoding="utf-8"))
             data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
@@ -578,7 +578,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             root = Path(td)
             summary = self._write_fixture(root)
             raw = root / "raw.jsonl"
-            raw_bytes = b" " * (1024 * 1024 + 1) + b"\\n"
+            raw_bytes = b" " * (1024 * 1024 + 1) + b"\n"
             raw.write_bytes(raw_bytes)
             data = json.loads(summary.read_text(encoding="utf-8"))
             data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
