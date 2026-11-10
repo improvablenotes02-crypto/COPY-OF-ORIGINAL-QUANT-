@@ -123,6 +123,31 @@ class L2BookTracker:
             self.state = new_state
             self.state_history.append((time.time(), new_state, reason))
 
+    def _validate_event_metadata(self, sequence: int, venue_timestamp_us: int) -> bool:
+        """Reject invalid counters and venue-clock regressions before mutating book state."""
+        if type(sequence) is not int or sequence <= 0:
+            self.metrics.malformed_count += 1
+            self.metrics.rejected_count += 1
+            self._record_state_change(BookValidityState.INVALID, "Invalid sequence metadata")
+            return False
+        if type(venue_timestamp_us) is not int or venue_timestamp_us <= 0:
+            self.metrics.malformed_count += 1
+            self.metrics.rejected_count += 1
+            self._record_state_change(BookValidityState.INVALID, "Invalid venue timestamp metadata")
+            return False
+        if (
+            self.last_venue_timestamp_us is not None
+            and venue_timestamp_us < self.last_venue_timestamp_us
+        ):
+            self.metrics.out_of_order_count += 1
+            self.metrics.rejected_count += 1
+            self._record_state_change(
+                BookValidityState.SEQUENCE_GAP,
+                f"Venue timestamp regressed: {venue_timestamp_us} < {self.last_venue_timestamp_us}",
+            )
+            return False
+        return True
+
     def reset(self, reason: str = "Manual reset") -> None:
         """Reset book to initializing state upon disconnect or unrecoverable gap."""
         self.bids.clear()
@@ -145,9 +170,11 @@ class L2BookTracker:
         """Initialize or resynchronize book from full L2 snapshot."""
         now_mono = receipt_mono_ns if receipt_mono_ns is not None else time.monotonic_ns()
         now_utc = receipt_utc_ns if receipt_utc_ns is not None else time.time_ns()
-        
-        self._record_timestamps(now_utc, now_mono)
+
         self.metrics.total_messages += 1
+        if not self._validate_event_metadata(sequence, venue_timestamp_us):
+            return False
+        self._record_timestamps(now_utc, now_mono)
         self.metrics.resync_count += 1
 
         self.bids.clear()
@@ -202,8 +229,10 @@ class L2BookTracker:
         """Apply incremental L2 book delta with strict sequence validation."""
         now_mono = receipt_mono_ns if receipt_mono_ns is not None else time.monotonic_ns()
         now_utc = receipt_utc_ns if receipt_utc_ns is not None else time.time_ns()
-        self._record_timestamps(now_utc, now_mono)
         self.metrics.total_messages += 1
+        if not self._validate_event_metadata(sequence, venue_timestamp_us):
+            return False
+        self._record_timestamps(now_utc, now_mono)
 
         # Check if initialized
         if self.last_sequence is None or self.state in (BookValidityState.INITIALIZING, BookValidityState.RESYNCING):
