@@ -120,7 +120,12 @@ def test_setup_cli_never_echoes_entered_credentials(monkeypatch, tmp_path):
     # Return the key and secret in sequence without retaining either in output.
     hidden_values = iter(("synthetic-hidden-key", "synthetic-hidden-secret"))
     monkeypatch.setattr(getpass, "getpass", lambda _prompt="": next(hidden_values))
-    monkeypatch.setattr(setup, "ENV_PATH", tmp_path / ".env")
+    target_env = tmp_path / ".env"
+    configure = setup.configure_credentials
+    monkeypatch.setattr(
+        setup, "configure_credentials",
+        lambda **kwargs: configure(**kwargs, env_path=target_env),
+    )
     captured = TTYStream()
     monkeypatch.setattr(sys, "stdin", TTYStream())
     monkeypatch.setattr(sys, "stdout", captured)
@@ -129,6 +134,6 @@ def test_setup_cli_never_echoes_entered_credentials(monkeypatch, tmp_path):
     rendered = captured.getvalue()
     assert "synthetic-hidden-key" not in rendered
     assert "synthetic-hidden-secret" not in rendered
-    saved = (tmp_path / ".env").read_text(encoding="utf-8")
+    saved = target_env.read_text(encoding="utf-8")
     assert "DELTA_INDIA_SANDBOX_API_KEY=synthetic-hidden-key" in saved
     assert "DELTA_INDIA_SANDBOX_API_SECRET=synthetic-hidden-secret" in saved
