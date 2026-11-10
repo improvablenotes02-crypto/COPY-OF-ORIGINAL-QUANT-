@@ -245,7 +245,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             second["connection_epoch"] = 1
             second["receipt_mono_ns"] = 11
             second["raw"] = dict(first["raw"], seq=9, action="snapshot")
-            raw_bytes = ((json.dumps(first, sort_keys=True) + "\\n") + (json.dumps(second, sort_keys=True) + "\\n")).encode("utf-8")
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\n") + (json.dumps(second, sort_keys=True) + "\n")).encode("utf-8")
             raw.write_bytes(raw_bytes)
             data = json.loads(summary.read_text())
             data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
@@ -269,7 +269,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             second["connection_epoch"] = 1
             second["receipt_mono_ns"] = 11
             second["raw"] = dict(first["raw"], seq=10, action="snapshot")
-            raw_bytes = ((json.dumps(first, sort_keys=True) + "\\n") + (json.dumps(second, sort_keys=True) + "\\n")).encode("utf-8")
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\n") + (json.dumps(second, sort_keys=True) + "\n")).encode("utf-8")
             raw.write_bytes(raw_bytes)
             data = json.loads(summary.read_text())
             data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
@@ -292,7 +292,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             second["connection_epoch"] = 2
             second["receipt_mono_ns"] = 11
             second["raw"] = dict(first["raw"], seq=1, action="snapshot")
-            raw_bytes = ((json.dumps(first, sort_keys=True) + "\\n") + (json.dumps(second, sort_keys=True) + "\\n")).encode("utf-8")
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\n") + (json.dumps(second, sort_keys=True) + "\n")).encode("utf-8")
             raw.write_bytes(raw_bytes)
             data = json.loads(summary.read_text())
             data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
