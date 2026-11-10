@@ -50,7 +50,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         for number, line in enumerate(stream, start=1):
             digest.update(line)
             byte_count += len(line)
-            if not line.endswith(b"\\n"):
+            if not line.endswith(b"\n"):
                 raise CaptureVerificationError(f"JSONL record {number} is not LF terminated")
             try:
                 record = json.loads(line)
@@ -96,10 +96,11 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     if verdict == "VERIFIED_24H" and (
         not all(checks.values())
         or rejected_persisted
+        or rejected_count != 0
         or checks.get("minimum_24h_duration") is not True
         or duration < 86400.0
     ):
-        raise CaptureVerificationError("VERIFIED_24H conflicts with failed checks, short duration, or rejected persisted frames")
+        raise CaptureVerificationError("VERIFIED_24H conflicts with failed checks, rejected frames, or short duration")
 
     return {
         "integrity_valid": True,

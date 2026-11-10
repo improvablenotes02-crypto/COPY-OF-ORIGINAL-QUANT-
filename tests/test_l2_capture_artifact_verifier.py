@@ -78,10 +78,6 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 verify_capture(summary)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
     def test_rejects_verified_verdict_with_short_duration(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -91,3 +87,17 @@ if __name__ == "__main__":
             summary.write_text(json.dumps(data))
             with self.assertRaisesRegex(CaptureVerificationError, "short duration"):
                 verify_capture(summary)
+
+    def test_rejects_verified_verdict_with_rejected_frame_count(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            data = json.loads(summary.read_text())
+            data["rejected_frames_count"] = 1
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "rejected frames"):
+                verify_capture(summary)
+
+
+if __name__ == "__main__":
+    unittest.main()
