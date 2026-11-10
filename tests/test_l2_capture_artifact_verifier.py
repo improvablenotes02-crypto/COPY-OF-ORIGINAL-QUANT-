@@ -98,7 +98,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             raw = root / "raw.jsonl"
             record = json.loads(raw.read_text())
             record["raw"]["action"] = "update"
-            raw_bytes = (json.dumps(record, sort_keys=True) + "\\n").encode("utf-8")
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
             raw.write_bytes(raw_bytes)
             data = json.loads(summary.read_text())
             data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
@@ -114,10 +114,10 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             raw = root / "raw.jsonl"
             first = json.loads(raw.read_text())
             second = dict(first)
-            second["receipt_mono_ns"] = first["receipt_mono_ns"]
+            second["receipt_mono_ns"] = first["receipt_mono_ns"] - 1
             second["raw"] = dict(first["raw"], seq=2, action="update")
             second["tracker_accepted"] = True
-            raw_bytes = ((json.dumps(first, sort_keys=True) + "\\n") + (json.dumps(second, sort_keys=True) + "\\n")).encode("utf-8")
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\n") + (json.dumps(second, sort_keys=True) + "\n")).encode("utf-8")
             raw.write_bytes(raw_bytes)
             data = json.loads(summary.read_text())
             data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
@@ -137,7 +137,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             second = dict(first)
             second["receipt_mono_ns"] = 11
             second["raw"] = dict(first["raw"], seq=3, action="update")
-            raw_bytes = ((json.dumps(first, sort_keys=True) + "\\n") + (json.dumps(second, sort_keys=True) + "\\n")).encode("utf-8")
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\n") + (json.dumps(second, sort_keys=True) + "\n")).encode("utf-8")
             raw.write_bytes(raw_bytes)
             data = json.loads(summary.read_text())
             data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
