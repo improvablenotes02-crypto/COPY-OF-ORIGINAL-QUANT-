@@ -6,8 +6,9 @@
 - **Adversarial archive checks:** Phase 240 added rejection tests for symlink/special-file metadata, directory entries, encrypted members, duplicate names, and file/directory path collisions.
 - **Detached-record integrity:** Phase 241 enforces a bounded, canonical record format while retaining compatibility with the earlier record format.
 - **Credential rotation hardening:** Phase 242 removes old managed Delta variables even when written with a dotenv `export` prefix. Full runtime data-gate certification, including the dedicated credential setup tests and PostgreSQL tenant isolation, passed on Ubuntu and Windows.
-- **Hidden prompt regression:** Phase 244 adds a CLI-level check that entered key/secret values never appear in terminal output. The exact PR head passed Secret scan, Option-chain integrity, Windows process-tree cleanup, and Runtime data-gate certification on both push and pull-request events.
-- **Managed dotenv cleanup coverage:** Phase 245 adds regression coverage for every managed Delta variable when written with an `export` prefix, ensuring credential rotation removes all stale managed declarations while preserving unrelated settings. CI is pending for this addition.
+- **Hidden prompt regression:** Phase 244 adds a CLI-level check that entered key/secret values never appear in terminal output.
+- **Managed dotenv cleanup coverage:** Phase 245 adds regression coverage for every managed Delta variable when written with an `export` prefix, ensuring credential rotation removes all stale managed declarations while preserving unrelated settings.
+- **Exact-head CI certification:** Commit `3f94c7c2a3ad81355eb7bf9798a81d1c6fb453a4` completed all seven push and pull-request workflow runs successfully: Secret scan, Option-chain integrity gate, Runtime data-gate certification, and Windows process-tree cleanup (PR event).
 
 ## Remaining work, in priority order
 
@@ -15,7 +16,7 @@
 2. **Market-data evidence:** Complete and independently verify the documented multi-day L2 capture. Keep continuity claims partial until primary capture evidence is available.
 3. **External reconciliation:** Complete the external tax-invoice reconciliation from primary source records; do not infer missing evidence.
 4. **Independent strategy validation:** Establish out-of-sample evidence for any claimed trading edge. Passing software tests does not establish profitability.
-5. **Release governance:** PR #27 is currently open and GitHub reports it mergeable/clean. Review the complete diff and complete the full regression/release checklist before considering a release.
+5. **Release governance:** PR #27 is currently open and GitHub reports it mergeable/clean. Review the complete diff and complete the full regression/release checklist before considering a release. The seven workflows above passed on the current PR head; that is not equivalent to the complete repository release checklist.
 
 ## Mandatory posture
 
