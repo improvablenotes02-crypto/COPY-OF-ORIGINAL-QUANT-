@@ -173,13 +173,13 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             with self.assertRaisesRegex(CaptureVerificationError, "before an accepted snapshot"):
                 verify_capture(summary)
 
-    def test_rejects_skipped_connection_epoch(self):
+    def test_rejects_regressing_connection_epoch(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             summary = self._write_fixture(root)
             raw = root / "raw.jsonl"
             record = json.loads(raw.read_text())
-            record["connection_epoch"] = 2
+            record["connection_epoch"] = 0
             raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
             raw.write_bytes(raw_bytes)
             data = json.loads(summary.read_text())
@@ -187,7 +187,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             data["total_bytes_written"] = len(raw_bytes)
             data["connection_epoch_count"] = 1
             summary.write_text(json.dumps(data))
-            with self.assertRaisesRegex(CaptureVerificationError, "skipped or regressing"):
+            with self.assertRaisesRegex(CaptureVerificationError, "duplicate or regressing"):
                 verify_capture(summary)
 
     def test_rejects_verified_verdict_with_short_duration(self):
