@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import stat
 import zipfile
 from pathlib import Path
 
@@ -115,3 +116,75 @@ def test_extracts_archive_and_verifies_payload_hashes(tmp_path: Path) -> None:
     members, names = MODULE.verify_extracted_archive(artifact)
     assert members == 2
     assert name in names
+
+
+def test_rejects_symlink_zip_metadata(tmp_path: Path) -> None:
+    artifact = tmp_path / "symlink.zip"
+    info = zipfile.ZipInfo("link")
+    info.create_system = 3
+    info.external_attr = (stat.S_IFLNK | 0o777) << 16
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr(info, "target")
+        archive.writestr("BUILD_MANIFEST.sha256", "")
+    try:
+        MODULE.verify_archive(artifact)
+    except RuntimeError as exc:
+        assert "non-regular ZIP member" in str(exc)
+    else:
+        raise AssertionError("symlink ZIP metadata must be rejected")
+
+
+def test_rejects_special_file_zip_metadata(tmp_path: Path) -> None:
+    artifact = tmp_path / "fifo.zip"
+    info = zipfile.ZipInfo("pipe")
+    info.create_system = 3
+    info.external_attr = (stat.S_IFIFO | 0o600) << 16
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr(info, b"payload")
+        archive.writestr("BUILD_MANIFEST.sha256", "")
+    try:
+        MODULE.verify_archive(artifact)
+    except RuntimeError as exc:
+        assert "non-regular ZIP member" in str(exc)
+    else:
+        raise AssertionError("special-file ZIP metadata must be rejected")
+
+
+def test_rejects_directory_zip_entries(tmp_path: Path) -> None:
+    artifact = tmp_path / "directory-entry.zip"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("folder/", b"")
+        archive.writestr("BUILD_MANIFEST.sha256", "")
+    try:
+        MODULE.verify_archive(artifact)
+    except RuntimeError as exc:
+        assert "directory ZIP entries" in str(exc)
+    else:
+        raise AssertionError("directory ZIP entries must be rejected")
+
+
+def test_rejects_file_directory_path_collisions(tmp_path: Path) -> None:
+    artifact = _archive(
+        tmp_path / "file-directory-collision.zip",
+        {"cache": b"file", "cache/state.json": b"child"},
+    )
+    try:
+        MODULE.verify_archive(artifact)
+    except RuntimeError as exc:
+        assert "file/directory manifest path collision" in str(exc)
+    else:
+        raise AssertionError("a file cannot also be a parent directory")
+
+
+def test_rejects_duplicate_zip_members(tmp_path: Path) -> None:
+    artifact = tmp_path / "duplicate.zip"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("item.txt", b"first")
+        archive.writestr("item.txt", b"second")
+        archive.writestr("BUILD_MANIFEST.sha256", "")
+    try:
+        MODULE.verify_archive(artifact)
+    except RuntimeError as exc:
+        assert "duplicate member names" in str(exc)
+    else:
+        raise AssertionError("duplicate ZIP member names must be rejected")
