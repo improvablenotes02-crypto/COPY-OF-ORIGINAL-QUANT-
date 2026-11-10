@@ -170,12 +170,13 @@ def scan_env_history(root: Path) -> list[str]:
     """Return commits containing credentials in any historical env-style file.
 
     Scan all reachable refs and all root/nested .env variants, including
-    interrupted credential-writer files.  Only commit IDs and paths are
-    returned; matched values are never included in diagnostics.
+    the actual atomic-writer prefix (.env.tmp-) and legacy interrupted
+    credential-writer files. Only commit IDs are returned.
     """
     pathspecs = (
         ":(glob)**/.env",
         ":(glob)**/.env.*",
+        ":(glob)**/.env.tmp-*",
         ":(glob)**/.quantengine-env-*",
     )
     try:
@@ -274,7 +275,13 @@ def main(argv: list[str] | None = None) -> int:
     _emit_findings(findings)
     history = scan_env_history(root) if args.check_history else []
     for revision in history:
-        print(f"SECRET_HISTORY_FAIL path=.env commit={revision} rule=non_empty_known_secret")
+        if revision == "HISTORY_SCAN_UNAVAILABLE":
+            print("SECRET_HISTORY_SCAN_FAIL reason=unavailable")
+        else:
+            print(
+                f"SECRET_HISTORY_FAIL commit={revision} "
+                "rule=non_empty_known_secret"
+            )
 
     staged: list[Finding] = []
     if args.check_staged:
