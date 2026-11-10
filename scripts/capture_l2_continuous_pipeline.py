@@ -76,6 +76,7 @@ class ContinuousStreamingL2CapturePipeline:
         self.reconnect_count = 0
         self.connection_epoch = -1
         self.connection_epochs_with_frames = set()
+        self.accepted_snapshots_by_epoch: Dict[int, Dict[str, int]] = {}
         self.total_frames_written = 0
         self.total_bytes_written = 0
         self.malformed_frames_count = 0
@@ -214,6 +215,9 @@ class ContinuousStreamingL2CapturePipeline:
             return False
         self._hasher.update(encoded_bytes)
         self.connection_epochs_with_frames.add(self.connection_epoch)
+        if accepted and msg.get("action") == "snapshot":
+            epoch_snapshots = self.accepted_snapshots_by_epoch.setdefault(self.connection_epoch, {})
+            epoch_snapshots[symbol] = epoch_snapshots.get(symbol, 0) + 1
         self.total_frames_written += 1
         self.total_bytes_written += len(encoded_bytes)
         if self.total_bytes_written >= self.max_disk_bytes:
@@ -336,6 +340,10 @@ class ContinuousStreamingL2CapturePipeline:
             "target_duration_seconds": self.duration_seconds,
             "reconnect_count": self.reconnect_count,
             "connection_epoch_count": self.connection_epoch + 1,
+            "accepted_snapshots_by_epoch": {
+                str(epoch): dict(sorted(symbol_counts.items()))
+                for epoch, symbol_counts in sorted(self.accepted_snapshots_by_epoch.items())
+            },
             "total_raw_frames": self.total_frames_written,
             "total_bytes_written": self.total_bytes_written,
             "malformed_frames_count": self.malformed_frames_count,
