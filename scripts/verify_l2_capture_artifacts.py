@@ -64,8 +64,8 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             if type(record.get("receipt_mono_ns")) is not int or record["receipt_mono_ns"] <= 0:
                 raise CaptureVerificationError(f"JSONL record {number} has invalid monotonic receipt time")
             receipt_mono_ns = record["receipt_mono_ns"]
-            if receipt_mono_ns <= previous_receipt_mono_ns:
-                raise CaptureVerificationError(f"JSONL record {number} has non-increasing monotonic receipt time")
+            if receipt_mono_ns < previous_receipt_mono_ns:
+                raise CaptureVerificationError(f"JSONL record {number} has regressing monotonic receipt time")
             previous_receipt_mono_ns = receipt_mono_ns
             if type(record.get("receipt_utc_ns")) is not int or record["receipt_utc_ns"] <= 0:
                 raise CaptureVerificationError(f"JSONL record {number} has invalid UTC receipt time")
