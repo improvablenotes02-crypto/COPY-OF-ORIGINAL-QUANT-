@@ -252,6 +252,22 @@ class ContinuousStreamingL2CapturePipeline:
         for sym, tr in self.trackers.items():
             per_symbol_metrics[sym] = tr.summary_dict()
 
+        symbol_books_valid = bool(self.trackers) and all(
+            tracker.state == BookValidityState.VALID
+            for tracker in self.trackers.values()
+        )
+        continuity_checks = {
+            "minimum_24h_duration": elapsed_sec >= 86400.0,
+            "zero_transport_reconnects": self.reconnect_count == 0,
+            "zero_malformed_frames": self.malformed_frames_count == 0,
+            "zero_rejected_frames": self.rejected_frames_count == 0,
+            "all_symbol_books_valid": symbol_books_valid,
+            "not_operator_or_safety_stopped": not self.stop_requested,
+        }
+        continuity_verdict = (
+            "VERIFIED_24H" if all(continuity_checks.values()) else "PARTIAL"
+        )
+
         summary = {
             "phase": self.phase,
             "session_id": f"phase{self.phase}-l2-{self._raw_capture_path.stem if self._raw_capture_path else 'unknown'}",
@@ -272,7 +288,8 @@ class ContinuousStreamingL2CapturePipeline:
             "raw_capture_file": str(self._raw_capture_path.name) if self._raw_capture_path else None,
             "raw_capture_sha256": raw_sha256,
             "symbol_quality": per_symbol_metrics,
-            "continuity_evidence_verdict": "PARTIAL" if elapsed_sec < 86400.0 else "VERIFIED_24H",
+            "continuity_evidence_verdict": continuity_verdict,
+            "continuity_checks": continuity_checks,
         }
 
         if self._summary_path:
