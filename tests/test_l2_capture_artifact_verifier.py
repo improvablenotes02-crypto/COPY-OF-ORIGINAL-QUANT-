@@ -234,6 +234,54 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 verify_capture(summary)
 
 
+    def test_rejects_snapshot_sequence_regression_across_connection_epochs(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            first = json.loads(raw.read_text())
+            first["raw"]["seq"] = 10
+            second = dict(first)
+            second["connection_epoch"] = 1
+            second["receipt_mono_ns"] = 11
+            second["raw"] = dict(first["raw"], seq=9, action="snapshot")
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\\n") + (json.dumps(second, sort_keys=True) + "\\n")).encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            data["total_raw_frames"] = 2
+            data["connection_epoch_count"] = 2
+            data["accepted_snapshots_by_epoch"] = {"0": {"BTCUSD": 1}, "1": {"BTCUSD": 1}}
+            data["symbol_quality"]["BTCUSD"] = {"total_messages": 2, "valid_updates": 2, "rejected_count": 0}
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "snapshot sequence regression across connection epochs"):
+                verify_capture(summary)
+
+    def test_allows_non_regressing_snapshot_sequence_after_reconnect(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            first = json.loads(raw.read_text())
+            first["raw"]["seq"] = 10
+            second = dict(first)
+            second["connection_epoch"] = 1
+            second["receipt_mono_ns"] = 11
+            second["raw"] = dict(first["raw"], seq=10, action="snapshot")
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\\n") + (json.dumps(second, sort_keys=True) + "\\n")).encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            data["total_raw_frames"] = 2
+            data["connection_epoch_count"] = 2
+            data["accepted_snapshots_by_epoch"] = {"0": {"BTCUSD": 1}, "1": {"BTCUSD": 1}}
+            data["symbol_quality"]["BTCUSD"] = {"total_messages": 2, "valid_updates": 2, "rejected_count": 0}
+            summary.write_text(json.dumps(data))
+            result = verify_capture(summary)
+            self.assertTrue(result["integrity_valid"])
+
     def test_allows_empty_connection_epoch_between_persisted_epochs(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
