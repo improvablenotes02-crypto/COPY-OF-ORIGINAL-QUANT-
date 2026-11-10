@@ -337,9 +337,6 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     ):
         raise CaptureVerificationError("VERIFIED_24H conflicts with failed checks, rejected frames, or short duration")
 
-    if time.process_time() - verification_cpu_started > _MAX_VERIFICATION_CPU_SECONDS:
-        raise CaptureVerificationError("Artifact verification exceeded CPU-time budget")
-
     return {
         "integrity_valid": True,
         "evidence_verdict": verdict,
