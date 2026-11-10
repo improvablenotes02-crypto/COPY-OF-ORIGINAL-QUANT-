@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-_HEX64 = re.compile(r"[0-9a-f]{64}\\Z")
+_HEX64 = re.compile(r"[0-9a-f]{64}")
 
 
 class CaptureVerificationError(ValueError):
