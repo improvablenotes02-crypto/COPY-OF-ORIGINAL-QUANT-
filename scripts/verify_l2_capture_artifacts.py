@@ -140,9 +140,30 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     if type(rejected_count) is not int or rejected_count < rejected_persisted:
         raise CaptureVerificationError("Persisted rejected frames exceed summary rejected count")
 
+    configured_symbols = summary.get("configured_symbols")
+    if (
+        not isinstance(configured_symbols, list)
+        or not configured_symbols
+        or any(
+            not isinstance(symbol, str)
+            or not symbol
+            or symbol != symbol.strip()
+            or symbol != symbol.upper()
+            for symbol in configured_symbols
+        )
+        or len(set(configured_symbols)) != len(configured_symbols)
+    ):
+        raise CaptureVerificationError("configured_symbols must be a non-empty unique normalized symbol list")
+    configured_symbol_set = set(configured_symbols)
+    if not set(symbol_counts).issubset(configured_symbol_set):
+        unexpected = sorted(set(symbol_counts) - configured_symbol_set)
+        raise CaptureVerificationError(f"Raw capture contains unconfigured symbols: {unexpected}")
+
     symbol_quality = summary.get("symbol_quality")
     if not isinstance(symbol_quality, dict):
         raise CaptureVerificationError("symbol_quality must be a per-symbol metrics map")
+    if set(symbol_quality) != configured_symbol_set:
+        raise CaptureVerificationError("symbol_quality inventory must exactly match configured_symbols")
     for symbol, counts in symbol_counts.items():
         metrics = symbol_quality.get(symbol)
         if not isinstance(metrics, dict):
@@ -191,7 +212,10 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         raise CaptureVerificationError("raw_capture_persistence_complete conflicts with continuity_checks")
     freshness_by_symbol = summary.get("freshness_violations_by_symbol")
     if not isinstance(freshness_by_symbol, dict) or any(
-        not isinstance(symbol, str) or type(count) is not int or count < 0
+        not isinstance(symbol, str)
+        or symbol not in configured_symbol_set
+        or type(count) is not int
+        or count < 0
         for symbol, count in freshness_by_symbol.items()
     ):
         raise CaptureVerificationError("freshness_violations_by_symbol is missing or invalid")
