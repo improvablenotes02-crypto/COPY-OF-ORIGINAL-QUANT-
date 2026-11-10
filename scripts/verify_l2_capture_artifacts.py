@@ -51,6 +51,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     connection_epochs_seen: set[int] = set()
     symbol_counts: dict[str, dict[str, int]] = {}
     accepted_sequences: dict[str, int] = {}
+    highest_accepted_sequences: dict[str, int] = {}
     accepted_snapshots_by_epoch: dict[str, dict[str, int]] = {}
     with raw_path.open("rb") as stream:
         for number, line in enumerate(stream, start=1):
@@ -103,7 +104,11 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             if record["tracker_accepted"]:
                 previous_sequence = accepted_sequences.get(symbol)
                 if action == "snapshot":
+                    highest_sequence = highest_accepted_sequences.get(symbol)
+                    if highest_sequence is not None and sequence < highest_sequence:
+                        raise CaptureVerificationError(f"JSONL record {number} has accepted snapshot sequence regression across connection epochs")
                     accepted_sequences[symbol] = sequence
+                    highest_accepted_sequences[symbol] = sequence
                     epoch_key = str(connection_epoch)
                     epoch_snapshots = accepted_snapshots_by_epoch.setdefault(epoch_key, {})
                     epoch_snapshots[symbol] = epoch_snapshots.get(symbol, 0) + 1
@@ -113,6 +118,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
                     if sequence != previous_sequence + 1:
                         raise CaptureVerificationError(f"JSONL record {number} has accepted sequence gap, duplicate, or regression")
                     accepted_sequences[symbol] = sequence
+                    highest_accepted_sequences[symbol] = sequence
                 counts["accepted"] += 1
             else:
                 rejected_persisted += 1
