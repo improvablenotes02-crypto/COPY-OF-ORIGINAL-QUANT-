@@ -179,14 +179,33 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             raise CaptureVerificationError(f"Per-symbol valid_updates mismatch for {symbol}")
         if type(metrics.get("rejected_count")) is not int or metrics["rejected_count"] != counts["rejected"]:
             raise CaptureVerificationError(f"Per-symbol rejected_count mismatch for {symbol}")
+    if not symbol_quality or any(
+        not isinstance(symbol, str) or not symbol or symbol != symbol.strip()
+        or not isinstance(metrics, dict)
+        for symbol, metrics in symbol_quality.items()
+    ):
+        raise CaptureVerificationError("symbol_quality contains an invalid entry")
     for symbol, metrics in symbol_quality.items():
-        if not isinstance(symbol, str) or not isinstance(metrics, dict):
-            raise CaptureVerificationError("symbol_quality contains an invalid entry")
+        if metrics.get("symbol") != symbol:
+            raise CaptureVerificationError(f"Per-symbol identity mismatch for {symbol}")
+        for key in ("total_messages", "valid_updates", "rejected_count"):
+            value = metrics.get(key)
+            if type(value) is not int or value < 0:
+                raise CaptureVerificationError(f"Per-symbol {key} is missing or invalid for {symbol}")
+        if metrics["valid_updates"] > metrics["total_messages"]:
+            raise CaptureVerificationError(f"Per-symbol valid_updates exceeds total_messages for {symbol}")
+        if metrics["rejected_count"] > metrics["total_messages"]:
+            raise CaptureVerificationError(f"Per-symbol rejected_count exceeds total_messages for {symbol}")
         if symbol not in symbol_counts and any(
-            type(metrics.get(key)) is not int or metrics[key] != 0
-            for key in ("total_messages", "valid_updates", "rejected_count")
+            metrics[key] != 0 for key in ("total_messages", "valid_updates", "rejected_count")
         ):
             raise CaptureVerificationError(f"Per-symbol metrics claim unobserved frames for {symbol}")
+    if sum(metrics["total_messages"] for metrics in symbol_quality.values()) != frame_count:
+        raise CaptureVerificationError("Per-symbol total_messages do not sum to total_raw_frames")
+    if sum(metrics["valid_updates"] for metrics in symbol_quality.values()) != frame_count - rejected_persisted:
+        raise CaptureVerificationError("Per-symbol valid_updates do not match accepted raw frames")
+    if sum(metrics["rejected_count"] for metrics in symbol_quality.values()) != rejected_persisted:
+        raise CaptureVerificationError("Per-symbol rejected_count does not match rejected raw frames")
 
     checks = summary.get("continuity_checks")
     if not isinstance(checks, dict) or not checks or any(type(value) is not bool for value in checks.values()):
@@ -221,6 +240,8 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         for symbol, count in freshness_by_symbol.items()
     ):
         raise CaptureVerificationError("freshness_violations_by_symbol is missing or invalid")
+    if set(freshness_by_symbol) != set(symbol_quality):
+        raise CaptureVerificationError("Per-symbol freshness inventory does not match symbol_quality")
     if sum(freshness_by_symbol.values()) != summary["freshness_violations_count"]:
         raise CaptureVerificationError("Per-symbol freshness counters do not sum to freshness_violations_count")
     verdict = summary.get("continuity_evidence_verdict")
