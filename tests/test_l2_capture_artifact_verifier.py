@@ -19,7 +19,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             "raw": {"type": "ob_updates", "sy": "BTCUSD", "seq": 1, "ts": 30},
             "tracker_accepted": accepted,
         }
-        raw_bytes = (json.dumps(record, sort_keys=True) + "\\n").encode("utf-8")
+        raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
         raw.write_bytes(raw_bytes)
         summary = {
             "raw_capture_file": raw.name,
@@ -45,7 +45,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             summary = self._write_fixture(root)
-            (root / "raw.jsonl").write_bytes(b"tampered\\n")
+            (root / "raw.jsonl").write_bytes(b"tampered\n")
             with self.assertRaisesRegex(CaptureVerificationError, "SHA-256"):
                 verify_capture(summary)
 
