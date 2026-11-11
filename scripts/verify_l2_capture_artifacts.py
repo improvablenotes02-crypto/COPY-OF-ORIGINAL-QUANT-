@@ -300,7 +300,7 @@ def _verify_capture_in_directory(summary_path: Path, directory_fd: int | None) -
     highest_accepted_sequences: dict[str, int] = {}
     accepted_snapshots_by_epoch: dict[str, dict[str, int]] = {}
     with _open_regular_file_no_follow(raw_path, "Raw capture", directory_fd) as stream:
-        initial_raw_identity = _file_identity(os.fstat(stream.fileno()))
+        initial_raw_identity = _initial_file_identity(stream, "Raw capture")
         number = 0
         while True:
             line = stream.readline(_MAX_JSONL_RECORD_BYTES + 1)
