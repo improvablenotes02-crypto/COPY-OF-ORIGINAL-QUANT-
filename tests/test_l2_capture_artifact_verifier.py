@@ -925,6 +925,28 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                         with self.assertRaisesRegex(CaptureVerificationError, "Summary directory secure open is unavailable or unsafe"):
                             verify_capture(summary)
 
+    def test_directory_close_failure_does_not_mask_verification_error(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
+            self.skipTest("directory descriptor support is unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            summary = Path(td) / "summary.json"
+            with patch("scripts.verify_l2_capture_artifacts._assert_path_names_open_directory"):
+                with patch("scripts.verify_l2_capture_artifacts._verify_capture_in_directory", side_effect=RuntimeError("primary verification failure")):
+                    with patch("scripts.verify_l2_capture_artifacts.os.close", side_effect=OSError("close failed")):
+                        with self.assertRaisesRegex(RuntimeError, "primary verification failure"):
+                            verify_capture(summary)
+
+    def test_directory_close_failure_is_reported_after_successful_verification(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
+            self.skipTest("directory descriptor support is unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            summary = Path(td) / "summary.json"
+            with patch("scripts.verify_l2_capture_artifacts._assert_path_names_open_directory"):
+                with patch("scripts.verify_l2_capture_artifacts._verify_capture_in_directory", return_value={"integrity_valid": True}):
+                    with patch("scripts.verify_l2_capture_artifacts.os.close", side_effect=OSError("close failed")):
+                        with self.assertRaisesRegex(CaptureVerificationError, "Summary directory descriptor could not be closed"):
+                            verify_capture(summary)
+
     def test_directory_fstat_capability_failure_is_normalized(self):
         if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
             self.skipTest("directory descriptor support is unavailable")
