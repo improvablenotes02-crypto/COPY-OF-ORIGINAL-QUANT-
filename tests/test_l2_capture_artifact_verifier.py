@@ -987,3 +987,15 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_post_read_fstat_capability_failure_is_normalized(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"data")
+            with path.open("rb") as stream:
+                initial_identity = _file_identity(os.fstat(stream.fileno()))
+                for error in (NotImplementedError("unsupported"), TypeError("unsupported")):
+                    with self.subTest(error=type(error).__name__):
+                        with patch("scripts.verify_l2_capture_artifacts.os.fstat", side_effect=error):
+                            with self.assertRaisesRegex(CaptureVerificationError, "metadata could not be rechecked after reading"):
+                                _assert_file_unchanged(stream, initial_identity, "Artifact")
