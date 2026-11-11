@@ -1295,7 +1295,9 @@ class DeltaAccountRegistry:
                     tenant_id=tenant, account_id=account, fingerprint=fingerprint
                 ) is True
             except Exception:
-                return False
+                raise CredentialVaultError(
+                    "Delta read-only session authorization could not be verified"
+                ) from None
         if not approval_check():
             raise CredentialVaultError("Delta credentials are not owner-approved")
 
@@ -1343,8 +1345,9 @@ class DeltaAccountRegistry:
                     and current.ciphertext == record.ciphertext
                     and current.updated_at_ns == record.updated_at_ns
                 )
-            except Exception:
-                # Repository, principal, and approval failures all fail closed.
+            except AccountScopeError:
+                # Explicit authorization denial is distinct from an unavailable
+                # repository/approval verifier; both fail closed.
                 return False
 
         # The exchange factory is an external initialization boundary. The
