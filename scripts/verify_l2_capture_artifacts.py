@@ -6,38 +6,337 @@ orders. Integrity success does not itself establish a VERIFIED_24H evidence verd
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import math
+import os
 import re
+import stat
 import sys
+import time
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")
+_MAX_SUMMARY_BYTES = 1024 * 1024
+_MAX_JSONL_RECORD_BYTES = 1024 * 1024
+_MAX_RAW_CAPTURE_BYTES = 10 * 1024 * 1024 * 1024
+_MAX_RAW_CAPTURE_FRAMES = 10_000_000
+_MAX_VERIFICATION_CPU_SECONDS = 900.0
 
 
 class CaptureVerificationError(ValueError):
     """Raised when a capture artifact is missing, unsafe, or inconsistent."""
 
 
-def verify_capture(summary_path: Path) -> dict[str, Any]:
-    summary_path = Path(summary_path)
-    if summary_path.is_symlink() or not summary_path.is_file():
-        raise CaptureVerificationError("Summary must be a regular, non-symlink file")
+def _close_descriptor(descriptor: int, label: str) -> None:
+    """Close a descriptor without masking an exception already being handled."""
+    active_exception = sys.exc_info()[0] is not None
     try:
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        os.close(descriptor)
+    except Exception as exc:
+        if active_exception:
+            return
+        raise CaptureVerificationError(f"{label} descriptor could not be closed") from exc
+
+
+@contextmanager
+def _managed_binary_stream(stream: Any, label: str):
+    """Close a binary stream once without masking an active verification error."""
+    try:
+        yield stream
+    except BaseException:
+        try:
+            stream.close()
+        except BaseException:
+            pass
+        raise
+    else:
+        try:
+            stream.close()
+        except Exception as exc:
+            raise CaptureVerificationError(f"{label} stream could not be closed") from exc
+
+
+def _read_summary_bytes(stream: Any) -> bytes:
+    """Read the bounded summary payload and normalize stream read failures."""
+    try:
+        return stream.read(_MAX_SUMMARY_BYTES + 1)
+    except (OSError, NotImplementedError, TypeError) as exc:
+        raise CaptureVerificationError("Summary JSON could not be read") from exc
+
+
+def _read_jsonl_line(stream: Any, record_number: int) -> bytes:
+    """Read one bounded JSONL line and normalize filesystem read failures."""
+    try:
+        return stream.readline(_MAX_JSONL_RECORD_BYTES + 1)
+    except (OSError, NotImplementedError, TypeError) as exc:
+        raise CaptureVerificationError(
+            f"JSONL record {record_number + 1} could not be read"
+        ) from exc
+
+
+def _supports_no_follow_open() -> bool:
+    """Whether this platform exposes O_NOFOLLOW for race-resistant opens."""
+    return hasattr(os, "O_NOFOLLOW")
+
+
+def _open_regular_file_no_follow(path: Path, label: str, directory_fd: int | None = None):
+    """Open a regular file without following a final-component symlink.
+
+    When directory_fd is supplied, resolve the basename relative to the already
+    opened capture directory so later path replacement cannot redirect the read.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        if directory_fd is None:
+            descriptor = os.open(path, flags)
+        else:
+            descriptor = os.open(path.name, flags, dir_fd=directory_fd)
+    except (OSError, NotImplementedError, TypeError) as exc:
+        raise CaptureVerificationError(f"{label} secure open is unavailable or unsafe") from exc
+    try:
+        try:
+            opened = os.fstat(descriptor)
+        except (OSError, NotImplementedError, TypeError) as exc:
+            raise CaptureVerificationError(
+                f"{label} metadata could not be inspected after secure open"
+            ) from exc
+        if not stat.S_ISREG(opened.st_mode):
+            raise CaptureVerificationError(f"{label} must be a regular, non-symlink file")
+        if getattr(opened, "st_nlink", 1) != 1:
+            raise CaptureVerificationError(f"{label} must not have multiple hard links")
+        if not _supports_no_follow_open():
+            try:
+                if directory_fd is None:
+                    current = os.lstat(path)
+                else:
+                    current = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+            except (OSError, NotImplementedError, TypeError) as exc:
+                raise CaptureVerificationError(
+                    f"{label} secure-open identity recheck is unavailable"
+                ) from exc
+            if stat.S_ISLNK(current.st_mode) or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
+                raise CaptureVerificationError(f"{label} changed during secure open")
+        return os.fdopen(descriptor, "rb")
+    except Exception:
+        _close_descriptor(descriptor, label)
+        raise
+
+
+def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
+    """Return descriptor metadata that detects replacement or in-place mutation."""
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        getattr(metadata, "st_nlink", 1),
+        metadata.st_size,
+        getattr(metadata, "st_mtime_ns", int(metadata.st_mtime * 1_000_000_000)),
+        getattr(metadata, "st_ctime_ns", int(metadata.st_ctime * 1_000_000_000)),
+    )
+
+
+def _initial_file_identity(stream: Any, label: str) -> tuple[int, int, int, int, int, int, int]:
+    """Read initial descriptor metadata or fail with a verifier-specific error."""
+    try:
+        return _file_identity(os.fstat(stream.fileno()))
+    except (OSError, NotImplementedError, TypeError) as exc:
+        raise CaptureVerificationError(f"{label} metadata could not be inspected before reading") from exc
+
+
+def _assert_file_unchanged(stream: Any, initial_identity: tuple[int, int, int, int, int, int, int], label: str) -> None:
+    """Fail closed if an opened artifact changed while its bytes were being read."""
+    try:
+        current_identity = _file_identity(os.fstat(stream.fileno()))
+    except (OSError, NotImplementedError, TypeError) as exc:
+        raise CaptureVerificationError(f"{label} metadata could not be rechecked after reading") from exc
+    if current_identity != initial_identity:
+        raise CaptureVerificationError(f"{label} changed while being verified")
+
+
+
+
+def _assert_path_names_open_file(path: Path, stream: Any, label: str, directory_fd: int | None = None) -> None:
+    """Reject a pathname that no longer names the descriptor we actually read."""
+    try:
+        if directory_fd is None:
+            current = os.stat(path, follow_symlinks=False)
+        else:
+            current = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+        opened = os.fstat(stream.fileno())
+    except (OSError, NotImplementedError, TypeError) as exc:
+        raise CaptureVerificationError(f"{label} path could not be rechecked after reading") from exc
+    if (
+        stat.S_ISLNK(current.st_mode)
+        or not stat.S_ISREG(current.st_mode)
+        or getattr(current, "st_nlink", 1) != 1
+        or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+    ):
+        raise CaptureVerificationError(f"{label} path no longer names the opened file")
+
+
+
+def _assert_path_names_open_directory(path: Path, directory_fd: int) -> None:
+    """Ensure the supplied directory path still names the anchored directory."""
+    try:
+        current = os.stat(path, follow_symlinks=False)
+        opened = os.fstat(directory_fd)
+    except (OSError, NotImplementedError, TypeError) as exc:
+        raise CaptureVerificationError("Summary directory path could not be rechecked") from exc
+    if (
+        stat.S_ISLNK(current.st_mode)
+        or not stat.S_ISDIR(current.st_mode)
+        or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+    ):
+        raise CaptureVerificationError("Summary directory path no longer names the opened directory")
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject ambiguous JSON objects instead of silently keeping the last key."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise CaptureVerificationError(f"Duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_nonfinite_json_constant(value: str) -> None:
+    """Reject JavaScript-style NaN/Infinity tokens accepted by Python's JSON parser."""
+    raise CaptureVerificationError(f"Non-finite JSON numeric constant: {value}")
+
+
+_MAX_JSON_INTEGER_DIGITS = 128
+_MAX_JSON_FLOAT_TOKEN_CHARS = 128
+_MAX_JSON_STRING_CHARS = 65_536
+_MAX_JSON_KEY_CHARS = 4_096
+_MAX_DECIMAL_EXPONENT = 1_000
+_MAX_SYMBOL_CHARS = 128
+
+
+def _parse_bounded_json_int(value: str) -> int:
+    """Reject oversized integer tokens before constructing arbitrary-precision ints."""
+    digits = value[1:] if value.startswith("-") else value
+    if len(digits) > _MAX_JSON_INTEGER_DIGITS:
+        raise CaptureVerificationError("JSON integer exceeds verifier digit limit")
+    return int(value)
+
+
+def _parse_finite_json_float(value: str) -> float:
+    """Reject oversized or non-finite JSON float tokens before accepting their value."""
+    if len(value) > _MAX_JSON_FLOAT_TOKEN_CHARS:
+        raise CaptureVerificationError("JSON float exceeds verifier token-length limit")
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise CaptureVerificationError(f"Non-finite JSON numeric value: {value}")
+    return parsed
+
+
+_MAX_JSON_NESTING_DEPTH = 64
+_MAX_JSON_CONTAINER_ITEMS = 8192
+_MAX_JSON_NODES = 100_000
+
+
+def _validate_json_structure(value: Any, context: str) -> None:
+    """Bound parsed JSON depth, aggregate nodes, and individual container sizes."""
+    pending: list[tuple[Any, int]] = [(value, 0)]
+    node_count = 0
+    while pending:
+        current, depth = pending.pop()
+        node_count += 1
+        if node_count > _MAX_JSON_NODES:
+            raise CaptureVerificationError(f"{context} exceeds verifier JSON node limit")
+        if depth > _MAX_JSON_NESTING_DEPTH:
+            raise CaptureVerificationError(f"{context} exceeds verifier JSON nesting limit")
+        if isinstance(current, str) and len(current) > _MAX_JSON_STRING_CHARS:
+            raise CaptureVerificationError(f"{context} exceeds verifier JSON string length limit")
+        if isinstance(current, dict):
+            if len(current) > _MAX_JSON_CONTAINER_ITEMS:
+                raise CaptureVerificationError(f"{context} exceeds verifier JSON object member limit")
+            node_count += len(current)  # Include object keys in the aggregate complexity budget.
+            if node_count > _MAX_JSON_NODES:
+                raise CaptureVerificationError(f"{context} exceeds verifier JSON node limit")
+            for key in current:
+                if len(key) > _MAX_JSON_KEY_CHARS:
+                    raise CaptureVerificationError(f"{context} exceeds verifier JSON object key length limit")
+            pending.extend((child, depth + 1) for child in current.values())
+        elif isinstance(current, list):
+            if len(current) > _MAX_JSON_CONTAINER_ITEMS:
+                raise CaptureVerificationError(f"{context} exceeds verifier JSON array item limit")
+            pending.extend((child, depth + 1) for child in current)
+
+
+def _validate_accepted_book_levels(raw: dict[str, Any], record_number: int) -> None:
+    """Require accepted snapshots/updates to contain finite positive price and size levels."""
+    for side in ("b", "a"):
+        levels = raw.get(side)
+        if not isinstance(levels, list):
+            raise CaptureVerificationError(
+                f"JSONL record {record_number} accepted order book has invalid {side} levels"
+            )
+        for level_number, level in enumerate(levels, start=1):
+            if not isinstance(level, list) or len(level) != 2:
+                raise CaptureVerificationError(
+                    f"JSONL record {record_number} accepted {side} level {level_number} must be a price/size pair"
+                )
+            for field, value in zip(("price", "size"), level):
+                if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+                    raise CaptureVerificationError(
+                        f"JSONL record {record_number} accepted {side} level {level_number} has invalid {field}"
+                    )
+                text_value = str(value)
+                if not text_value or text_value != text_value.strip() or len(text_value) > 128:
+                    raise CaptureVerificationError(
+                        f"JSONL record {record_number} accepted {side} level {level_number} has invalid {field}"
+                    )
+                try:
+                    parsed = Decimal(text_value)
+                except InvalidOperation as exc:
+                    raise CaptureVerificationError(
+                        f"JSONL record {record_number} accepted {side} level {level_number} has invalid {field}"
+                    ) from exc
+                if not parsed.is_finite() or parsed <= 0 or abs(parsed.adjusted()) > _MAX_DECIMAL_EXPONENT:
+                    raise CaptureVerificationError(
+                        f"JSONL record {record_number} accepted {side} level {level_number} {field} must be finite and positive"
+                    )
+
+
+def _verify_capture_in_directory(summary_path: Path, directory_fd: int | None) -> dict[str, Any]:
+    summary_path = Path(summary_path)
+    verification_cpu_started = time.process_time()
+    try:
+        with _managed_binary_stream(_open_regular_file_no_follow(summary_path, "Summary", directory_fd), "Summary") as summary_stream:
+            initial_summary_identity = _initial_file_identity(summary_stream, "Summary")
+            summary_bytes = _read_summary_bytes(summary_stream)
+            _assert_file_unchanged(summary_stream, initial_summary_identity, "Summary")
+            _assert_path_names_open_file(summary_path, summary_stream, "Summary", directory_fd)
+        if len(summary_bytes) > _MAX_SUMMARY_BYTES:
+            raise CaptureVerificationError("Summary JSON exceeds verifier byte limit")
+        summary = json.loads(summary_bytes.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float, parse_int=_parse_bounded_json_int)
+    except CaptureVerificationError:
+        raise
+    except RecursionError as exc:
+        raise CaptureVerificationError("Summary JSON nesting exceeds verifier limit") from exc
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise CaptureVerificationError(f"Cannot read summary JSON: {exc}") from exc
+    if time.process_time() - verification_cpu_started > _MAX_VERIFICATION_CPU_SECONDS:
+        raise CaptureVerificationError("Artifact verification exceeded CPU-time budget")
+    _validate_json_structure(summary, "Summary JSON")
     if not isinstance(summary, dict):
         raise CaptureVerificationError("Summary root must be a JSON object")
 
     raw_name = summary.get("raw_capture_file")
-    if not isinstance(raw_name, str) or not raw_name or Path(raw_name).name != raw_name:
-        raise CaptureVerificationError("raw_capture_file must be a basename within the summary directory")
-    raw_path = summary_path.parent / raw_name
-    if raw_path.is_symlink() or not raw_path.is_file():
-        raise CaptureVerificationError("Raw capture must be a regular, non-symlink file")
+    if (
+        not isinstance(raw_name, str)
+        or not raw_name
+        or raw_name in {".", ".."}
+        or any(separator in raw_name for separator in ("/", chr(92), ":", chr(0)))
+        or Path(raw_name).name != raw_name
+    ):
+        raise CaptureVerificationError("raw_capture_file must be a portable basename within the summary directory")
+    raw_path = Path(raw_name)
 
     expected_hash = summary.get("raw_capture_sha256")
     if not isinstance(expected_hash, str) or not _HEX64.fullmatch(expected_hash):
@@ -51,17 +350,39 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     connection_epochs_seen: set[int] = set()
     symbol_counts: dict[str, dict[str, int]] = {}
     accepted_sequences: dict[str, int] = {}
+    highest_accepted_sequences: dict[str, int] = {}
     accepted_snapshots_by_epoch: dict[str, dict[str, int]] = {}
-    with raw_path.open("rb") as stream:
-        for number, line in enumerate(stream, start=1):
-            digest.update(line)
+    with _managed_binary_stream(_open_regular_file_no_follow(raw_path, "Raw capture", directory_fd), "Raw capture") as stream:
+        initial_raw_identity = _initial_file_identity(stream, "Raw capture")
+        number = 0
+        while True:
+            line = _read_jsonl_line(stream, number)
+            if not line:
+                break
+            number += 1
+            if len(line) > _MAX_JSONL_RECORD_BYTES:
+                raise CaptureVerificationError(f"JSONL record {number} exceeds verifier byte limit")
             byte_count += len(line)
+            if byte_count > _MAX_RAW_CAPTURE_BYTES:
+                raise CaptureVerificationError("Raw capture exceeds verifier total byte limit")
+            if frame_count >= _MAX_RAW_CAPTURE_FRAMES:
+                raise CaptureVerificationError("Raw capture exceeds verifier frame-count limit")
+            digest.update(line)
+            if time.process_time() - verification_cpu_started > _MAX_VERIFICATION_CPU_SECONDS:
+                raise CaptureVerificationError("Artifact verification exceeded CPU-time budget")
             if not line.endswith(b"\n"):
                 raise CaptureVerificationError(f"JSONL record {number} is not LF terminated")
             try:
-                record = json.loads(line)
+                record = json.loads(line, object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float, parse_int=_parse_bounded_json_int)
+            except CaptureVerificationError as exc:
+                raise CaptureVerificationError(f"JSONL record {number} is invalid: {exc}") from exc
+            except RecursionError as exc:
+                raise CaptureVerificationError(f"JSONL record {number} exceeds verifier nesting limit") from exc
             except (UnicodeError, json.JSONDecodeError) as exc:
                 raise CaptureVerificationError(f"JSONL record {number} is invalid: {exc}") from exc
+            if time.process_time() - verification_cpu_started > _MAX_VERIFICATION_CPU_SECONDS:
+                raise CaptureVerificationError("Artifact verification exceeded CPU-time budget")
+            _validate_json_structure(record, f"JSONL record {number}")
             if not isinstance(record, dict):
                 raise CaptureVerificationError(f"JSONL record {number} must be an object")
             connection_epoch = record.get("connection_epoch")
@@ -87,7 +408,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             symbol = raw.get("sy")
             sequence = raw.get("seq")
             venue_timestamp_us = raw.get("ts")
-            if not isinstance(symbol, str) or not symbol or symbol != symbol.strip():
+            if not isinstance(symbol, str) or not symbol or len(symbol) > _MAX_SYMBOL_CHARS or symbol != symbol.strip():
                 raise CaptureVerificationError(f"JSONL record {number} has invalid symbol")
             if type(sequence) is not int or sequence <= 0:
                 raise CaptureVerificationError(f"JSONL record {number} has invalid sequence")
@@ -101,9 +422,14 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             counts = symbol_counts.setdefault(symbol, {"frames": 0, "accepted": 0, "rejected": 0})
             counts["frames"] += 1
             if record["tracker_accepted"]:
+                _validate_accepted_book_levels(raw, number)
                 previous_sequence = accepted_sequences.get(symbol)
                 if action == "snapshot":
+                    highest_sequence = highest_accepted_sequences.get(symbol)
+                    if highest_sequence is not None and sequence < highest_sequence:
+                        raise CaptureVerificationError(f"JSONL record {number} has accepted snapshot sequence regression across connection epochs")
                     accepted_sequences[symbol] = sequence
+                    highest_accepted_sequences[symbol] = sequence
                     epoch_key = str(connection_epoch)
                     epoch_snapshots = accepted_snapshots_by_epoch.setdefault(epoch_key, {})
                     epoch_snapshots[symbol] = epoch_snapshots.get(symbol, 0) + 1
@@ -113,11 +439,14 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
                     if sequence != previous_sequence + 1:
                         raise CaptureVerificationError(f"JSONL record {number} has accepted sequence gap, duplicate, or regression")
                     accepted_sequences[symbol] = sequence
+                    highest_accepted_sequences[symbol] = sequence
                 counts["accepted"] += 1
             else:
                 rejected_persisted += 1
                 counts["rejected"] += 1
             frame_count += 1
+        _assert_file_unchanged(stream, initial_raw_identity, "Raw capture")
+        _assert_path_names_open_file(raw_path, stream, "Raw capture", directory_fd)
     actual_hash = digest.hexdigest()
     if actual_hash != expected_hash:
         raise CaptureVerificationError("Raw capture SHA-256 does not match summary")
@@ -247,6 +576,35 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         "symbols_verified": len(symbol_counts),
         "per_symbol_frame_counts": {symbol: counts["frames"] for symbol, counts in sorted(symbol_counts.items())},
     }
+
+
+def verify_capture(summary_path: Path) -> dict[str, Any]:
+    """Verify both artifacts relative to one stable directory descriptor when supported."""
+    summary_path = Path(summary_path)
+    if os.open in getattr(os, "supports_dir_fd", set()) and hasattr(os, "O_DIRECTORY"):
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            directory_fd = os.open(summary_path.parent, directory_flags)
+        except (OSError, NotImplementedError, TypeError) as exc:
+            raise CaptureVerificationError(
+                "Summary directory secure open is unavailable or unsafe"
+            ) from exc
+        try:
+            try:
+                directory_metadata = os.fstat(directory_fd)
+            except (OSError, NotImplementedError, TypeError) as exc:
+                raise CaptureVerificationError(
+                    "Summary directory descriptor could not be inspected"
+                ) from exc
+            if not stat.S_ISDIR(directory_metadata.st_mode):
+                raise CaptureVerificationError("Summary parent is not a directory")
+            _assert_path_names_open_directory(summary_path.parent, directory_fd)
+            result = _verify_capture_in_directory(summary_path, directory_fd)
+            _assert_path_names_open_directory(summary_path.parent, directory_fd)
+            return result
+        finally:
+            _close_descriptor(directory_fd, "Summary directory")
+    return _verify_capture_in_directory(summary_path, None)
 
 
 def main() -> int:

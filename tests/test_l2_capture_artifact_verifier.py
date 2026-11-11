@@ -2,12 +2,68 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
-from scripts.verify_l2_capture_artifacts import CaptureVerificationError, verify_capture
+from scripts.verify_l2_capture_artifacts import (
+    CaptureVerificationError,
+    _open_regular_file_no_follow,
+    _managed_binary_stream,
+    _read_jsonl_line,
+    _read_summary_bytes,
+    _supports_no_follow_open,
+    _assert_file_unchanged,
+    _assert_path_names_open_file,
+    _assert_path_names_open_directory,
+    _file_identity,
+    _initial_file_identity,
+    verify_capture,
+)
+
+
+class TestManagedArtifactStreams(unittest.TestCase):
+    def test_close_failure_is_reported_after_successful_use(self):
+        stream = io.BytesIO(b"artifact")
+        with patch.object(stream, "close", side_effect=OSError("close failed")) as close_mock:
+            with self.assertRaisesRegex(CaptureVerificationError, "Summary stream could not be closed"):
+                with _managed_binary_stream(stream, "Summary") as managed:
+                    self.assertEqual(managed.read(), b"artifact")
+            close_mock.assert_called_once()
+
+    def test_close_failure_does_not_mask_primary_error(self):
+        stream = io.BytesIO(b"artifact")
+        with patch.object(stream, "close", side_effect=OSError("close failed")) as close_mock:
+            with self.assertRaisesRegex(RuntimeError, "primary verification failure"):
+                with _managed_binary_stream(stream, "Raw capture"):
+                    raise RuntimeError("primary verification failure")
+            close_mock.assert_called_once()
+
+    def test_close_base_exception_does_not_mask_primary_error(self):
+        stream = io.BytesIO(b"artifact")
+        with patch.object(stream, "close", side_effect=KeyboardInterrupt("close interrupted")) as close_mock:
+            with self.assertRaisesRegex(RuntimeError, "primary verification failure"):
+                with _managed_binary_stream(stream, "Raw capture"):
+                    raise RuntimeError("primary verification failure")
+            close_mock.assert_called_once()
+
+    def test_summary_read_capability_failures_are_normalized(self):
+        for failure in (OSError("read failed"), NotImplementedError("unsupported"), TypeError("invalid")):
+            with self.subTest(failure=type(failure).__name__):
+                stream = Mock()
+                stream.read.side_effect = failure
+                with self.assertRaisesRegex(CaptureVerificationError, "Summary JSON could not be read"):
+                    _read_summary_bytes(stream)
+
+    def test_bounded_jsonl_read_normalizes_io_failures(self):
+        stream = Mock()
+        stream.readline.side_effect = OSError("read failed")
+        with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 could not be read"):
+            _read_jsonl_line(stream, 0)
 
 
 class TestL2CaptureArtifactVerifier(unittest.TestCase):
@@ -234,6 +290,54 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 verify_capture(summary)
 
 
+    def test_rejects_snapshot_sequence_regression_across_connection_epochs(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            first = json.loads(raw.read_text())
+            first["raw"]["seq"] = 10
+            second = dict(first)
+            second["connection_epoch"] = 1
+            second["receipt_mono_ns"] = 11
+            second["raw"] = dict(first["raw"], seq=9, action="snapshot")
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\n") + (json.dumps(second, sort_keys=True) + "\n")).encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            data["total_raw_frames"] = 2
+            data["connection_epoch_count"] = 2
+            data["accepted_snapshots_by_epoch"] = {"0": {"BTCUSD": 1}, "1": {"BTCUSD": 1}}
+            data["symbol_quality"]["BTCUSD"] = {"total_messages": 2, "valid_updates": 2, "rejected_count": 0}
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "snapshot sequence regression across connection epochs"):
+                verify_capture(summary)
+
+    def test_allows_non_regressing_snapshot_sequence_after_reconnect(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            first = json.loads(raw.read_text())
+            first["raw"]["seq"] = 10
+            second = dict(first)
+            second["connection_epoch"] = 1
+            second["receipt_mono_ns"] = 11
+            second["raw"] = dict(first["raw"], seq=10, action="snapshot")
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\n") + (json.dumps(second, sort_keys=True) + "\n")).encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            data["total_raw_frames"] = 2
+            data["connection_epoch_count"] = 2
+            data["accepted_snapshots_by_epoch"] = {"0": {"BTCUSD": 1}, "1": {"BTCUSD": 1}}
+            data["symbol_quality"]["BTCUSD"] = {"total_messages": 2, "valid_updates": 2, "rejected_count": 0}
+            summary.write_text(json.dumps(data))
+            result = verify_capture(summary)
+            self.assertTrue(result["integrity_valid"])
+
     def test_allows_empty_connection_epoch_between_persisted_epochs(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -244,7 +348,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             second["connection_epoch"] = 2
             second["receipt_mono_ns"] = 11
             second["raw"] = dict(first["raw"], seq=1, action="snapshot")
-            raw_bytes = ((json.dumps(first, sort_keys=True) + "\\n") + (json.dumps(second, sort_keys=True) + "\\n")).encode("utf-8")
+            raw_bytes = ((json.dumps(first, sort_keys=True) + "\n") + (json.dumps(second, sort_keys=True) + "\n")).encode("utf-8")
             raw.write_bytes(raw_bytes)
             data = json.loads(summary.read_text())
             data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
@@ -367,6 +471,629 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             summary.write_text(json.dumps(data))
             with self.assertRaisesRegex(CaptureVerificationError, "rejected_frames_count conflicts"):
                 verify_capture(summary)
+
+
+    def test_rejects_duplicate_keys_in_summary_json(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            content = summary.read_text(encoding="utf-8")
+            content = content.replace(
+                '"raw_capture_file": "raw.jsonl",',
+                '"raw_capture_file": "raw.jsonl", "raw_capture_file": "raw.jsonl",',
+                1,
+            )
+            summary.write_text(content, encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "Duplicate JSON object key: raw_capture_file"):
+                verify_capture(summary)
+
+    def test_rejects_duplicate_nested_keys_in_raw_jsonl(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            content = raw.read_text(encoding="utf-8")
+            content = content.replace('"seq": 1', '"seq": 1, "seq": 1', 1)
+            raw_bytes = content.encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 is invalid: Duplicate JSON object key: seq"):
+                verify_capture(summary)
+
+
+    def test_rejects_nan_in_summary_json(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            content = summary.read_text(encoding="utf-8")
+            content = content.replace('"duration_seconds": 86400', '"duration_seconds": NaN', 1)
+            summary.write_text(content, encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "Non-finite JSON numeric constant: NaN"):
+                verify_capture(summary)
+
+    def test_rejects_infinity_in_raw_jsonl(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            content = raw.read_text(encoding="utf-8")
+            content = content.replace('"seq": 1', '"seq": 1, "extra_numeric": Infinity', 1)
+            raw_bytes = content.encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 is invalid: Non-finite JSON numeric constant: Infinity"):
+                verify_capture(summary)
+
+    def test_rejects_overflowing_json_float_in_summary(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            content = summary.read_text(encoding="utf-8")
+            content = content.replace('"duration_seconds": 86400', '"duration_seconds": 1e999', 1)
+            summary.write_text(content, encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "Non-finite JSON numeric value: 1e999"):
+                verify_capture(summary)
+
+
+    def _rewrite_raw_record(self, root: Path, summary: Path, mutate) -> None:
+        raw = root / "raw.jsonl"
+        record = json.loads(raw.read_text(encoding="utf-8"))
+        mutate(record)
+        raw_bytes = (json.dumps(record, sort_keys=True) + "\\n").encode("utf-8")
+        raw.write_bytes(raw_bytes)
+        data = json.loads(summary.read_text(encoding="utf-8"))
+        data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+        data["total_bytes_written"] = len(raw_bytes)
+        summary.write_text(json.dumps(data), encoding="utf-8")
+
+    def test_rejects_accepted_book_level_with_invalid_decimal_price(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            self._rewrite_raw_record(root, summary, lambda record: record["raw"].update(b=[["not-a-price", "1"]]))
+            with self.assertRaisesRegex(CaptureVerificationError, "has invalid price"):
+                verify_capture(summary)
+
+    def test_rejects_accepted_book_level_with_zero_price(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            self._rewrite_raw_record(root, summary, lambda record: record["raw"].update(b=[["0", "1"]]))
+            with self.assertRaisesRegex(CaptureVerificationError, "price must be finite and positive"):
+                verify_capture(summary)
+
+    def test_rejects_accepted_book_level_with_negative_size(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            self._rewrite_raw_record(root, summary, lambda record: record["raw"].update(a=[["101", "-0.1"]]))
+            with self.assertRaisesRegex(CaptureVerificationError, "size must be finite and positive"):
+                verify_capture(summary)
+
+    def test_rejects_accepted_book_level_with_malformed_pair(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            self._rewrite_raw_record(root, summary, lambda record: record["raw"].update(b=[["99"]]))
+            with self.assertRaisesRegex(CaptureVerificationError, "must be a price/size pair"):
+                verify_capture(summary)
+
+    def test_preserves_malformed_levels_on_tracker_rejected_frames(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root, accepted=False)
+            self._rewrite_raw_record(root, summary, lambda record: record["raw"].update(b=[["malformed"]]))
+            result = verify_capture(summary)
+            self.assertTrue(result["integrity_valid"])
+            self.assertFalse(result["evidence_eligible"])
+            self.assertEqual(result["persisted_tracker_rejections"], 1)
+
+
+    def test_rejects_excessive_summary_json_nesting_without_recursion_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            content = summary.read_text(encoding="utf-8").rstrip()
+            summary.write_text(content[:-1] + ', "deep": ' + ("[" * 1500) + "0" + ("]" * 1500) + "}", encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "Summary JSON nesting exceeds verifier limit"):
+                verify_capture(summary)
+
+    def test_rejects_excessive_raw_jsonl_nesting_without_recursion_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            line = raw.read_text(encoding="utf-8").rstrip()
+            raw_bytes = (line[:-1] + ', "deep": ' + ("[" * 1500) + "0" + ("]" * 1500) + "}\\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 exceeds verifier nesting limit"):
+                verify_capture(summary)
+
+
+    def test_rejects_verification_cpu_budget_exhaustion(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            with patch("scripts.verify_l2_capture_artifacts.time.process_time", side_effect=[0.0, 901.0]):
+                with self.assertRaisesRegex(CaptureVerificationError, "Artifact verification exceeded CPU-time budget"):
+                    verify_capture(summary)
+
+    def test_accepts_verification_within_cpu_budget(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            with patch("scripts.verify_l2_capture_artifacts.time.process_time", return_value=0.0):
+                self.assertTrue(verify_capture(summary)["integrity_valid"])
+
+    def test_rejects_summary_with_oversized_json_array(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            data = json.loads(summary.read_text())
+            data["attacker_controlled"] = list(range(8193))
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "JSON array item limit"):
+                verify_capture(summary)
+
+    def test_rejects_raw_record_with_oversized_json_object(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            record = json.loads(raw.read_text())
+            record["attacker_controlled"] = {str(i): i for i in range(8193)}
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "JSON object member limit"):
+                verify_capture(summary)
+
+    def test_rejects_json_with_excessive_aggregate_nodes(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            data = json.loads(summary.read_text())
+            data["attacker_controlled"] = [list(range(13)) for _ in range(8192)]
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "JSON node limit"):
+                verify_capture(summary)
+
+    def test_rejects_oversized_summary(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            with patch("scripts.verify_l2_capture_artifacts._MAX_SUMMARY_BYTES", summary.stat().st_size - 1):
+                with self.assertRaisesRegex(CaptureVerificationError, "Summary JSON exceeds verifier byte limit"):
+                    verify_capture(summary)
+
+    def test_rejects_oversized_raw_record(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            with patch("scripts.verify_l2_capture_artifacts._MAX_JSONL_RECORD_BYTES", 16):
+                with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 exceeds verifier byte limit"):
+                    verify_capture(summary)
+
+    def test_rejects_total_raw_capture_byte_limit(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw_size = (root / "raw.jsonl").stat().st_size
+            with patch("scripts.verify_l2_capture_artifacts._MAX_RAW_CAPTURE_BYTES", raw_size - 1):
+                with self.assertRaisesRegex(CaptureVerificationError, "Raw capture exceeds verifier total byte limit"):
+                    verify_capture(summary)
+
+    def test_rejects_raw_capture_frame_count_limit(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            with patch("scripts.verify_l2_capture_artifacts._MAX_RAW_CAPTURE_FRAMES", 0):
+                with self.assertRaisesRegex(CaptureVerificationError, "Raw capture exceeds verifier frame-count limit"):
+                    verify_capture(summary)
+
+    def test_accepts_exact_resource_limits(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw_size = (root / "raw.jsonl").stat().st_size
+            with patch("scripts.verify_l2_capture_artifacts._MAX_SUMMARY_BYTES", summary.stat().st_size), patch("scripts.verify_l2_capture_artifacts._MAX_JSONL_RECORD_BYTES", raw_size), patch("scripts.verify_l2_capture_artifacts._MAX_RAW_CAPTURE_BYTES", raw_size), patch("scripts.verify_l2_capture_artifacts._MAX_RAW_CAPTURE_FRAMES", 1):
+                self.assertTrue(verify_capture(summary)["integrity_valid"])
+
+
+    def test_rejects_oversized_json_integer_token(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            content = raw.read_text(encoding="utf-8").replace('"seq": 1', '"seq": ' + ('9' * 129), 1)
+            raw_bytes = content.encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "JSON integer exceeds verifier digit limit"):
+                verify_capture(summary)
+
+    def test_rejects_oversized_json_string(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            record = json.loads(raw.read_text(encoding="utf-8"))
+            record["raw"]["sy"] = "X" * 65_537
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "JSON string length limit"):
+                verify_capture(summary)
+
+    def test_rejects_excessive_decimal_exponent_in_accepted_book_level(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            self._rewrite_raw_record(root, summary, lambda record: record["raw"].update(b=[["1e1001", "1"]]))
+            with self.assertRaisesRegex(CaptureVerificationError, "price must be finite and positive"):
+                verify_capture(summary)
+
+
+
+    def test_rejects_summary_symlink(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            original = self._write_fixture(root)
+            link = root / "summary-link.json"
+            try:
+                link.symlink_to(original)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+            with self.assertRaisesRegex(CaptureVerificationError, "Summary must be a regular, non-symlink file"):
+                verify_capture(link)
+
+    def test_rejects_raw_capture_symlink(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            outside = root / "outside.jsonl"
+            raw.rename(outside)
+            try:
+                raw.symlink_to(outside)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+            with self.assertRaisesRegex(CaptureVerificationError, "Raw capture must be a regular, non-symlink file"):
+                verify_capture(summary)
+
+    def test_rejects_oversized_integer_token_in_raw_jsonl(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            content = raw.read_text(encoding="utf-8").replace('"seq": 1', '"seq": ' + ('9' * 129), 1)
+            raw_bytes = content.encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 is invalid: JSON integer exceeds verifier digit limit"):
+                verify_capture(summary)
+
+
+
+    def test_rejects_non_portable_raw_capture_paths(self):
+        for raw_name in ("..\\\\outside.jsonl", "C:raw.jsonl", "nested/raw.jsonl", "nested\\\\raw.jsonl"):
+            with self.subTest(raw_name=raw_name), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                summary = self._write_fixture(root)
+                data = json.loads(summary.read_text(encoding="utf-8"))
+                data["raw_capture_file"] = raw_name
+                summary.write_text(json.dumps(data), encoding="utf-8")
+                with self.assertRaisesRegex(CaptureVerificationError, "portable basename"):
+                    verify_capture(summary)
+
+    def test_rejects_summary_with_multiple_hard_links(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            alias = root / "summary-alias.json"
+            try:
+                os.link(summary, alias)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"hard-link creation unavailable: {exc}")
+            with self.assertRaisesRegex(CaptureVerificationError, "multiple hard links"):
+                verify_capture(summary)
+
+    def test_rejects_raw_capture_with_multiple_hard_links(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            alias = root / "raw-alias.jsonl"
+            try:
+                os.link(raw, alias)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"hard-link creation unavailable: {exc}")
+            with self.assertRaisesRegex(CaptureVerificationError, "multiple hard links"):
+                verify_capture(summary)
+
+
+
+    def test_detects_in_place_artifact_mutation_during_read(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"original")
+            with path.open("rb") as stream:
+                initial_identity = _file_identity(os.fstat(stream.fileno()))
+                with path.open("ab") as writer:
+                    writer.write(b"changed")
+                    writer.flush()
+                    os.fsync(writer.fileno())
+                with self.assertRaisesRegex(CaptureVerificationError, "Artifact changed while being verified"):
+                    _assert_file_unchanged(stream, initial_identity, "Artifact")
+
+    def test_detects_same_size_artifact_rewrite_during_read(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"original")
+            with path.open("rb") as stream:
+                initial_identity = _file_identity(os.fstat(stream.fileno()))
+                path.write_bytes(b"modified")
+                with self.assertRaisesRegex(CaptureVerificationError, "Artifact changed while being verified"):
+                    _assert_file_unchanged(stream, initial_identity, "Artifact")
+
+
+    def test_detects_rewrite_even_when_modification_time_is_restored(self):
+        if os.name == "nt":
+            self.skipTest("Windows st_ctime semantics do not represent metadata-change time")
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"original")
+            with path.open("rb") as stream:
+                initial_identity = _file_identity(os.fstat(stream.fileno()))
+                original_stat = path.stat()
+                path.write_bytes(b"modified")
+                os.utime(path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+                with self.assertRaisesRegex(CaptureVerificationError, "Artifact changed while being verified"):
+                    _assert_file_unchanged(stream, initial_identity, "Artifact")
+
+
+    def test_detects_path_replacement_after_open(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            path = root / "artifact.bin"
+            moved = root / "opened.bin"
+            path.write_bytes(b"original")
+            with path.open("rb") as stream:
+                path.rename(moved)
+                path.write_bytes(b"replacement")
+                with self.assertRaisesRegex(CaptureVerificationError, "path no longer names the opened file"):
+                    _assert_path_names_open_file(path, stream, "Artifact")
+
+
+    def test_detects_summary_directory_path_replacement_after_open(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
+            self.skipTest("directory descriptor support is unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            directory = root / "capture"
+            moved = root / "opened-capture"
+            directory.mkdir()
+            descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                directory.rename(moved)
+                directory.mkdir()
+                with self.assertRaisesRegex(CaptureVerificationError, "directory path no longer names the opened directory"):
+                    _assert_path_names_open_directory(directory, descriptor)
+            finally:
+                os.close(descriptor)
+
+
+    def test_detects_file_path_replaced_by_symlink_after_open(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            path = root / "artifact.bin"
+            target = root / "target.bin"
+            path.write_bytes(b"opened")
+            target.write_bytes(b"target")
+            with path.open("rb") as stream:
+                path.unlink()
+                try:
+                    path.symlink_to(target)
+                except (OSError, NotImplementedError) as exc:
+                    self.skipTest(f"file symlink creation unavailable: {exc}")
+                with self.assertRaisesRegex(CaptureVerificationError, "path no longer names the opened file"):
+                    _assert_path_names_open_file(path, stream, "Artifact")
+
+    def test_detects_directory_path_replaced_by_symlink_after_open(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
+            self.skipTest("directory descriptor support is unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            directory = root / "capture"
+            moved = root / "opened-capture"
+            target = root / "target-directory"
+            directory.mkdir()
+            target.mkdir()
+            descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                directory.rename(moved)
+                try:
+                    directory.symlink_to(target, target_is_directory=True)
+                except (OSError, NotImplementedError) as exc:
+                    self.skipTest(f"directory symlink creation unavailable: {exc}")
+                with self.assertRaisesRegex(CaptureVerificationError, "directory path no longer names the opened directory"):
+                    _assert_path_names_open_directory(directory, descriptor)
+            finally:
+                os.close(descriptor)
+
+
+    def test_file_path_recheck_wraps_unsupported_no_follow_stat(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"data")
+            with path.open("rb") as stream:
+                with patch("scripts.verify_l2_capture_artifacts.os.stat", side_effect=NotImplementedError("unsupported")):
+                    with self.assertRaisesRegex(CaptureVerificationError, "path could not be rechecked"):
+                        _assert_path_names_open_file(path, stream, "Artifact")
+
+    def test_directory_path_recheck_wraps_unsupported_no_follow_stat(self):
+        with tempfile.TemporaryDirectory() as td:
+            descriptor = os.open(td, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                with patch("scripts.verify_l2_capture_artifacts.os.stat", side_effect=NotImplementedError("unsupported")):
+                    with self.assertRaisesRegex(CaptureVerificationError, "directory path could not be rechecked"):
+                        _assert_path_names_open_directory(Path(td), descriptor)
+            finally:
+                os.close(descriptor)
+
+
+    def test_directory_secure_open_wraps_unsupported_operations(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
+            self.skipTest("directory descriptor support is unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            summary = Path(td) / "summary.json"
+            for error in (NotImplementedError("unsupported"), TypeError("unsupported")):
+                with self.subTest(error=type(error).__name__):
+                    with patch("scripts.verify_l2_capture_artifacts.os.open", side_effect=error):
+                        with self.assertRaisesRegex(CaptureVerificationError, "Summary directory secure open is unavailable or unsafe"):
+                            verify_capture(summary)
+
+    def test_directory_close_failure_does_not_mask_verification_error(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
+            self.skipTest("directory descriptor support is unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            summary = Path(td) / "summary.json"
+            with patch("scripts.verify_l2_capture_artifacts._assert_path_names_open_directory"):
+                with patch("scripts.verify_l2_capture_artifacts._verify_capture_in_directory", side_effect=RuntimeError("primary verification failure")):
+                    with patch("scripts.verify_l2_capture_artifacts.os.close", side_effect=OSError("close failed")):
+                        with self.assertRaisesRegex(RuntimeError, "primary verification failure"):
+                            verify_capture(summary)
+
+    def test_directory_close_failure_is_reported_after_successful_verification(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
+            self.skipTest("directory descriptor support is unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            summary = Path(td) / "summary.json"
+            with patch("scripts.verify_l2_capture_artifacts._assert_path_names_open_directory"):
+                with patch("scripts.verify_l2_capture_artifacts._verify_capture_in_directory", return_value={"integrity_valid": True}):
+                    with patch("scripts.verify_l2_capture_artifacts.os.close", side_effect=OSError("close failed")):
+                        with self.assertRaisesRegex(CaptureVerificationError, "Summary directory descriptor could not be closed"):
+                            verify_capture(summary)
+
+    def test_directory_fstat_capability_failure_is_normalized(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
+            self.skipTest("directory descriptor support is unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            summary = Path(td) / "summary.json"
+            with patch("scripts.verify_l2_capture_artifacts.os.fstat", side_effect=NotImplementedError("unsupported")):
+                with self.assertRaisesRegex(CaptureVerificationError, "Summary directory descriptor could not be inspected"):
+                    verify_capture(summary)
+
+
+    def test_initial_fstat_capability_failures_are_normalized(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"data")
+            with path.open("rb") as stream:
+                for error in (NotImplementedError("unsupported"), TypeError("unsupported")):
+                    with self.subTest(error=type(error).__name__):
+                        with patch("scripts.verify_l2_capture_artifacts.os.fstat", side_effect=error):
+                            with self.assertRaisesRegex(CaptureVerificationError, "metadata could not be inspected before reading"):
+                                _initial_file_identity(stream, "Artifact")
+
+    def test_post_read_fstat_capability_failures_are_normalized(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"data")
+            with path.open("rb") as stream:
+                initial_identity = _file_identity(os.fstat(stream.fileno()))
+                for error in (NotImplementedError("unsupported"), TypeError("unsupported")):
+                    with self.subTest(error=type(error).__name__):
+                        with patch("scripts.verify_l2_capture_artifacts.os.fstat", side_effect=error):
+                            with self.assertRaisesRegex(CaptureVerificationError, "metadata could not be rechecked after reading"):
+                                _assert_file_unchanged(stream, initial_identity, "Artifact")
+
+    def test_secure_open_wraps_unsupported_open_operation(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"data")
+            for error in (NotImplementedError("unsupported"), TypeError("unsupported")):
+                with self.subTest(error=type(error).__name__):
+                    with patch("scripts.verify_l2_capture_artifacts.os.open", side_effect=error):
+                        with self.assertRaisesRegex(CaptureVerificationError, "secure open is unavailable or unsafe"):
+                            _open_regular_file_no_follow(path, "Artifact")
+
+    def test_secure_open_fstat_capability_failures_are_normalized(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"data")
+            for error in (OSError("unsupported"), NotImplementedError("unsupported"), TypeError("unsupported")):
+                with self.subTest(error=type(error).__name__):
+                    with patch("scripts.verify_l2_capture_artifacts.os.fstat", side_effect=error):
+                        with self.assertRaisesRegex(CaptureVerificationError, "metadata could not be inspected after secure open"):
+                            _open_regular_file_no_follow(path, "Artifact")
+
+    def test_secure_open_fstat_failure_is_not_masked_by_close_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"data")
+            with patch("scripts.verify_l2_capture_artifacts.os.fstat", side_effect=NotImplementedError("unsupported")):
+                with patch("scripts.verify_l2_capture_artifacts.os.close", side_effect=OSError("close failed")) as close_mock:
+                    with self.assertRaisesRegex(CaptureVerificationError, "metadata could not be inspected after secure open"):
+                        _open_regular_file_no_follow(path, "Artifact")
+                    close_mock.assert_called_once()
+
+    def test_secure_open_fallback_fails_closed_when_lstat_is_unsupported(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"data")
+            with patch("scripts.verify_l2_capture_artifacts._supports_no_follow_open", return_value=False):
+                with patch("scripts.verify_l2_capture_artifacts.os.lstat", side_effect=NotImplementedError("unsupported")):
+                    with self.assertRaisesRegex(CaptureVerificationError, "secure-open identity recheck is unavailable"):
+                        _open_regular_file_no_follow(path, "Artifact")
+
+    def test_secure_open_fallback_fails_closed_when_dir_fd_stat_is_unsupported(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()):
+            self.skipTest("directory-relative open is unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            path = root / "artifact.bin"
+            path.write_bytes(b"data")
+            descriptor = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                with patch("scripts.verify_l2_capture_artifacts._supports_no_follow_open", return_value=False):
+                    with patch("scripts.verify_l2_capture_artifacts.os.stat", side_effect=TypeError("unsupported")):
+                        with self.assertRaisesRegex(CaptureVerificationError, "secure-open identity recheck is unavailable"):
+                            _open_regular_file_no_follow(path, "Artifact", directory_fd=descriptor)
+            finally:
+                os.close(descriptor)
+
+    def test_rejects_symlinked_summary_directory_when_directory_fds_are_supported(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
+            self.skipTest("directory-relative no-follow opens are unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            real_dir = root / "real"
+            real_dir.mkdir()
+            summary = self._write_fixture(real_dir)
+            alias = root / "alias"
+            try:
+                alias.symlink_to(real_dir, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"directory symlinks unavailable: {exc}")
+            with self.assertRaisesRegex(CaptureVerificationError, "non-symlink directory"):
+                verify_capture(alias / summary.name)
 
 
 if __name__ == "__main__":
