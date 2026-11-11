@@ -106,6 +106,22 @@ def _assert_path_names_open_file(path: Path, stream: Any, label: str, directory_
     ):
         raise CaptureVerificationError(f"{label} path no longer names the opened file")
 
+
+
+def _assert_path_names_open_directory(path: Path, directory_fd: int) -> None:
+    """Ensure the supplied directory path still names the anchored directory."""
+    try:
+        current = os.stat(path, follow_symlinks=False)
+        opened = os.fstat(directory_fd)
+    except OSError as exc:
+        raise CaptureVerificationError("Summary directory path could not be rechecked") from exc
+    if (
+        stat.S_ISLNK(current.st_mode)
+        or not stat.S_ISDIR(current.st_mode)
+        or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+    ):
+        raise CaptureVerificationError("Summary directory path no longer names the opened directory")
+
 def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     """Reject ambiguous JSON objects instead of silently keeping the last key."""
     result: dict[str, Any] = {}
@@ -505,7 +521,10 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         try:
             if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
                 raise CaptureVerificationError("Summary parent is not a directory")
-            return _verify_capture_in_directory(summary_path, directory_fd)
+            _assert_path_names_open_directory(summary_path.parent, directory_fd)
+            result = _verify_capture_in_directory(summary_path, directory_fd)
+            _assert_path_names_open_directory(summary_path.parent, directory_fd)
+            return result
         finally:
             os.close(directory_fd)
     return _verify_capture_in_directory(summary_path, None)
