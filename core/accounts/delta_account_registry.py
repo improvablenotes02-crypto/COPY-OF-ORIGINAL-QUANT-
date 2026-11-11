@@ -630,6 +630,9 @@ class DeltaReadOnlySession:
     def verify_provider_identity(self) -> str:
         self._require_open()
         observed = self._exchange._get_authenticated_account_id()
+        # The venue call may block while the request principal, approval, or
+        # account generation changes. Revalidate before trusting its result.
+        self._require_open()
         expected = self._record.provider_account_id
         if expected is not None and observed != expected:
             raise AccountScopeError("authenticated Delta identity does not match the registered account")
