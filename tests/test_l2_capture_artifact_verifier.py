@@ -913,6 +913,16 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 os.close(descriptor)
 
 
+    def test_secure_open_wraps_unsupported_open_operation(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"data")
+            for error in (NotImplementedError("unsupported"), TypeError("unsupported")):
+                with self.subTest(error=type(error).__name__):
+                    with patch("scripts.verify_l2_capture_artifacts.os.open", side_effect=error):
+                        with self.assertRaisesRegex(CaptureVerificationError, "secure open is unavailable or unsafe"):
+                            _open_regular_file_no_follow(path, "Artifact")
+
     def test_secure_open_fallback_fails_closed_when_lstat_is_unsupported(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "artifact.bin"
