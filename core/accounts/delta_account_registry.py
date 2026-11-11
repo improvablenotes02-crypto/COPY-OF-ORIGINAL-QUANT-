@@ -495,7 +495,6 @@ class SQLiteDeltaAccountRepository:
             expected_previous_hash = digest
         return events
 
-    @_session_locked
     def close(self) -> None:
         with self._lock:
             self._connection.close()
@@ -595,6 +594,7 @@ class DeltaReadOnlySession:
                     "Delta read-only session is no longer authorized"
                 )
 
+    @_session_locked
     def close(self) -> None:
         """Close this local client session; venue-side API-key revocation is separate."""
         if self._closed:
