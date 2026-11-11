@@ -50,7 +50,10 @@ def _open_regular_file_no_follow(path: Path, label: str, directory_fd: int | Non
     except (OSError, NotImplementedError, TypeError) as exc:
         raise CaptureVerificationError(f"{label} secure open is unavailable or unsafe") from exc
     try:
-        opened = os.fstat(descriptor)
+        try:
+            opened = os.fstat(descriptor)
+        except (OSError, NotImplementedError, TypeError) as exc:
+            raise CaptureVerificationError(f"{label} descriptor could not be inspected") from exc
         if not stat.S_ISREG(opened.st_mode):
             raise CaptureVerificationError(f"{label} must be a regular, non-symlink file")
         if getattr(opened, "st_nlink", 1) != 1:
