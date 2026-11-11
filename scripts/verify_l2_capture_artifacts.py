@@ -30,6 +30,17 @@ class CaptureVerificationError(ValueError):
     """Raised when a capture artifact is missing, unsafe, or inconsistent."""
 
 
+def _close_descriptor(descriptor: int, label: str) -> None:
+    """Close a descriptor without masking an exception already being handled."""
+    active_exception = sys.exc_info()[0] is not None
+    try:
+        os.close(descriptor)
+    except Exception as exc:
+        if active_exception:
+            return
+        raise CaptureVerificationError(f"{label} descriptor could not be closed") from exc
+
+
 def _supports_no_follow_open() -> bool:
     """Whether this platform exposes O_NOFOLLOW for race-resistant opens."""
     return hasattr(os, "O_NOFOLLOW")
@@ -50,7 +61,12 @@ def _open_regular_file_no_follow(path: Path, label: str, directory_fd: int | Non
     except (OSError, NotImplementedError, TypeError) as exc:
         raise CaptureVerificationError(f"{label} secure open is unavailable or unsafe") from exc
     try:
-        opened = os.fstat(descriptor)
+        try:
+            opened = os.fstat(descriptor)
+        except (OSError, NotImplementedError, TypeError) as exc:
+            raise CaptureVerificationError(
+                f"{label} metadata could not be inspected after secure open"
+            ) from exc
         if not stat.S_ISREG(opened.st_mode):
             raise CaptureVerificationError(f"{label} must be a regular, non-symlink file")
         if getattr(opened, "st_nlink", 1) != 1:
@@ -69,7 +85,7 @@ def _open_regular_file_no_follow(path: Path, label: str, directory_fd: int | Non
                 raise CaptureVerificationError(f"{label} changed during secure open")
         return os.fdopen(descriptor, "rb")
     except Exception:
-        os.close(descriptor)
+        _close_descriptor(descriptor, label)
         raise
 
 
@@ -84,6 +100,14 @@ def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, i
         getattr(metadata, "st_mtime_ns", int(metadata.st_mtime * 1_000_000_000)),
         getattr(metadata, "st_ctime_ns", int(metadata.st_ctime * 1_000_000_000)),
     )
+
+
+def _initial_file_identity(stream: Any, label: str) -> tuple[int, int, int, int, int, int, int]:
+    """Read initial descriptor metadata or fail with a verifier-specific error."""
+    try:
+        return _file_identity(os.fstat(stream.fileno()))
+    except (OSError, NotImplementedError, TypeError) as exc:
+        raise CaptureVerificationError(f"{label} metadata could not be inspected before reading") from exc
 
 
 def _assert_file_unchanged(stream: Any, initial_identity: tuple[int, int, int, int, int, int, int], label: str) -> None:
@@ -247,7 +271,7 @@ def _verify_capture_in_directory(summary_path: Path, directory_fd: int | None) -
     verification_cpu_started = time.process_time()
     try:
         with _open_regular_file_no_follow(summary_path, "Summary", directory_fd) as summary_stream:
-            initial_summary_identity = _file_identity(os.fstat(summary_stream.fileno()))
+            initial_summary_identity = _initial_file_identity(summary_stream, "Summary")
             summary_bytes = summary_stream.read(_MAX_SUMMARY_BYTES + 1)
             _assert_file_unchanged(summary_stream, initial_summary_identity, "Summary")
             _assert_path_names_open_file(summary_path, summary_stream, "Summary", directory_fd)
@@ -292,7 +316,7 @@ def _verify_capture_in_directory(summary_path: Path, directory_fd: int | None) -
     highest_accepted_sequences: dict[str, int] = {}
     accepted_snapshots_by_epoch: dict[str, dict[str, int]] = {}
     with _open_regular_file_no_follow(raw_path, "Raw capture", directory_fd) as stream:
-        initial_raw_identity = _file_identity(os.fstat(stream.fileno()))
+        initial_raw_identity = _initial_file_identity(stream, "Raw capture")
         number = 0
         while True:
             line = stream.readline(_MAX_JSONL_RECORD_BYTES + 1)
@@ -542,7 +566,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             _assert_path_names_open_directory(summary_path.parent, directory_fd)
             return result
         finally:
-            os.close(directory_fd)
+            _close_descriptor(directory_fd, "Summary directory")
     return _verify_capture_in_directory(summary_path, None)
 
 
