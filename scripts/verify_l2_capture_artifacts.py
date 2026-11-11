@@ -63,6 +63,29 @@ def _open_regular_file_no_follow(path: Path, label: str, directory_fd: int | Non
         raise
 
 
+def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
+    """Return descriptor metadata that detects replacement or in-place mutation."""
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        getattr(metadata, "st_nlink", 1),
+        metadata.st_size,
+        getattr(metadata, "st_mtime_ns", int(metadata.st_mtime * 1_000_000_000)),
+        getattr(metadata, "st_ctime_ns", int(metadata.st_ctime * 1_000_000_000)),
+    )
+
+
+def _assert_file_unchanged(stream: Any, initial_identity: tuple[int, int, int, int, int, int, int], label: str) -> None:
+    """Fail closed if an opened artifact changed while its bytes were being read."""
+    try:
+        current_identity = _file_identity(os.fstat(stream.fileno()))
+    except OSError as exc:
+        raise CaptureVerificationError(f"{label} metadata could not be rechecked after reading") from exc
+    if current_identity != initial_identity:
+        raise CaptureVerificationError(f"{label} changed while being verified")
+
+
 def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     """Reject ambiguous JSON objects instead of silently keeping the last key."""
     result: dict[str, Any] = {}
@@ -178,7 +201,9 @@ def _verify_capture_in_directory(summary_path: Path, directory_fd: int | None) -
     verification_cpu_started = time.process_time()
     try:
         with _open_regular_file_no_follow(summary_path, "Summary", directory_fd) as summary_stream:
+            initial_summary_identity = _file_identity(os.fstat(summary_stream.fileno()))
             summary_bytes = summary_stream.read(_MAX_SUMMARY_BYTES + 1)
+            _assert_file_unchanged(summary_stream, initial_summary_identity, "Summary")
         if len(summary_bytes) > _MAX_SUMMARY_BYTES:
             raise CaptureVerificationError("Summary JSON exceeds verifier byte limit")
         summary = json.loads(summary_bytes.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float, parse_int=_parse_bounded_json_int)
@@ -220,6 +245,7 @@ def _verify_capture_in_directory(summary_path: Path, directory_fd: int | None) -
     highest_accepted_sequences: dict[str, int] = {}
     accepted_snapshots_by_epoch: dict[str, dict[str, int]] = {}
     with _open_regular_file_no_follow(raw_path, "Raw capture", directory_fd) as stream:
+        initial_raw_identity = _file_identity(os.fstat(stream.fileno()))
         number = 0
         while True:
             line = stream.readline(_MAX_JSONL_RECORD_BYTES + 1)
@@ -311,6 +337,7 @@ def _verify_capture_in_directory(summary_path: Path, directory_fd: int | None) -
                 rejected_persisted += 1
                 counts["rejected"] += 1
             frame_count += 1
+        _assert_file_unchanged(stream, initial_raw_identity, "Raw capture")
     actual_hash = digest.hexdigest()
     if actual_hash != expected_hash:
         raise CaptureVerificationError("Raw capture SHA-256 does not match summary")
