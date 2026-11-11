@@ -578,6 +578,40 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             with patch("scripts.verify_l2_capture_artifacts.time.process_time", return_value=0.0):
                 self.assertTrue(verify_capture(summary)["integrity_valid"])
 
+    def test_rejects_summary_with_oversized_json_array(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            data = json.loads(summary.read_text())
+            data["attacker_controlled"] = list(range(8193))
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "JSON array item limit"):
+                verify_capture(summary)
+
+    def test_rejects_raw_record_with_oversized_json_object(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            record = json.loads(raw.read_text())
+            record["attacker_controlled"] = {str(i): i for i in range(8193)}
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "JSON object member limit"):
+                verify_capture(summary)
+
+    def test_rejects_json_with_excessive_aggregate_nodes(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            data = json.loads(summary.read_text())
+            data["attacker_controlled"] = [list(range(13)) for _ in range(8192)]
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "JSON node limit"):
+                verify_capture(summary)
+
     def test_rejects_oversized_summary(self):
         with tempfile.TemporaryDirectory() as td:
             summary = self._write_fixture(Path(td))
