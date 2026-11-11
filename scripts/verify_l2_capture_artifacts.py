@@ -90,7 +90,7 @@ def _assert_file_unchanged(stream: Any, initial_identity: tuple[int, int, int, i
     """Fail closed if an opened artifact changed while its bytes were being read."""
     try:
         current_identity = _file_identity(os.fstat(stream.fileno()))
-    except OSError as exc:
+    except (OSError, NotImplementedError, TypeError) as exc:
         raise CaptureVerificationError(f"{label} metadata could not be rechecked after reading") from exc
     if current_identity != initial_identity:
         raise CaptureVerificationError(f"{label} changed while being verified")
