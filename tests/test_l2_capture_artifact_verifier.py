@@ -578,6 +578,40 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             with patch("scripts.verify_l2_capture_artifacts.time.process_time", return_value=0.0):
                 self.assertTrue(verify_capture(summary)["integrity_valid"])
 
+    def test_rejects_summary_with_oversized_json_array(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            data = json.loads(summary.read_text())
+            data["attacker_controlled"] = list(range(8193))
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "JSON array item limit"):
+                verify_capture(summary)
+
+    def test_rejects_raw_record_with_oversized_json_object(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            record = json.loads(raw.read_text())
+            record["attacker_controlled"] = {str(i): i for i in range(8193)}
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text())
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "JSON object member limit"):
+                verify_capture(summary)
+
+    def test_rejects_json_with_excessive_aggregate_nodes(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary = self._write_fixture(Path(td))
+            data = json.loads(summary.read_text())
+            data["attacker_controlled"] = [list(range(13)) for _ in range(8192)]
+            summary.write_text(json.dumps(data))
+            with self.assertRaisesRegex(CaptureVerificationError, "JSON node limit"):
+                verify_capture(summary)
+
     def test_rejects_oversized_summary(self):
         with tempfile.TemporaryDirectory() as td:
             summary = self._write_fixture(Path(td))
@@ -616,6 +650,47 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             raw_size = (root / "raw.jsonl").stat().st_size
             with patch("scripts.verify_l2_capture_artifacts._MAX_SUMMARY_BYTES", summary.stat().st_size), patch("scripts.verify_l2_capture_artifacts._MAX_JSONL_RECORD_BYTES", raw_size), patch("scripts.verify_l2_capture_artifacts._MAX_RAW_CAPTURE_BYTES", raw_size), patch("scripts.verify_l2_capture_artifacts._MAX_RAW_CAPTURE_FRAMES", 1):
                 self.assertTrue(verify_capture(summary)["integrity_valid"])
+
+
+    def test_rejects_oversized_json_integer_token(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            content = raw.read_text(encoding="utf-8").replace('"seq": 1', '"seq": ' + ('9' * 129), 1)
+            raw_bytes = content.encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "JSON integer exceeds verifier digit limit"):
+                verify_capture(summary)
+
+    def test_rejects_oversized_json_string(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            record = json.loads(raw.read_text(encoding="utf-8"))
+            record["raw"]["sy"] = "X" * 65_537
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "JSON string length limit"):
+                verify_capture(summary)
+
+    def test_rejects_excessive_decimal_exponent_in_accepted_book_level(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            self._rewrite_raw_record(root, summary, lambda record: record["raw"].update(b=[["1e1001", "1"]]))
+            with self.assertRaisesRegex(CaptureVerificationError, "price must be finite and positive"):
+                verify_capture(summary)
+
 
 
 if __name__ == "__main__":
