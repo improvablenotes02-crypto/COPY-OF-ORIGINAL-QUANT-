@@ -851,6 +851,65 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             finally:
                 os.close(descriptor)
 
+
+    def test_detects_file_path_replaced_by_symlink_after_open(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            path = root / "artifact.bin"
+            target = root / "target.bin"
+            path.write_bytes(b"opened")
+            target.write_bytes(b"target")
+            with path.open("rb") as stream:
+                path.unlink()
+                try:
+                    path.symlink_to(target)
+                except (OSError, NotImplementedError) as exc:
+                    self.skipTest(f"file symlink creation unavailable: {exc}")
+                with self.assertRaisesRegex(CaptureVerificationError, "path no longer names the opened file"):
+                    _assert_path_names_open_file(path, stream, "Artifact")
+
+    def test_detects_directory_path_replaced_by_symlink_after_open(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
+            self.skipTest("directory descriptor support is unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            directory = root / "capture"
+            moved = root / "opened-capture"
+            target = root / "target-directory"
+            directory.mkdir()
+            target.mkdir()
+            descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                directory.rename(moved)
+                try:
+                    directory.symlink_to(target, target_is_directory=True)
+                except (OSError, NotImplementedError) as exc:
+                    self.skipTest(f"directory symlink creation unavailable: {exc}")
+                with self.assertRaisesRegex(CaptureVerificationError, "directory path no longer names the opened directory"):
+                    _assert_path_names_open_directory(directory, descriptor)
+            finally:
+                os.close(descriptor)
+
+
+    def test_file_path_recheck_wraps_unsupported_no_follow_stat(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"data")
+            with path.open("rb") as stream:
+                with patch("scripts.verify_l2_capture_artifacts.os.stat", side_effect=NotImplementedError("unsupported")):
+                    with self.assertRaisesRegex(CaptureVerificationError, "path could not be rechecked"):
+                        _assert_path_names_open_file(path, stream, "Artifact")
+
+    def test_directory_path_recheck_wraps_unsupported_no_follow_stat(self):
+        with tempfile.TemporaryDirectory() as td:
+            descriptor = os.open(td, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                with patch("scripts.verify_l2_capture_artifacts.os.stat", side_effect=NotImplementedError("unsupported")):
+                    with self.assertRaisesRegex(CaptureVerificationError, "directory path could not be rechecked"):
+                        _assert_path_names_open_directory(Path(td), descriptor)
+            finally:
+                os.close(descriptor)
+
     def test_rejects_symlinked_summary_directory_when_directory_fds_are_supported(self):
         if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
             self.skipTest("directory-relative no-follow opens are unavailable")

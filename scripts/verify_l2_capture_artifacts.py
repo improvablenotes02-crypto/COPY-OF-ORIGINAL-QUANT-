@@ -96,7 +96,7 @@ def _assert_path_names_open_file(path: Path, stream: Any, label: str, directory_
         else:
             current = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
         opened = os.fstat(stream.fileno())
-    except OSError as exc:
+    except (OSError, NotImplementedError, TypeError) as exc:
         raise CaptureVerificationError(f"{label} path could not be rechecked after reading") from exc
     if (
         stat.S_ISLNK(current.st_mode)
@@ -113,7 +113,7 @@ def _assert_path_names_open_directory(path: Path, directory_fd: int) -> None:
     try:
         current = os.stat(path, follow_symlinks=False)
         opened = os.fstat(directory_fd)
-    except OSError as exc:
+    except (OSError, NotImplementedError, TypeError) as exc:
         raise CaptureVerificationError("Summary directory path could not be rechecked") from exc
     if (
         stat.S_ISLNK(current.st_mode)
