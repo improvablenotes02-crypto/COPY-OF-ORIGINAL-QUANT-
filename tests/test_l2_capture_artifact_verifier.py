@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from scripts.verify_l2_capture_artifacts import (
+from scripts.verify_l2_capture_artifacts import _assert_file_unchanged, (
     CaptureVerificationError,
     _open_regular_file_no_follow,
     _supports_no_follow_open,
@@ -932,6 +932,19 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             with patch("scripts.verify_l2_capture_artifacts.os.fstat", side_effect=NotImplementedError("unsupported")):
                 with self.assertRaisesRegex(CaptureVerificationError, "Summary directory descriptor could not be inspected"):
                     verify_capture(summary)
+
+
+    def test_post_read_fstat_capability_failures_are_normalized(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"data")
+            with path.open("rb") as stream:
+                initial_identity = _file_identity(os.fstat(stream.fileno()))
+                for error in (NotImplementedError("unsupported"), TypeError("unsupported")):
+                    with self.subTest(error=type(error).__name__):
+                        with patch("scripts.verify_l2_capture_artifacts.os.fstat", side_effect=error):
+                            with self.assertRaisesRegex(CaptureVerificationError, "metadata could not be rechecked after reading"):
+                                _assert_file_unchanged(stream, initial_identity, "Artifact")
 
     def test_secure_open_wraps_unsupported_open_operation(self):
         with tempfile.TemporaryDirectory() as td:
