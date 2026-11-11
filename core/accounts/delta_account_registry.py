@@ -549,10 +549,18 @@ def _credential_rotation_event_hash(
     return hashlib.sha256(canonical).hexdigest()
 
 
+def _session_locked(method):
+    """Serialize session operations with close so the exchange client stays alive."""
+    def guarded(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return guarded
+
+
 class DeltaReadOnlySession:
     """Narrow account-bound facade; deliberately exposes no order-write methods."""
 
-    __slots__ = ("_exchange", "_record", "_closed", "_authorization_check")
+    __slots__ = ("_exchange", "_record", "_closed", "_authorization_check", "_lock")
 
     def __init__(
         self,
@@ -563,11 +571,13 @@ class DeltaReadOnlySession:
         self._exchange = exchange
         self._record = record
         self._closed = False
+        self._lock = threading.RLock()
         self._authorization_check = authorization_check
 
     @property
     def closed(self) -> bool:
-        return self._closed
+        with self._lock:
+            return self._closed
 
     def _require_open(self) -> None:
         if self._closed or self._exchange is None:
@@ -584,6 +594,7 @@ class DeltaReadOnlySession:
                     "Delta read-only session is no longer authorized"
                 )
 
+    @_session_locked
     def close(self) -> None:
         """Close this local client session; venue-side API-key revocation is separate."""
         if self._closed:
@@ -599,6 +610,7 @@ class DeltaReadOnlySession:
                 # A failed cleanup must never reopen this session or leak client details.
                 pass
 
+    @_session_locked
     def __enter__(self):
         self._require_open()
         return self
@@ -627,6 +639,7 @@ class DeltaReadOnlySession:
     def provider_account_id(self) -> str | None:
         return self._record.provider_account_id
 
+    @_session_locked
     def verify_provider_identity(self) -> str:
         self._require_open()
         observed = self._exchange._get_authenticated_account_id()
@@ -646,6 +659,7 @@ class DeltaReadOnlySession:
             raise AccountScopeError("Delta snapshot identity does not match the registered account")
         return snapshot
 
+    @_session_locked
     def get_balance(self):
         self._require_open()
         result = self._exchange.get_balance()
@@ -653,6 +667,7 @@ class DeltaReadOnlySession:
         self._require_open()
         return result
 
+    @_session_locked
     def get_positions(self):
         self._require_open()
         result = self._exchange.get_positions()
@@ -660,18 +675,21 @@ class DeltaReadOnlySession:
         self._require_open()
         return result
 
+    @_session_locked
     def get_order_history_snapshot(self, *, max_pages: int = 100):
         self._require_open()
         return self._verify_snapshot_scope(
             self._exchange.get_order_history_snapshot(max_pages=max_pages)
         )
 
+    @_session_locked
     def get_fill_history_snapshot(self, *, max_pages: int = 100):
         self._require_open()
         return self._verify_snapshot_scope(
             self._exchange.get_fill_history_snapshot(max_pages=max_pages)
         )
 
+    @_session_locked
     def get_account_snapshot(self, *, max_pages: int = 100) -> dict:
         """Collect complete read-only account views under one verified identity.
 
