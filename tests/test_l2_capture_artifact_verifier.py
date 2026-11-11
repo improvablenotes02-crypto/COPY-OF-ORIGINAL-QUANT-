@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 from scripts.verify_l2_capture_artifacts import (
     CaptureVerificationError,
+    _open_regular_file_no_follow,
+    _supports_no_follow_open,
     _assert_file_unchanged,
     _assert_path_names_open_file,
     _assert_path_names_open_directory,
@@ -907,6 +909,32 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 with patch("scripts.verify_l2_capture_artifacts.os.stat", side_effect=NotImplementedError("unsupported")):
                     with self.assertRaisesRegex(CaptureVerificationError, "directory path could not be rechecked"):
                         _assert_path_names_open_directory(Path(td), descriptor)
+            finally:
+                os.close(descriptor)
+
+
+    def test_secure_open_fallback_fails_closed_when_lstat_is_unsupported(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"data")
+            with patch("scripts.verify_l2_capture_artifacts._supports_no_follow_open", return_value=False):
+                with patch("scripts.verify_l2_capture_artifacts.os.lstat", side_effect=NotImplementedError("unsupported")):
+                    with self.assertRaisesRegex(CaptureVerificationError, "secure-open identity recheck is unavailable"):
+                        _open_regular_file_no_follow(path, "Artifact")
+
+    def test_secure_open_fallback_fails_closed_when_dir_fd_stat_is_unsupported(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()):
+            self.skipTest("directory-relative open is unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            path = root / "artifact.bin"
+            path.write_bytes(b"data")
+            descriptor = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                with patch("scripts.verify_l2_capture_artifacts._supports_no_follow_open", return_value=False):
+                    with patch("scripts.verify_l2_capture_artifacts.os.stat", side_effect=TypeError("unsupported")):
+                        with self.assertRaisesRegex(CaptureVerificationError, "secure-open identity recheck is unavailable"):
+                            _open_regular_file_no_follow(path, "Artifact", directory_fd=descriptor)
             finally:
                 os.close(descriptor)
 
