@@ -21,12 +21,37 @@ class CaptureVerificationError(ValueError):
     """Raised when a capture artifact is missing, unsafe, or inconsistent."""
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject ambiguous JSON objects instead of silently keeping the last key."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise CaptureVerificationError(f"Duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_nonfinite_json_constant(value: str) -> None:
+    """Reject JavaScript-style NaN/Infinity tokens accepted by Python's JSON parser."""
+    raise CaptureVerificationError(f"Non-finite JSON numeric constant: {value}")
+
+
+def _parse_finite_json_float(value: str) -> float:
+    """Reject valid JSON numeric syntax that overflows Python's finite float range."""
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise CaptureVerificationError(f"Non-finite JSON numeric value: {value}")
+    return parsed
+
+
 def verify_capture(summary_path: Path) -> dict[str, Any]:
     summary_path = Path(summary_path)
     if summary_path.is_symlink() or not summary_path.is_file():
         raise CaptureVerificationError("Summary must be a regular, non-symlink file")
     try:
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary = json.loads(summary_path.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float)
+    except CaptureVerificationError:
+        raise
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise CaptureVerificationError(f"Cannot read summary JSON: {exc}") from exc
     if not isinstance(summary, dict):
@@ -60,7 +85,9 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             if not line.endswith(b"\n"):
                 raise CaptureVerificationError(f"JSONL record {number} is not LF terminated")
             try:
-                record = json.loads(line)
+                record = json.loads(line, object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float)
+            except CaptureVerificationError as exc:
+                raise CaptureVerificationError(f"JSONL record {number} is invalid: {exc}") from exc
             except (UnicodeError, json.JSONDecodeError) as exc:
                 raise CaptureVerificationError(f"JSONL record {number} is invalid: {exc}") from exc
             if not isinstance(record, dict):
