@@ -43,8 +43,26 @@ def _reject_nonfinite_json_constant(value: str) -> None:
     raise CaptureVerificationError(f"Non-finite JSON numeric constant: {value}")
 
 
+_MAX_JSON_INTEGER_DIGITS = 128
+_MAX_JSON_FLOAT_TOKEN_CHARS = 128
+_MAX_JSON_STRING_CHARS = 65_536
+_MAX_JSON_KEY_CHARS = 4_096
+_MAX_DECIMAL_EXPONENT = 1_000
+_MAX_SYMBOL_CHARS = 128
+
+
+def _parse_bounded_json_int(value: str) -> int:
+    """Reject oversized integer tokens before constructing arbitrary-precision ints."""
+    digits = value[1:] if value.startswith("-") else value
+    if len(digits) > _MAX_JSON_INTEGER_DIGITS:
+        raise CaptureVerificationError("JSON integer exceeds verifier digit limit")
+    return int(value)
+
+
 def _parse_finite_json_float(value: str) -> float:
-    """Reject valid JSON numeric syntax that overflows Python's finite float range."""
+    """Reject oversized or non-finite JSON float tokens before accepting their value."""
+    if len(value) > _MAX_JSON_FLOAT_TOKEN_CHARS:
+        raise CaptureVerificationError("JSON float exceeds verifier token-length limit")
     parsed = float(value)
     if not math.isfinite(parsed):
         raise CaptureVerificationError(f"Non-finite JSON numeric value: {value}")
@@ -67,12 +85,17 @@ def _validate_json_structure(value: Any, context: str) -> None:
             raise CaptureVerificationError(f"{context} exceeds verifier JSON node limit")
         if depth > _MAX_JSON_NESTING_DEPTH:
             raise CaptureVerificationError(f"{context} exceeds verifier JSON nesting limit")
+        if isinstance(current, str) and len(current) > _MAX_JSON_STRING_CHARS:
+            raise CaptureVerificationError(f"{context} exceeds verifier JSON string length limit")
         if isinstance(current, dict):
             if len(current) > _MAX_JSON_CONTAINER_ITEMS:
                 raise CaptureVerificationError(f"{context} exceeds verifier JSON object member limit")
             node_count += len(current)  # Include object keys in the aggregate complexity budget.
             if node_count > _MAX_JSON_NODES:
                 raise CaptureVerificationError(f"{context} exceeds verifier JSON node limit")
+            for key in current:
+                if len(key) > _MAX_JSON_KEY_CHARS:
+                    raise CaptureVerificationError(f"{context} exceeds verifier JSON object key length limit")
             pending.extend((child, depth + 1) for child in current.values())
         elif isinstance(current, list):
             if len(current) > _MAX_JSON_CONTAINER_ITEMS:
@@ -109,7 +132,7 @@ def _validate_accepted_book_levels(raw: dict[str, Any], record_number: int) -> N
                     raise CaptureVerificationError(
                         f"JSONL record {record_number} accepted {side} level {level_number} has invalid {field}"
                     ) from exc
-                if not parsed.is_finite() or parsed <= 0:
+                if not parsed.is_finite() or parsed <= 0 or abs(parsed.adjusted()) > _MAX_DECIMAL_EXPONENT:
                     raise CaptureVerificationError(
                         f"JSONL record {record_number} accepted {side} level {level_number} {field} must be finite and positive"
                     )
@@ -125,7 +148,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             summary_bytes = summary_stream.read(_MAX_SUMMARY_BYTES + 1)
         if len(summary_bytes) > _MAX_SUMMARY_BYTES:
             raise CaptureVerificationError("Summary JSON exceeds verifier byte limit")
-        summary = json.loads(summary_bytes.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float)
+        summary = json.loads(summary_bytes.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float, parse_int=_parse_bounded_json_int)
     except CaptureVerificationError:
         raise
     except RecursionError as exc:
@@ -214,7 +237,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             symbol = raw.get("sy")
             sequence = raw.get("seq")
             venue_timestamp_us = raw.get("ts")
-            if not isinstance(symbol, str) or not symbol or symbol != symbol.strip():
+            if not isinstance(symbol, str) or not symbol or len(symbol) > _MAX_SYMBOL_CHARS or symbol != symbol.strip():
                 raise CaptureVerificationError(f"JSONL record {number} has invalid symbol")
             if type(sequence) is not int or sequence <= 0:
                 raise CaptureVerificationError(f"JSONL record {number} has invalid sequence")

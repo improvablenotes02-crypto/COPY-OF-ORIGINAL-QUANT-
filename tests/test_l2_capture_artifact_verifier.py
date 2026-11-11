@@ -652,5 +652,46 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 self.assertTrue(verify_capture(summary)["integrity_valid"])
 
 
+    def test_rejects_oversized_json_integer_token(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            content = raw.read_text(encoding="utf-8").replace('"seq": 1', '"seq": ' + ('9' * 129), 1)
+            raw_bytes = content.encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "JSON integer exceeds verifier digit limit"):
+                verify_capture(summary)
+
+    def test_rejects_oversized_json_string(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            record = json.loads(raw.read_text(encoding="utf-8"))
+            record["raw"]["sy"] = "X" * 65_537
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "JSON string length limit"):
+                verify_capture(summary)
+
+    def test_rejects_excessive_decimal_exponent_in_accepted_book_level(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            self._rewrite_raw_record(root, summary, lambda record: record["raw"].update(b=[["1e1001", "1"]]))
+            with self.assertRaisesRegex(CaptureVerificationError, "price must be finite and positive"):
+                verify_capture(summary)
+
+
+
 if __name__ == "__main__":
     unittest.main()
