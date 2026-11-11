@@ -6,6 +6,7 @@ orders. Integrity success does not itself establish a VERIFIED_24H evidence verd
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import math
@@ -39,6 +40,34 @@ def _close_descriptor(descriptor: int, label: str) -> None:
         if active_exception:
             return
         raise CaptureVerificationError(f"{label} descriptor could not be closed") from exc
+
+
+@contextmanager
+def _managed_binary_stream(stream: Any, label: str):
+    """Close a binary stream once without masking an active verification error."""
+    try:
+        yield stream
+    except BaseException:
+        try:
+            stream.close()
+        except Exception:
+            pass
+        raise
+    else:
+        try:
+            stream.close()
+        except Exception as exc:
+            raise CaptureVerificationError(f"{label} stream could not be closed") from exc
+
+
+def _read_jsonl_line(stream: Any, record_number: int) -> bytes:
+    """Read one bounded JSONL line and normalize filesystem read failures."""
+    try:
+        return stream.readline(_MAX_JSONL_RECORD_BYTES + 1)
+    except (OSError, NotImplementedError, TypeError) as exc:
+        raise CaptureVerificationError(
+            f"JSONL record {record_number + 1} could not be read"
+        ) from exc
 
 
 def _supports_no_follow_open() -> bool:
@@ -270,7 +299,7 @@ def _verify_capture_in_directory(summary_path: Path, directory_fd: int | None) -
     summary_path = Path(summary_path)
     verification_cpu_started = time.process_time()
     try:
-        with _open_regular_file_no_follow(summary_path, "Summary", directory_fd) as summary_stream:
+        with _managed_binary_stream(_open_regular_file_no_follow(summary_path, "Summary", directory_fd), "Summary") as summary_stream:
             initial_summary_identity = _initial_file_identity(summary_stream, "Summary")
             summary_bytes = summary_stream.read(_MAX_SUMMARY_BYTES + 1)
             _assert_file_unchanged(summary_stream, initial_summary_identity, "Summary")
@@ -315,11 +344,11 @@ def _verify_capture_in_directory(summary_path: Path, directory_fd: int | None) -
     accepted_sequences: dict[str, int] = {}
     highest_accepted_sequences: dict[str, int] = {}
     accepted_snapshots_by_epoch: dict[str, dict[str, int]] = {}
-    with _open_regular_file_no_follow(raw_path, "Raw capture", directory_fd) as stream:
+    with _managed_binary_stream(_open_regular_file_no_follow(raw_path, "Raw capture", directory_fd), "Raw capture") as stream:
         initial_raw_identity = _initial_file_identity(stream, "Raw capture")
         number = 0
         while True:
-            line = stream.readline(_MAX_JSONL_RECORD_BYTES + 1)
+            line = _read_jsonl_line(stream, number)
             if not line:
                 break
             number += 1
