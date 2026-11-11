@@ -86,6 +86,42 @@ def _assert_file_unchanged(stream: Any, initial_identity: tuple[int, int, int, i
         raise CaptureVerificationError(f"{label} changed while being verified")
 
 
+
+
+def _assert_path_names_open_file(path: Path, stream: Any, label: str, directory_fd: int | None = None) -> None:
+    """Reject a pathname that no longer names the descriptor we actually read."""
+    try:
+        if directory_fd is None:
+            current = os.stat(path, follow_symlinks=False)
+        else:
+            current = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+        opened = os.fstat(stream.fileno())
+    except OSError as exc:
+        raise CaptureVerificationError(f"{label} path could not be rechecked after reading") from exc
+    if (
+        stat.S_ISLNK(current.st_mode)
+        or not stat.S_ISREG(current.st_mode)
+        or getattr(current, "st_nlink", 1) != 1
+        or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+    ):
+        raise CaptureVerificationError(f"{label} path no longer names the opened file")
+
+
+
+def _assert_path_names_open_directory(path: Path, directory_fd: int) -> None:
+    """Ensure the supplied directory path still names the anchored directory."""
+    try:
+        current = os.stat(path, follow_symlinks=False)
+        opened = os.fstat(directory_fd)
+    except OSError as exc:
+        raise CaptureVerificationError("Summary directory path could not be rechecked") from exc
+    if (
+        stat.S_ISLNK(current.st_mode)
+        or not stat.S_ISDIR(current.st_mode)
+        or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+    ):
+        raise CaptureVerificationError("Summary directory path no longer names the opened directory")
+
 def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     """Reject ambiguous JSON objects instead of silently keeping the last key."""
     result: dict[str, Any] = {}
@@ -204,6 +240,7 @@ def _verify_capture_in_directory(summary_path: Path, directory_fd: int | None) -
             initial_summary_identity = _file_identity(os.fstat(summary_stream.fileno()))
             summary_bytes = summary_stream.read(_MAX_SUMMARY_BYTES + 1)
             _assert_file_unchanged(summary_stream, initial_summary_identity, "Summary")
+            _assert_path_names_open_file(summary_path, summary_stream, "Summary", directory_fd)
         if len(summary_bytes) > _MAX_SUMMARY_BYTES:
             raise CaptureVerificationError("Summary JSON exceeds verifier byte limit")
         summary = json.loads(summary_bytes.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float, parse_int=_parse_bounded_json_int)
@@ -338,6 +375,7 @@ def _verify_capture_in_directory(summary_path: Path, directory_fd: int | None) -
                 counts["rejected"] += 1
             frame_count += 1
         _assert_file_unchanged(stream, initial_raw_identity, "Raw capture")
+        _assert_path_names_open_file(raw_path, stream, "Raw capture", directory_fd)
     actual_hash = digest.hexdigest()
     if actual_hash != expected_hash:
         raise CaptureVerificationError("Raw capture SHA-256 does not match summary")
@@ -483,7 +521,10 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         try:
             if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
                 raise CaptureVerificationError("Summary parent is not a directory")
-            return _verify_capture_in_directory(summary_path, directory_fd)
+            _assert_path_names_open_directory(summary_path.parent, directory_fd)
+            result = _verify_capture_in_directory(summary_path, directory_fd)
+            _assert_path_names_open_directory(summary_path.parent, directory_fd)
+            return result
         finally:
             os.close(directory_fd)
     return _verify_capture_in_directory(summary_path, None)
