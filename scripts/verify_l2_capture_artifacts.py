@@ -524,12 +524,18 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
         try:
             directory_fd = os.open(summary_path.parent, directory_flags)
-        except OSError as exc:
+        except (OSError, NotImplementedError, TypeError) as exc:
             raise CaptureVerificationError(
-                "Summary directory must be an accessible, non-symlink directory"
+                "Summary directory secure open is unavailable or unsafe"
             ) from exc
         try:
-            if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
+            try:
+                directory_metadata = os.fstat(directory_fd)
+            except (OSError, NotImplementedError, TypeError) as exc:
+                raise CaptureVerificationError(
+                    "Summary directory descriptor could not be inspected"
+                ) from exc
+            if not stat.S_ISDIR(directory_metadata.st_mode):
                 raise CaptureVerificationError("Summary parent is not a directory")
             _assert_path_names_open_directory(summary_path.parent, directory_fd)
             result = _verify_capture_in_directory(summary_path, directory_fd)
