@@ -89,7 +89,7 @@ def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, i
 def _initial_file_identity(stream: Any, label: str) -> tuple[int, int, int, int, int, int, int]:
     """Read initial descriptor metadata or fail with a verifier-specific error."""
     try:
-        return _initial_file_identity(stream, "Raw capture")
+        return _file_identity(os.fstat(stream.fileno()))
     except (OSError, NotImplementedError, TypeError) as exc:
         raise CaptureVerificationError(f"{label} metadata could not be inspected before reading") from exc
 
