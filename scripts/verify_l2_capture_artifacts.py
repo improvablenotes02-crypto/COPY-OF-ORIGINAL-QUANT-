@@ -30,6 +30,11 @@ class CaptureVerificationError(ValueError):
     """Raised when a capture artifact is missing, unsafe, or inconsistent."""
 
 
+def _supports_no_follow_open() -> bool:
+    """Whether this platform exposes O_NOFOLLOW for race-resistant opens."""
+    return hasattr(os, "O_NOFOLLOW")
+
+
 def _open_regular_file_no_follow(path: Path, label: str, directory_fd: int | None = None):
     """Open a regular file without following a final-component symlink.
 
@@ -42,19 +47,24 @@ def _open_regular_file_no_follow(path: Path, label: str, directory_fd: int | Non
             descriptor = os.open(path, flags)
         else:
             descriptor = os.open(path.name, flags, dir_fd=directory_fd)
-    except OSError as exc:
-        raise CaptureVerificationError(f"{label} must be a regular, non-symlink file") from exc
+    except (OSError, NotImplementedError, TypeError) as exc:
+        raise CaptureVerificationError(f"{label} secure open is unavailable or unsafe") from exc
     try:
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode):
             raise CaptureVerificationError(f"{label} must be a regular, non-symlink file")
         if getattr(opened, "st_nlink", 1) != 1:
             raise CaptureVerificationError(f"{label} must not have multiple hard links")
-        if not hasattr(os, "O_NOFOLLOW"):
-            if directory_fd is None:
-                current = os.lstat(path)
-            else:
-                current = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+        if not _supports_no_follow_open():
+            try:
+                if directory_fd is None:
+                    current = os.lstat(path)
+                else:
+                    current = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+            except (OSError, NotImplementedError, TypeError) as exc:
+                raise CaptureVerificationError(
+                    f"{label} secure-open identity recheck is unavailable"
+                ) from exc
             if stat.S_ISLNK(current.st_mode) or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
                 raise CaptureVerificationError(f"{label} changed during secure open")
         return os.fdopen(descriptor, "rb")
