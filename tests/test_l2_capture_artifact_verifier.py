@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from scripts.verify_l2_capture_artifacts import (
     CaptureVerificationError,
@@ -43,7 +43,7 @@ class TestManagedArtifactStreams(unittest.TestCase):
             close_mock.assert_called_once()
 
     def test_bounded_jsonl_read_normalizes_io_failures(self):
-        stream = unittest.mock.Mock()
+        stream = Mock()
         stream.readline.side_effect = OSError("read failed")
         with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 could not be read"):
             _read_jsonl_line(stream, 0)
