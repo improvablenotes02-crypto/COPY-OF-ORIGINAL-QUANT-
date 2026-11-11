@@ -9,7 +9,9 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import re
+import stat
 import sys
 import time
 from decimal import Decimal, InvalidOperation
@@ -26,6 +28,29 @@ _MAX_VERIFICATION_CPU_SECONDS = 900.0
 
 class CaptureVerificationError(ValueError):
     """Raised when a capture artifact is missing, unsafe, or inconsistent."""
+
+
+def _open_regular_file_no_follow(path: Path, label: str):
+    """Open a regular file by descriptor without following a final-component symlink."""
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise CaptureVerificationError(f"{label} must be a regular, non-symlink file") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise CaptureVerificationError(f"{label} must be a regular, non-symlink file")
+        if getattr(opened, "st_nlink", 1) != 1:
+            raise CaptureVerificationError(f"{label} must not have multiple hard links")
+        if not hasattr(os, "O_NOFOLLOW"):
+            current = os.lstat(path)
+            if stat.S_ISLNK(current.st_mode) or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
+                raise CaptureVerificationError(f"{label} changed during secure open")
+        return os.fdopen(descriptor, "rb")
+    except Exception:
+        os.close(descriptor)
+        raise
 
 
 def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -141,10 +166,8 @@ def _validate_accepted_book_levels(raw: dict[str, Any], record_number: int) -> N
 def verify_capture(summary_path: Path) -> dict[str, Any]:
     summary_path = Path(summary_path)
     verification_cpu_started = time.process_time()
-    if summary_path.is_symlink() or not summary_path.is_file():
-        raise CaptureVerificationError("Summary must be a regular, non-symlink file")
     try:
-        with summary_path.open("rb") as summary_stream:
+        with _open_regular_file_no_follow(summary_path, "Summary") as summary_stream:
             summary_bytes = summary_stream.read(_MAX_SUMMARY_BYTES + 1)
         if len(summary_bytes) > _MAX_SUMMARY_BYTES:
             raise CaptureVerificationError("Summary JSON exceeds verifier byte limit")
@@ -162,11 +185,15 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         raise CaptureVerificationError("Summary root must be a JSON object")
 
     raw_name = summary.get("raw_capture_file")
-    if not isinstance(raw_name, str) or not raw_name or Path(raw_name).name != raw_name:
-        raise CaptureVerificationError("raw_capture_file must be a basename within the summary directory")
+    if (
+        not isinstance(raw_name, str)
+        or not raw_name
+        or raw_name in {".", ".."}
+        or any(separator in raw_name for separator in ("/", chr(92), ":", chr(0)))
+        or Path(raw_name).name != raw_name
+    ):
+        raise CaptureVerificationError("raw_capture_file must be a portable basename within the summary directory")
     raw_path = summary_path.parent / raw_name
-    if raw_path.is_symlink() or not raw_path.is_file():
-        raise CaptureVerificationError("Raw capture must be a regular, non-symlink file")
 
     expected_hash = summary.get("raw_capture_sha256")
     if not isinstance(expected_hash, str) or not _HEX64.fullmatch(expected_hash):
@@ -182,7 +209,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     accepted_sequences: dict[str, int] = {}
     highest_accepted_sequences: dict[str, int] = {}
     accepted_snapshots_by_epoch: dict[str, dict[str, int]] = {}
-    with raw_path.open("rb") as stream:
+    with _open_regular_file_no_follow(raw_path, "Raw capture") as stream:
         number = 0
         while True:
             line = stream.readline(_MAX_JSONL_RECORD_BYTES + 1)
@@ -202,7 +229,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             if not line.endswith(b"\n"):
                 raise CaptureVerificationError(f"JSONL record {number} is not LF terminated")
             try:
-                record = json.loads(line, object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float)
+                record = json.loads(line, object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float, parse_int=_parse_bounded_json_int)
             except CaptureVerificationError as exc:
                 raise CaptureVerificationError(f"JSONL record {number} is invalid: {exc}") from exc
             except RecursionError as exc:
