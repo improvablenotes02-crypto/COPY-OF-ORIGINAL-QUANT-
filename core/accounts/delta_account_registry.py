@@ -648,11 +648,17 @@ class DeltaReadOnlySession:
 
     def get_balance(self):
         self._require_open()
-        return self._exchange.get_balance()
+        result = self._exchange.get_balance()
+        # A venue request may block while the request subject or approval changes.
+        self._require_open()
+        return result
 
     def get_positions(self):
         self._require_open()
-        return self._exchange.get_positions()
+        result = self._exchange.get_positions()
+        # Never return account data observed by a session revoked mid-request.
+        self._require_open()
+        return result
 
     def get_order_history_snapshot(self, *, max_pages: int = 100):
         self._require_open()
