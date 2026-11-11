@@ -913,6 +913,26 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 os.close(descriptor)
 
 
+    def test_directory_secure_open_wraps_unsupported_operations(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
+            self.skipTest("directory descriptor support is unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            summary = Path(td) / "summary.json"
+            for error in (NotImplementedError("unsupported"), TypeError("unsupported")):
+                with self.subTest(error=type(error).__name__):
+                    with patch("scripts.verify_l2_capture_artifacts.os.open", side_effect=error):
+                        with self.assertRaisesRegex(CaptureVerificationError, "Summary directory secure open is unavailable or unsafe"):
+                            verify_capture(summary)
+
+    def test_directory_fstat_capability_failure_is_normalized(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
+            self.skipTest("directory descriptor support is unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            summary = Path(td) / "summary.json"
+            with patch("scripts.verify_l2_capture_artifacts.os.fstat", side_effect=NotImplementedError("unsupported")):
+                with self.assertRaisesRegex(CaptureVerificationError, "Summary directory descriptor could not be inspected"):
+                    verify_capture(summary)
+
     def test_secure_open_wraps_unsupported_open_operation(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "artifact.bin"
