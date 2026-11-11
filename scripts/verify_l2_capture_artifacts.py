@@ -51,6 +51,35 @@ def _parse_finite_json_float(value: str) -> float:
     return parsed
 
 
+_MAX_JSON_NESTING_DEPTH = 64
+_MAX_JSON_CONTAINER_ITEMS = 8192
+_MAX_JSON_NODES = 100_000
+
+
+def _validate_json_structure(value: Any, context: str) -> None:
+    """Bound parsed JSON depth, aggregate nodes, and individual container sizes."""
+    pending: list[tuple[Any, int]] = [(value, 0)]
+    node_count = 0
+    while pending:
+        current, depth = pending.pop()
+        node_count += 1
+        if node_count > _MAX_JSON_NODES:
+            raise CaptureVerificationError(f"{context} exceeds verifier JSON node limit")
+        if depth > _MAX_JSON_NESTING_DEPTH:
+            raise CaptureVerificationError(f"{context} exceeds verifier JSON nesting limit")
+        if isinstance(current, dict):
+            if len(current) > _MAX_JSON_CONTAINER_ITEMS:
+                raise CaptureVerificationError(f"{context} exceeds verifier JSON object member limit")
+            node_count += len(current)  # Include object keys in the aggregate complexity budget.
+            if node_count > _MAX_JSON_NODES:
+                raise CaptureVerificationError(f"{context} exceeds verifier JSON node limit")
+            pending.extend((child, depth + 1) for child in current.values())
+        elif isinstance(current, list):
+            if len(current) > _MAX_JSON_CONTAINER_ITEMS:
+                raise CaptureVerificationError(f"{context} exceeds verifier JSON array item limit")
+            pending.extend((child, depth + 1) for child in current)
+
+
 def _validate_accepted_book_levels(raw: dict[str, Any], record_number: int) -> None:
     """Require accepted snapshots/updates to contain finite positive price and size levels."""
     for side in ("b", "a"):
@@ -105,6 +134,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         raise CaptureVerificationError(f"Cannot read summary JSON: {exc}") from exc
     if time.process_time() - verification_cpu_started > _MAX_VERIFICATION_CPU_SECONDS:
         raise CaptureVerificationError("Artifact verification exceeded CPU-time budget")
+    _validate_json_structure(summary, "Summary JSON")
     if not isinstance(summary, dict):
         raise CaptureVerificationError("Summary root must be a JSON object")
 
@@ -158,6 +188,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
                 raise CaptureVerificationError(f"JSONL record {number} is invalid: {exc}") from exc
             if time.process_time() - verification_cpu_started > _MAX_VERIFICATION_CPU_SECONDS:
                 raise CaptureVerificationError("Artifact verification exceeded CPU-time budget")
+            _validate_json_structure(record, f"JSONL record {number}")
             if not isinstance(record, dict):
                 raise CaptureVerificationError(f"JSONL record {number} must be an object")
             connection_epoch = record.get("connection_epoch")
