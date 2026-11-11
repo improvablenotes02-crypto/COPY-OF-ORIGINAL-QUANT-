@@ -17,6 +17,7 @@ from scripts.verify_l2_capture_artifacts import (
     _assert_path_names_open_file,
     _assert_path_names_open_directory,
     _file_identity,
+    _initial_file_identity,
     verify_capture,
 )
 
@@ -933,6 +934,17 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 with self.assertRaisesRegex(CaptureVerificationError, "Summary directory descriptor could not be inspected"):
                     verify_capture(summary)
 
+
+    def test_initial_fstat_capability_failures_are_normalized(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"data")
+            with path.open("rb") as stream:
+                for error in (NotImplementedError("unsupported"), TypeError("unsupported")):
+                    with self.subTest(error=type(error).__name__):
+                        with patch("scripts.verify_l2_capture_artifacts.os.fstat", side_effect=error):
+                            with self.assertRaisesRegex(CaptureVerificationError, "metadata could not be inspected before reading"):
+                                _initial_file_identity(stream, "Artifact")
 
     def test_post_read_fstat_capability_failures_are_normalized(self):
         with tempfile.TemporaryDirectory() as td:
