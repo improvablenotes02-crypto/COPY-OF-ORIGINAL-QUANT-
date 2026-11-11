@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -689,6 +690,49 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             summary = self._write_fixture(root)
             self._rewrite_raw_record(root, summary, lambda record: record["raw"].update(b=[["1e1001", "1"]]))
             with self.assertRaisesRegex(CaptureVerificationError, "price must be finite and positive"):
+                verify_capture(summary)
+
+
+
+    def test_rejects_summary_symlink(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            original = self._write_fixture(root)
+            link = root / "summary-link.json"
+            try:
+                link.symlink_to(original)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+            with self.assertRaisesRegex(CaptureVerificationError, "Summary must be a regular, non-symlink file"):
+                verify_capture(link)
+
+    def test_rejects_raw_capture_symlink(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            outside = root / "outside.jsonl"
+            raw.rename(outside)
+            try:
+                raw.symlink_to(outside)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+            with self.assertRaisesRegex(CaptureVerificationError, "Raw capture must be a regular, non-symlink file"):
+                verify_capture(summary)
+
+    def test_rejects_oversized_integer_token_in_raw_jsonl(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            content = raw.read_text(encoding="utf-8").replace('"seq": 1', '"seq": ' + ('9' * 129), 1)
+            raw_bytes = content.encode("utf-8")
+            raw.write_bytes(raw_bytes)
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+            data["total_bytes_written"] = len(raw_bytes)
+            summary.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 is invalid: JSON integer exceeds verifier digit limit"):
                 verify_capture(summary)
 
 
