@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,8 @@ from unittest.mock import patch
 from scripts.verify_l2_capture_artifacts import (
     CaptureVerificationError,
     _open_regular_file_no_follow,
+    _managed_binary_stream,
+    _read_jsonl_line,
     _supports_no_follow_open,
     _assert_file_unchanged,
     _assert_path_names_open_file,
@@ -20,6 +23,30 @@ from scripts.verify_l2_capture_artifacts import (
     _initial_file_identity,
     verify_capture,
 )
+
+
+class TestManagedArtifactStreams(unittest.TestCase):
+    def test_close_failure_is_reported_after_successful_use(self):
+        stream = io.BytesIO(b"artifact")
+        with patch.object(stream, "close", side_effect=OSError("close failed")) as close_mock:
+            with self.assertRaisesRegex(CaptureVerificationError, "Summary stream could not be closed"):
+                with _managed_binary_stream(stream, "Summary") as managed:
+                    self.assertEqual(managed.read(), b"artifact")
+            close_mock.assert_called_once()
+
+    def test_close_failure_does_not_mask_primary_error(self):
+        stream = io.BytesIO(b"artifact")
+        with patch.object(stream, "close", side_effect=OSError("close failed")) as close_mock:
+            with self.assertRaisesRegex(RuntimeError, "primary verification failure"):
+                with _managed_binary_stream(stream, "Raw capture"):
+                    raise RuntimeError("primary verification failure")
+            close_mock.assert_called_once()
+
+    def test_bounded_jsonl_read_normalizes_io_failures(self):
+        stream = unittest.mock.Mock()
+        stream.readline.side_effect = OSError("read failed")
+        with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 could not be read"):
+            _read_jsonl_line(stream, 0)
 
 
 class TestL2CaptureArtifactVerifier(unittest.TestCase):
