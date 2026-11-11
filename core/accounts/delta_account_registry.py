@@ -1211,7 +1211,11 @@ class DeltaAccountRegistry:
     def list_accounts(self, tenant_id: str) -> list[DeltaAccountMetadata]:
         tenant = _require_text(tenant_id, "tenant_id")
         self._authorize_tenant(tenant)
-        return [self._metadata(record) for record in self._repository.list_for_tenant(tenant)]
+        records = self._repository.list_for_tenant(tenant)
+        # Repository reads may block while the request principal is revoked.
+        # Revalidate at the return boundary so stale metadata never escapes.
+        self._authorize_tenant(tenant)
+        return [self._metadata(record) for record in records]
 
     def delete_account(self, *, tenant_id: str, account_id: str) -> bool:
         tenant = _require_text(tenant_id, "tenant_id")

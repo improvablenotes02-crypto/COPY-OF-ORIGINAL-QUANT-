@@ -1,6 +1,0 @@
-# All text files use LF in the working tree on every platform. The manifest
-# hashes raw file bytes, so this must match the canonical Git blobs.
-* text=auto eol=lf
-
-# Acquisition archives are binary blobs and must remain byte-for-byte intact.
-research/**/data/raw/** binary
