@@ -737,5 +737,42 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
 
 
 
+    def test_rejects_non_portable_raw_capture_paths(self):
+        for raw_name in ("..\\\\outside.jsonl", "C:raw.jsonl", "nested/raw.jsonl", "nested\\\\raw.jsonl"):
+            with self.subTest(raw_name=raw_name), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                summary = self._write_fixture(root)
+                data = json.loads(summary.read_text(encoding="utf-8"))
+                data["raw_capture_file"] = raw_name
+                summary.write_text(json.dumps(data), encoding="utf-8")
+                with self.assertRaisesRegex(CaptureVerificationError, "portable basename"):
+                    verify_capture(summary)
+
+    def test_rejects_summary_with_multiple_hard_links(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            alias = root / "summary-alias.json"
+            try:
+                os.link(summary, alias)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"hard-link creation unavailable: {exc}")
+            with self.assertRaisesRegex(CaptureVerificationError, "multiple hard links"):
+                verify_capture(summary)
+
+    def test_rejects_raw_capture_with_multiple_hard_links(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            summary = self._write_fixture(root)
+            raw = root / "raw.jsonl"
+            alias = root / "raw-alias.jsonl"
+            try:
+                os.link(raw, alias)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"hard-link creation unavailable: {exc}")
+            with self.assertRaisesRegex(CaptureVerificationError, "multiple hard links"):
+                verify_capture(summary)
+
+
 if __name__ == "__main__":
     unittest.main()

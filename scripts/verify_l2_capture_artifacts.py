@@ -41,6 +41,8 @@ def _open_regular_file_no_follow(path: Path, label: str):
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode):
             raise CaptureVerificationError(f"{label} must be a regular, non-symlink file")
+        if getattr(opened, "st_nlink", 1) != 1:
+            raise CaptureVerificationError(f"{label} must not have multiple hard links")
         if not hasattr(os, "O_NOFOLLOW"):
             current = os.lstat(path)
             if stat.S_ISLNK(current.st_mode) or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
@@ -183,8 +185,14 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         raise CaptureVerificationError("Summary root must be a JSON object")
 
     raw_name = summary.get("raw_capture_file")
-    if not isinstance(raw_name, str) or not raw_name or Path(raw_name).name != raw_name:
-        raise CaptureVerificationError("raw_capture_file must be a basename within the summary directory")
+    if (
+        not isinstance(raw_name, str)
+        or not raw_name
+        or raw_name in {".", ".."}
+        or any(separator in raw_name for separator in ("/", chr(92), ":", chr(0)))
+        or Path(raw_name).name != raw_name
+    ):
+        raise CaptureVerificationError("raw_capture_file must be a portable basename within the summary directory")
     raw_path = summary_path.parent / raw_name
 
     expected_hash = summary.get("raw_capture_sha256")
