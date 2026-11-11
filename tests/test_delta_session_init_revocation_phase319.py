@@ -10,7 +10,7 @@ from core.accounts.delta_account_registry import (
 )
 
 
-class TestEncryptionProvider:
+class FakeEncryptionProvider:
     def decrypt(self, envelope, *, associated_data):
         return json.dumps({"api_key": "test-key", "api_secret": "test-secret"}).encode()
 
@@ -65,7 +65,7 @@ def test_session_not_published_if_tenant_revoked_during_exchange_init():
 
     registry = DeltaAccountRegistry(
         SingleAccountRepository(record),
-        TestEncryptionProvider(),
+        FakeEncryptionProvider(),
         exchange_factory=exchange_factory,
         tenant_authorizer=authorizer,
     )
