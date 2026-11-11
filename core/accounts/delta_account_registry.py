@@ -1324,28 +1324,42 @@ class DeltaAccountRegistry:
         def authorization_check() -> bool:
             try:
                 self._authorize_tenant(tenant)
-            except AccountScopeError:
+                current = self._repository.get(tenant, account)
+                if current is None or not approval_check():
+                    return False
+                # Any credential, scope, or metadata generation change invalidates
+                # clients created from the prior record. Shared repositories make
+                # this effective across processes; local SQLite remains single-node.
+                return (
+                    current.tenant_id == record.tenant_id
+                    and current.account_id == record.account_id
+                    and current.venue == record.venue
+                    and current.region == record.region
+                    and current.environment == record.environment
+                    and current.key_id == record.key_id
+                    and current.algorithm == record.algorithm
+                    and current.provider_account_id == record.provider_account_id
+                    and current.credential_generation == record.credential_generation
+                    and current.ciphertext == record.ciphertext
+                    and current.updated_at_ns == record.updated_at_ns
+                )
+            except Exception:
+                # Repository, principal, and approval failures all fail closed.
                 return False
-            current = self._repository.get(tenant, account)
-            if current is None or not approval_check():
-                return False
-            # Any credential, scope, or metadata generation change invalidates
-            # clients created from the prior record. Shared repositories make
-            # this effective across processes; local SQLite remains single-node.
-            return (
-                current.tenant_id == record.tenant_id
-                and current.account_id == record.account_id
-                and current.venue == record.venue
-                and current.region == record.region
-                and current.environment == record.environment
-                and current.key_id == record.key_id
-                and current.algorithm == record.algorithm
-                and current.provider_account_id == record.provider_account_id
-                and current.credential_generation == record.credential_generation
-                and current.ciphertext == record.ciphertext
-                and current.updated_at_ns == record.updated_at_ns
-            )
 
+        # The exchange factory is an external initialization boundary. The
+        # principal or credential may be revoked while its constructor blocks.
+        # Do not publish a session until authorization is checked again.
+        if not authorization_check():
+            close = getattr(exchange, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+            raise CredentialVaultError(
+                "Delta read-only session authorization changed during initialization"
+            )
         return DeltaReadOnlySession(exchange, record, authorization_check)
 
     def verify_and_bind_identity(
