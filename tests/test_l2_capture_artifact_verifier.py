@@ -15,6 +15,7 @@ from scripts.verify_l2_capture_artifacts import (
     _open_regular_file_no_follow,
     _managed_binary_stream,
     _read_jsonl_line,
+    _read_summary_bytes,
     _supports_no_follow_open,
     _assert_file_unchanged,
     _assert_path_names_open_file,
@@ -41,6 +42,22 @@ class TestManagedArtifactStreams(unittest.TestCase):
                 with _managed_binary_stream(stream, "Raw capture"):
                     raise RuntimeError("primary verification failure")
             close_mock.assert_called_once()
+
+    def test_close_base_exception_does_not_mask_primary_error(self):
+        stream = io.BytesIO(b"artifact")
+        with patch.object(stream, "close", side_effect=KeyboardInterrupt("close interrupted")) as close_mock:
+            with self.assertRaisesRegex(RuntimeError, "primary verification failure"):
+                with _managed_binary_stream(stream, "Raw capture"):
+                    raise RuntimeError("primary verification failure")
+            close_mock.assert_called_once()
+
+    def test_summary_read_capability_failures_are_normalized(self):
+        for failure in (OSError("read failed"), NotImplementedError("unsupported"), TypeError("invalid")):
+            with self.subTest(failure=type(failure).__name__):
+                stream = Mock()
+                stream.read.side_effect = failure
+                with self.assertRaisesRegex(CaptureVerificationError, "Summary JSON could not be read"):
+                    _read_summary_bytes(stream)
 
     def test_bounded_jsonl_read_normalizes_io_failures(self):
         stream = Mock()
