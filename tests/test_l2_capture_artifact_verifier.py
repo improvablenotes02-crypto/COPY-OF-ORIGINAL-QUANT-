@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from scripts.verify_l2_capture_artifacts import _assert_file_unchanged, (
+from scripts.verify_l2_capture_artifacts import (
     CaptureVerificationError,
     _open_regular_file_no_follow,
     _supports_no_follow_open,
