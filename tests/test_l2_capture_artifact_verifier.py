@@ -774,5 +774,22 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 verify_capture(summary)
 
 
+    def test_rejects_symlinked_summary_directory_when_directory_fds_are_supported(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
+            self.skipTest("directory-relative no-follow opens are unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            real_dir = root / "real"
+            real_dir.mkdir()
+            summary = self._write_fixture(real_dir)
+            alias = root / "alias"
+            try:
+                alias.symlink_to(real_dir, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"directory symlinks unavailable: {exc}")
+            with self.assertRaisesRegex(CaptureVerificationError, "non-symlink directory"):
+                verify_capture(alias / summary.name)
+
+
 if __name__ == "__main__":
     unittest.main()
