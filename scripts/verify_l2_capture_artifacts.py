@@ -30,6 +30,17 @@ class CaptureVerificationError(ValueError):
     """Raised when a capture artifact is missing, unsafe, or inconsistent."""
 
 
+def _close_descriptor(descriptor: int, label: str) -> None:
+    """Close a descriptor without masking an exception already being handled."""
+    active_exception = sys.exc_info()[0] is not None
+    try:
+        os.close(descriptor)
+    except Exception as exc:
+        if active_exception:
+            return
+        raise CaptureVerificationError(f"{label} descriptor could not be closed") from exc
+
+
 def _supports_no_follow_open() -> bool:
     """Whether this platform exposes O_NOFOLLOW for race-resistant opens."""
     return hasattr(os, "O_NOFOLLOW")
@@ -69,7 +80,7 @@ def _open_regular_file_no_follow(path: Path, label: str, directory_fd: int | Non
                 raise CaptureVerificationError(f"{label} changed during secure open")
         return os.fdopen(descriptor, "rb")
     except Exception:
-        os.close(descriptor)
+        _close_descriptor(descriptor, label)
         raise
 
 
@@ -550,7 +561,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
             _assert_path_names_open_directory(summary_path.parent, directory_fd)
             return result
         finally:
-            os.close(directory_fd)
+            _close_descriptor(directory_fd, "Summary directory")
     return _verify_capture_in_directory(summary_path, None)
 
 
