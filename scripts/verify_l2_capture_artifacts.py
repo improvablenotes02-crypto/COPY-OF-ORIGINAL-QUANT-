@@ -50,7 +50,7 @@ def _managed_binary_stream(stream: Any, label: str):
     except BaseException:
         try:
             stream.close()
-        except Exception:
+        except BaseException:
             pass
         raise
     else:
@@ -58,6 +58,14 @@ def _managed_binary_stream(stream: Any, label: str):
             stream.close()
         except Exception as exc:
             raise CaptureVerificationError(f"{label} stream could not be closed") from exc
+
+
+def _read_summary_bytes(stream: Any) -> bytes:
+    """Read the bounded summary payload and normalize stream read failures."""
+    try:
+        return stream.read(_MAX_SUMMARY_BYTES + 1)
+    except (OSError, NotImplementedError, TypeError) as exc:
+        raise CaptureVerificationError("Summary JSON could not be read") from exc
 
 
 def _read_jsonl_line(stream: Any, record_number: int) -> bytes:
@@ -301,7 +309,7 @@ def _verify_capture_in_directory(summary_path: Path, directory_fd: int | None) -
     try:
         with _managed_binary_stream(_open_regular_file_no_follow(summary_path, "Summary", directory_fd), "Summary") as summary_stream:
             initial_summary_identity = _initial_file_identity(summary_stream, "Summary")
-            summary_bytes = summary_stream.read(_MAX_SUMMARY_BYTES + 1)
+            summary_bytes = _read_summary_bytes(summary_stream)
             _assert_file_unchanged(summary_stream, initial_summary_identity, "Summary")
             _assert_path_names_open_file(summary_path, summary_stream, "Summary", directory_fd)
         if len(summary_bytes) > _MAX_SUMMARY_BYTES:
