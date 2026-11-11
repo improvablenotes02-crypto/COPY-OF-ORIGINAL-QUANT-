@@ -990,6 +990,26 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                         with self.assertRaisesRegex(CaptureVerificationError, "secure open is unavailable or unsafe"):
                             _open_regular_file_no_follow(path, "Artifact")
 
+    def test_secure_open_fstat_capability_failures_are_normalized(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"data")
+            for error in (OSError("unsupported"), NotImplementedError("unsupported"), TypeError("unsupported")):
+                with self.subTest(error=type(error).__name__):
+                    with patch("scripts.verify_l2_capture_artifacts.os.fstat", side_effect=error):
+                        with self.assertRaisesRegex(CaptureVerificationError, "metadata could not be inspected after secure open"):
+                            _open_regular_file_no_follow(path, "Artifact")
+
+    def test_secure_open_fstat_failure_is_not_masked_by_close_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"data")
+            with patch("scripts.verify_l2_capture_artifacts.os.fstat", side_effect=NotImplementedError("unsupported")):
+                with patch("scripts.verify_l2_capture_artifacts.os.close", side_effect=OSError("close failed")) as close_mock:
+                    with self.assertRaisesRegex(CaptureVerificationError, "metadata could not be inspected after secure open"):
+                        _open_regular_file_no_follow(path, "Artifact")
+                    close_mock.assert_called_once()
+
     def test_secure_open_fallback_fails_closed_when_lstat_is_unsupported(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "artifact.bin"
