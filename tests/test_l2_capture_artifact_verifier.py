@@ -13,6 +13,7 @@ from scripts.verify_l2_capture_artifacts import (
     CaptureVerificationError,
     _assert_file_unchanged,
     _assert_path_names_open_file,
+    _assert_path_names_open_directory,
     _file_identity,
     verify_capture,
 )
@@ -831,6 +832,24 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 path.write_bytes(b"replacement")
                 with self.assertRaisesRegex(CaptureVerificationError, "path no longer names the opened file"):
                     _assert_path_names_open_file(path, stream, "Artifact")
+
+
+    def test_detects_summary_directory_path_replacement_after_open(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
+            self.skipTest("directory descriptor support is unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            directory = root / "capture"
+            moved = root / "opened-capture"
+            directory.mkdir()
+            descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                directory.rename(moved)
+                directory.mkdir()
+                with self.assertRaisesRegex(CaptureVerificationError, "directory path no longer names the opened directory"):
+                    _assert_path_names_open_directory(directory, descriptor)
+            finally:
+                os.close(descriptor)
 
     def test_rejects_symlinked_summary_directory_when_directory_fds_are_supported(self):
         if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
