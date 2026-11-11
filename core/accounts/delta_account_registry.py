@@ -720,7 +720,7 @@ class DeltaReadOnlySession:
         if identity_after != identity_before:
             raise AccountScopeError("authenticated Delta identity changed during snapshot collection")
 
-        return {
+        snapshot = {
             "venue": "delta",
             "tenant_id": self._record.tenant_id,
             "internal_account_id": self._record.account_id,
@@ -749,6 +749,10 @@ class DeltaReadOnlySession:
                 "fills": fills.get("snapshot_as_of_ns"),
             },
         }
+        # Revocation can race with local snapshot assembly after the final venue
+        # identity check. Revalidate at the actual return boundary as well.
+        self._require_open()
+        return snapshot
 
 
 class DeltaAccountRegistry:
