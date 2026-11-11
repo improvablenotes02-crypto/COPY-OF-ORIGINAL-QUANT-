@@ -803,6 +803,21 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 with self.assertRaisesRegex(CaptureVerificationError, "Artifact changed while being verified"):
                     _assert_file_unchanged(stream, initial_identity, "Artifact")
 
+
+    def test_detects_rewrite_even_when_modification_time_is_restored(self):
+        if os.name == "nt":
+            self.skipTest("Windows st_ctime semantics do not represent metadata-change time")
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"original")
+            with path.open("rb") as stream:
+                initial_identity = _file_identity(os.fstat(stream.fileno()))
+                original_stat = path.stat()
+                path.write_bytes(b"modified")
+                os.utime(path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+                with self.assertRaisesRegex(CaptureVerificationError, "Artifact changed while being verified"):
+                    _assert_file_unchanged(stream, initial_identity, "Artifact")
+
     def test_rejects_symlinked_summary_directory_when_directory_fds_are_supported(self):
         if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
             self.skipTest("directory-relative no-follow opens are unavailable")
