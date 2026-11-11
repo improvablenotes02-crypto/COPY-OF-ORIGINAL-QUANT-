@@ -86,6 +86,14 @@ def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, i
     )
 
 
+def _initial_file_identity(stream: Any, label: str) -> tuple[int, int, int, int, int, int, int]:
+    """Read initial descriptor metadata or fail with a verifier-specific error."""
+    try:
+        return _initial_file_identity(stream, "Raw capture")
+    except (OSError, NotImplementedError, TypeError) as exc:
+        raise CaptureVerificationError(f"{label} metadata could not be inspected before reading") from exc
+
+
 def _assert_file_unchanged(stream: Any, initial_identity: tuple[int, int, int, int, int, int, int], label: str) -> None:
     """Fail closed if an opened artifact changed while its bytes were being read."""
     try:
@@ -247,7 +255,7 @@ def _verify_capture_in_directory(summary_path: Path, directory_fd: int | None) -
     verification_cpu_started = time.process_time()
     try:
         with _open_regular_file_no_follow(summary_path, "Summary", directory_fd) as summary_stream:
-            initial_summary_identity = _file_identity(os.fstat(summary_stream.fileno()))
+            initial_summary_identity = _initial_file_identity(summary_stream, "Summary")
             summary_bytes = summary_stream.read(_MAX_SUMMARY_BYTES + 1)
             _assert_file_unchanged(summary_stream, initial_summary_identity, "Summary")
             _assert_path_names_open_file(summary_path, summary_stream, "Summary", directory_fd)
