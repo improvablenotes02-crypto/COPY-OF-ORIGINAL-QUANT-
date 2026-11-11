@@ -9,7 +9,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from scripts.verify_l2_capture_artifacts import CaptureVerificationError, verify_capture
+from scripts.verify_l2_capture_artifacts import (
+    CaptureVerificationError,
+    _assert_file_unchanged,
+    _file_identity,
+    verify_capture,
+)
 
 
 class TestL2CaptureArtifactVerifier(unittest.TestCase):
@@ -772,6 +777,47 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 self.skipTest(f"hard-link creation unavailable: {exc}")
             with self.assertRaisesRegex(CaptureVerificationError, "multiple hard links"):
                 verify_capture(summary)
+
+
+
+    def test_detects_in_place_artifact_mutation_during_read(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"original")
+            with path.open("rb") as stream:
+                initial_identity = _file_identity(os.fstat(stream.fileno()))
+                with path.open("ab") as writer:
+                    writer.write(b"changed")
+                    writer.flush()
+                    os.fsync(writer.fileno())
+                with self.assertRaisesRegex(CaptureVerificationError, "Artifact changed while being verified"):
+                    _assert_file_unchanged(stream, initial_identity, "Artifact")
+
+    def test_detects_same_size_artifact_rewrite_during_read(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "artifact.bin"
+            path.write_bytes(b"original")
+            with path.open("rb") as stream:
+                initial_identity = _file_identity(os.fstat(stream.fileno()))
+                path.write_bytes(b"modified")
+                with self.assertRaisesRegex(CaptureVerificationError, "Artifact changed while being verified"):
+                    _assert_file_unchanged(stream, initial_identity, "Artifact")
+
+    def test_rejects_symlinked_summary_directory_when_directory_fds_are_supported(self):
+        if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
+            self.skipTest("directory-relative no-follow opens are unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            real_dir = root / "real"
+            real_dir.mkdir()
+            summary = self._write_fixture(real_dir)
+            alias = root / "alias"
+            try:
+                alias.symlink_to(real_dir, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"directory symlinks unavailable: {exc}")
+            with self.assertRaisesRegex(CaptureVerificationError, "non-symlink directory"):
+                verify_capture(alias / summary.name)
 
 
 if __name__ == "__main__":

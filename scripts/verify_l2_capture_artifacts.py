@@ -30,11 +30,18 @@ class CaptureVerificationError(ValueError):
     """Raised when a capture artifact is missing, unsafe, or inconsistent."""
 
 
-def _open_regular_file_no_follow(path: Path, label: str):
-    """Open a regular file by descriptor without following a final-component symlink."""
+def _open_regular_file_no_follow(path: Path, label: str, directory_fd: int | None = None):
+    """Open a regular file without following a final-component symlink.
+
+    When directory_fd is supplied, resolve the basename relative to the already
+    opened capture directory so later path replacement cannot redirect the read.
+    """
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        descriptor = os.open(path, flags)
+        if directory_fd is None:
+            descriptor = os.open(path, flags)
+        else:
+            descriptor = os.open(path.name, flags, dir_fd=directory_fd)
     except OSError as exc:
         raise CaptureVerificationError(f"{label} must be a regular, non-symlink file") from exc
     try:
@@ -44,13 +51,39 @@ def _open_regular_file_no_follow(path: Path, label: str):
         if getattr(opened, "st_nlink", 1) != 1:
             raise CaptureVerificationError(f"{label} must not have multiple hard links")
         if not hasattr(os, "O_NOFOLLOW"):
-            current = os.lstat(path)
+            if directory_fd is None:
+                current = os.lstat(path)
+            else:
+                current = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
             if stat.S_ISLNK(current.st_mode) or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
                 raise CaptureVerificationError(f"{label} changed during secure open")
         return os.fdopen(descriptor, "rb")
     except Exception:
         os.close(descriptor)
         raise
+
+
+def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
+    """Return descriptor metadata that detects replacement or in-place mutation."""
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        getattr(metadata, "st_nlink", 1),
+        metadata.st_size,
+        getattr(metadata, "st_mtime_ns", int(metadata.st_mtime * 1_000_000_000)),
+        getattr(metadata, "st_ctime_ns", int(metadata.st_ctime * 1_000_000_000)),
+    )
+
+
+def _assert_file_unchanged(stream: Any, initial_identity: tuple[int, int, int, int, int, int, int], label: str) -> None:
+    """Fail closed if an opened artifact changed while its bytes were being read."""
+    try:
+        current_identity = _file_identity(os.fstat(stream.fileno()))
+    except OSError as exc:
+        raise CaptureVerificationError(f"{label} metadata could not be rechecked after reading") from exc
+    if current_identity != initial_identity:
+        raise CaptureVerificationError(f"{label} changed while being verified")
 
 
 def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -163,12 +196,14 @@ def _validate_accepted_book_levels(raw: dict[str, Any], record_number: int) -> N
                     )
 
 
-def verify_capture(summary_path: Path) -> dict[str, Any]:
+def _verify_capture_in_directory(summary_path: Path, directory_fd: int | None) -> dict[str, Any]:
     summary_path = Path(summary_path)
     verification_cpu_started = time.process_time()
     try:
-        with _open_regular_file_no_follow(summary_path, "Summary") as summary_stream:
+        with _open_regular_file_no_follow(summary_path, "Summary", directory_fd) as summary_stream:
+            initial_summary_identity = _file_identity(os.fstat(summary_stream.fileno()))
             summary_bytes = summary_stream.read(_MAX_SUMMARY_BYTES + 1)
+            _assert_file_unchanged(summary_stream, initial_summary_identity, "Summary")
         if len(summary_bytes) > _MAX_SUMMARY_BYTES:
             raise CaptureVerificationError("Summary JSON exceeds verifier byte limit")
         summary = json.loads(summary_bytes.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_nonfinite_json_constant, parse_float=_parse_finite_json_float, parse_int=_parse_bounded_json_int)
@@ -193,7 +228,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         or Path(raw_name).name != raw_name
     ):
         raise CaptureVerificationError("raw_capture_file must be a portable basename within the summary directory")
-    raw_path = summary_path.parent / raw_name
+    raw_path = Path(raw_name)
 
     expected_hash = summary.get("raw_capture_sha256")
     if not isinstance(expected_hash, str) or not _HEX64.fullmatch(expected_hash):
@@ -209,7 +244,8 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
     accepted_sequences: dict[str, int] = {}
     highest_accepted_sequences: dict[str, int] = {}
     accepted_snapshots_by_epoch: dict[str, dict[str, int]] = {}
-    with _open_regular_file_no_follow(raw_path, "Raw capture") as stream:
+    with _open_regular_file_no_follow(raw_path, "Raw capture", directory_fd) as stream:
+        initial_raw_identity = _file_identity(os.fstat(stream.fileno()))
         number = 0
         while True:
             line = stream.readline(_MAX_JSONL_RECORD_BYTES + 1)
@@ -301,6 +337,7 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
                 rejected_persisted += 1
                 counts["rejected"] += 1
             frame_count += 1
+        _assert_file_unchanged(stream, initial_raw_identity, "Raw capture")
     actual_hash = digest.hexdigest()
     if actual_hash != expected_hash:
         raise CaptureVerificationError("Raw capture SHA-256 does not match summary")
@@ -430,6 +467,26 @@ def verify_capture(summary_path: Path) -> dict[str, Any]:
         "symbols_verified": len(symbol_counts),
         "per_symbol_frame_counts": {symbol: counts["frames"] for symbol, counts in sorted(symbol_counts.items())},
     }
+
+
+def verify_capture(summary_path: Path) -> dict[str, Any]:
+    """Verify both artifacts relative to one stable directory descriptor when supported."""
+    summary_path = Path(summary_path)
+    if os.open in getattr(os, "supports_dir_fd", set()) and hasattr(os, "O_DIRECTORY"):
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            directory_fd = os.open(summary_path.parent, directory_flags)
+        except OSError as exc:
+            raise CaptureVerificationError(
+                "Summary directory must be an accessible, non-symlink directory"
+            ) from exc
+        try:
+            if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
+                raise CaptureVerificationError("Summary parent is not a directory")
+            return _verify_capture_in_directory(summary_path, directory_fd)
+        finally:
+            os.close(directory_fd)
+    return _verify_capture_in_directory(summary_path, None)
 
 
 def main() -> int:
