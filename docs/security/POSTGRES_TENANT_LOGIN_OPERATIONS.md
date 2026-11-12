@@ -62,10 +62,12 @@ login DSN for the requested tenant. Keep the mapping in a trusted deployment
 configuration or secret manager; never derive role names or DSNs from request
 data. The authenticated tenant repository factory requires `sslmode=verify-full`
 by default and rejects missing, weaker, or invalid TLS modes before opening a
-socket. This mode verifies both the certificate chain and the server hostname.
-Do not disable this check in production. The lower-level adapter override exists
-only for controlled local integration fixtures and must not be exposed through
-deployment configuration. Keep bounded connection timeouts.
+socket. The central PostgreSQL session-revocation store enforces the same
+`sslmode=verify-full` requirement. This mode verifies both the certificate
+chain and the server hostname. Do not disable these checks in production. The
+low-level adapter overrides exist only for controlled local integration
+fixtures and must not be exposed through deployment configuration. Keep
+bounded connection timeouts.
 
 The connection adapter verifies that
 `qe_authenticated_tenant_id()` equals the requested tenant before yielding a
