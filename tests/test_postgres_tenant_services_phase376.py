@@ -88,6 +88,15 @@ def test_factory_only_builds_authenticated_postgres_repositories():
     assert services.production_ready is False
     assert delta._repository._tenant_connection._require_tls is True
     assert governance._repository._tenant_connection._require_tls is True
+    # The production factory exposes no TLS-disable switch; local fixtures
+    # must opt out only at the lower-level adapter boundary.
+    with pytest.raises(TypeError):
+        AuthenticatedTenantRepositoryFactory(
+            principal_source=ContextVarPrincipalSource(),
+            session_validator=SessionValidator(),
+            tenant_dsn_resolver=lambda tenant: "unused",
+            require_tls=False,
+        )
 
 
 def test_governance_facade_checks_membership_before_every_operation():
