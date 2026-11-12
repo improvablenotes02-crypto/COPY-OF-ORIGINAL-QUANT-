@@ -4,6 +4,7 @@ from pathlib import Path
 import psycopg
 import pytest
 from psycopg.conninfo import make_conninfo
+from psycopg.rows import dict_row
 
 ADMIN = os.getenv("QUANTENGINE_TEST_POSTGRES_ADMIN_DSN")
 pytestmark = pytest.mark.skipif(not ADMIN, reason="PostgreSQL admin DSN absent")
@@ -173,7 +174,7 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
         approval_provider = OwnerGovernanceDeltaCredentialApprovalProvider(
             wrapped_governance_repo
         )
-        bind_conn = psycopg.connect(_dsn(ROLE_A, PASSWORD_A))
+        bind_conn = psycopg.connect(_dsn(ROLE_A, PASSWORD_A), row_factory=dict_row)
         try:
             with bind_conn.transaction():
                 assert approval_provider.is_approved_for_subject_in_transaction(
