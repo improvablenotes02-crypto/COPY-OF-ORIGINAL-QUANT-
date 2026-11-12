@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from core.exchanges.delta import delta_environments
 
@@ -135,7 +135,14 @@ class DeltaAccountRepository(Protocol):
         ...
 
     def bind_provider_identity(
-        self, tenant_id: str, account_id: str, provider_account_id: str
+        self,
+        tenant_id: str,
+        account_id: str,
+        provider_account_id: str,
+        *,
+        expected_generation: int,
+        expected_updated_at_ns: int,
+        authorization_check: Callable[[], bool],
     ) -> None:
         ...
 
@@ -325,34 +332,67 @@ class SQLiteDeltaAccountRepository:
         return cursor.rowcount == 1
 
     def bind_provider_identity(
-        self, tenant_id: str, account_id: str, provider_account_id: str
+        self,
+        tenant_id: str,
+        account_id: str,
+        provider_account_id: str,
+        *,
+        expected_generation: int,
+        expected_updated_at_ns: int,
+        authorization_check: Callable[[], bool],
     ) -> None:
-        """Atomically bind an account to one authenticated Delta user ID."""
+        """Bind only after an in-lock authorization and account-generation check."""
+        if not isinstance(provider_account_id, str) or not provider_account_id.strip():
+            raise ValueError("provider_account_id must be non-empty")
+        if not callable(authorization_check):
+            raise ValueError("authorization_check must be callable")
         with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT provider_account_id, credential_generation, updated_at_ns
+                FROM delta_accounts WHERE tenant_id = ? AND account_id = ?
+                """,
+                (tenant_id, account_id),
+            ).fetchone()
+            if row is None:
+                raise AccountNotFoundError("Delta account not found for tenant")
+            if (
+                row["credential_generation"] != expected_generation
+                or row["updated_at_ns"] != expected_updated_at_ns
+            ):
+                raise CredentialVaultError(
+                    "Delta account changed before provider identity binding"
+                )
+            if (
+                row["provider_account_id"] is not None
+                and row["provider_account_id"] != provider_account_id
+            ):
+                raise AccountScopeError(
+                    "registered Delta account is already bound to a different provider identity"
+                )
+            # Execute the final authorization decision under the repository lock,
+            # immediately before the conditional persistence statement.
+            if authorization_check() is not True:
+                raise AccountScopeError(
+                    "Delta identity binding authorization is no longer valid"
+                )
             cursor = self._connection.execute(
                 """
                 UPDATE delta_accounts
                 SET provider_account_id = ?, updated_at_ns = MAX(?, updated_at_ns + 1)
                 WHERE tenant_id = ? AND account_id = ?
+                  AND credential_generation = ? AND updated_at_ns = ?
                   AND (provider_account_id IS NULL OR provider_account_id = ?)
                 """,
                 (
-                    provider_account_id, time.time_ns(), tenant_id,
-                    account_id, provider_account_id,
+                    provider_account_id, time.time_ns(), tenant_id, account_id,
+                    expected_generation, expected_updated_at_ns, provider_account_id,
                 ),
             )
-            if cursor.rowcount == 1:
-                return
-            row = self._connection.execute(
-                "SELECT provider_account_id FROM delta_accounts "
-                "WHERE tenant_id = ? AND account_id = ?",
-                (tenant_id, account_id),
-            ).fetchone()
-        if row is None:
-            raise AccountNotFoundError("Delta account not found for tenant")
-        raise AccountScopeError(
-            "registered Delta account is already bound to a different provider identity"
-        )
+            if cursor.rowcount != 1:
+                raise CredentialVaultError(
+                    "Delta account changed during provider identity binding"
+                )
 
     def replace_credentials(
         self, record: EncryptedDeltaAccount, *, expected_generation: int,
@@ -1385,8 +1425,25 @@ class DeltaAccountRegistry:
                 raise AccountScopeError(
                     "authenticated Delta provider identity is missing or invalid"
                 )
+            bound_record = session._record
+
+            def bind_authorization_check() -> bool:
+                # The repository invokes this under its write lock/transaction,
+                # immediately before provider identity persistence.
+                self._authorize_tenant(tenant)
+                if not approval_check():
+                    raise AccountScopeError(
+                        "Delta credential approval changed before identity binding"
+                    )
+                return True
+
             self._repository.bind_provider_identity(
-                tenant, account, provider_id
+                tenant,
+                account,
+                provider_id,
+                expected_generation=bound_record.credential_generation,
+                expected_updated_at_ns=bound_record.updated_at_ns,
+                authorization_check=bind_authorization_check,
             )
             bound = self._repository.get(tenant, account)
             if bound is None:
