@@ -108,7 +108,7 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
         from core.accounts.postgres_delta_account_repository import AuthenticatedPostgreSQLDeltaAccountRepository
         from core.accounts.postgres_owner_governance_repository import AuthenticatedPostgreSQLOwnerGovernanceRepository
         tenant_a_resolver = lambda tenant: _dsn(ROLE_A, PASSWORD_A)
-        delta_repo = AuthenticatedPostgreSQLDeltaAccountRepository(tenant_a_resolver)
+        delta_repo = AuthenticatedPostgreSQLDeltaAccountRepository(tenant_a_resolver, require_tls=False)
         assert delta_repo.get("tenant-a", "acct-a").account_id == "acct-a"
         assert delta_repo.get("tenant-a", "acct-b") is None
 
@@ -137,7 +137,7 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
         assert delta_repo.get("tenant-a", "acct-a").provider_account_id == "delta-user-a"
         with pytest.raises(Exception):
             delta_repo.get("tenant-b", "acct-b")
-        governance_repo = AuthenticatedPostgreSQLOwnerGovernanceRepository(tenant_a_resolver)
+        governance_repo = AuthenticatedPostgreSQLOwnerGovernanceRepository(tenant_a_resolver, require_tls=False)
         assert governance_repo.membership("tenant-a", "member-a").subject_id == "member-a"
 
         # Exercise the complete owner/member credential lifecycle through the
