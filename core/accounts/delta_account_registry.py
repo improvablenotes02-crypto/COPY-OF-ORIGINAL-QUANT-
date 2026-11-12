@@ -611,19 +611,21 @@ def _session_locked(method):
 class DeltaReadOnlySession:
     """Narrow account-bound facade; deliberately exposes no order-write methods."""
 
-    __slots__ = ("_exchange", "_record", "_closed", "_authorization_check", "_lock")
+    __slots__ = ("_exchange", "_record", "_closed", "_authorization_check", "_approval_check", "_lock")
 
     def __init__(
         self,
         exchange: object,
         record: EncryptedDeltaAccount,
         authorization_check=None,
+        approval_check=None,
     ):
         self._exchange = exchange
         self._record = record
         self._closed = False
         self._lock = threading.RLock()
         self._authorization_check = authorization_check
+        self._approval_check = approval_check
 
     @property
     def closed(self) -> bool:
@@ -1414,7 +1416,7 @@ class DeltaAccountRegistry:
             raise CredentialVaultError(
                 "Delta read-only session authorization changed during initialization"
             )
-        return DeltaReadOnlySession(exchange, record, authorization_check)
+        return DeltaReadOnlySession(exchange, record, authorization_check, approval_check)
 
     def verify_and_bind_identity(
         self, *, tenant_id: str, account_id: str
@@ -1460,10 +1462,25 @@ class DeltaAccountRegistry:
             bound = self._repository.get(tenant, account)
             if bound is None:
                 raise AccountNotFoundError("Delta account not found for tenant")
-            # The authorization provider may be external to the account database.
-            # Revalidate after the repository commit so a revocation racing with
-            # commit cannot cause account metadata to be returned to a stale caller.
-            bind_authorization_check()
+            # The account snapshot intentionally changes during binding, so the
+            # session's full snapshot predicate is no longer appropriate here.
+            # Revalidate the live tenant principal and owner approval separately
+            # before exposing metadata from the committed identity binding.
+            self._authorize_tenant(tenant)
+            approval_check = session._approval_check
+            if not callable(approval_check) or approval_check() is not True:
+                raise AccountScopeError(
+                    "Delta identity binding approval changed before metadata return"
+                )
+            if (
+                bound.tenant_id != tenant
+                or bound.account_id != account
+                or bound.provider_account_id != provider_id
+                or bound.credential_generation != bound_record.credential_generation
+            ):
+                raise CredentialVaultError(
+                    "Delta account changed before identity metadata could be returned"
+                )
             return self._metadata(bound)
         finally:
             session.close()
