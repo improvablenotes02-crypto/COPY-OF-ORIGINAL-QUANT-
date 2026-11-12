@@ -1439,12 +1439,13 @@ class DeltaAccountRegistry:
             bound_record = session._record
 
             def bind_authorization_check() -> bool:
-                # The repository invokes this under its write lock/transaction,
-                # immediately before provider identity persistence.
-                self._authorize_tenant(tenant)
-                if not approval_check():
+                # Reuse the session's complete live authorization predicate while
+                # the repository holds its write lock/transaction. It rechecks the
+                # tenant, subject, credential approval, and unchanged account snapshot.
+                authorization_check = session._authorization_check
+                if not callable(authorization_check) or authorization_check() is not True:
                     raise AccountScopeError(
-                        "Delta credential approval changed before identity binding"
+                        "Delta identity binding authorization is no longer valid"
                     )
                 return True
 
