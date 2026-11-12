@@ -166,7 +166,13 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
         # the identity-binding transaction ends, preventing revocation from
         # overtaking an in-flight bind.
         from core.accounts.delta_credential_approval import OwnerGovernanceDeltaCredentialApprovalProvider
-        approval_provider = OwnerGovernanceDeltaCredentialApprovalProvider(governance_repo)
+        from core.accounts.postgres_tenant_services import TenantGovernanceRepository
+        wrapped_governance_repo = TenantGovernanceRepository(
+            governance_repo, tenant_authorizer
+        )
+        approval_provider = OwnerGovernanceDeltaCredentialApprovalProvider(
+            wrapped_governance_repo
+        )
         bind_conn = psycopg.connect(_dsn(ROLE_A, PASSWORD_A))
         try:
             with bind_conn.transaction():
