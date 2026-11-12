@@ -119,6 +119,19 @@ class PostgreSQLOwnerGovernanceRepository:
         return [CredentialApproval(row["tenant_id"],row["credential_id"],row["subject_id"],
             row["account_id"],row["fingerprint"],row["status"],row["created_at_ns"],row["updated_at_ns"])
             for row in rows]
+    def credentials_for_account_fingerprint_in_transaction(
+        self, tenant, account, fingerprint, *, connection
+    ):
+        """Read and share-lock exact approval rows on the caller's transaction."""
+        rows = connection.execute(
+            "SELECT * FROM public.qe_credential_approvals "
+            "WHERE tenant_id=%s AND account_id=%s AND fingerprint=%s "
+            "ORDER BY credential_id FOR SHARE",
+            (tenant, account, fingerprint),
+        ).fetchall()
+        return [CredentialApproval(row["tenant_id"],row["credential_id"],row["subject_id"],
+            row["account_id"],row["fingerprint"],row["status"],row["created_at_ns"],row["updated_at_ns"])
+            for row in rows]
     def audit_events(self,tenant):
         with self._connection(tenant) as c: rows=c.execute("SELECT * FROM public.qe_governance_audit WHERE tenant_id=%s ORDER BY occurred_at_ns,event_id",(tenant,)).fetchall()
         return [dict(row) for row in rows]
