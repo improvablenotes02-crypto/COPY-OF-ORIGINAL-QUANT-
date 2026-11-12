@@ -162,6 +162,30 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
             "tenant-a", "credential-created"
         ).status == "APPROVED"
 
+        # A transaction-aware approval read must hold a row-share lock until
+        # the identity-binding transaction ends, preventing revocation from
+        # overtaking an in-flight bind.
+        from core.accounts.delta_credential_approval import OwnerGovernanceDeltaCredentialApprovalProvider
+        approval_provider = OwnerGovernanceDeltaCredentialApprovalProvider(governance_repo)
+        bind_conn = psycopg.connect(_dsn(ROLE_A, PASSWORD_A))
+        try:
+            with bind_conn.transaction():
+                assert approval_provider.is_approved_for_subject_in_transaction(
+                    tenant_id="tenant-a", account_id="delta-account-created",
+                    fingerprint="d" * 64, subject_id="member-created",
+                    connection=bind_conn,
+                ) is True
+                with psycopg.connect(_dsn(ROLE_A, PASSWORD_A)) as revoke_conn:
+                    with pytest.raises(psycopg.errors.LockNotAvailable):
+                        with revoke_conn.transaction():
+                            revoke_conn.execute("SET LOCAL lock_timeout = '100ms'")
+                            revoke_conn.execute(
+                                "UPDATE public.qe_credential_approvals SET status='REVOKED' "
+                                "WHERE tenant_id='tenant-a' AND credential_id='credential-created'"
+                            )
+        finally:
+            bind_conn.close()
+
         # Repeated timestamps must still produce a strictly ordered,
         # verifiable append-only audit chain.
         governance_repo.invite(
