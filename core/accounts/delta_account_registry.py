@@ -1460,6 +1460,10 @@ class DeltaAccountRegistry:
             bound = self._repository.get(tenant, account)
             if bound is None:
                 raise AccountNotFoundError("Delta account not found for tenant")
+            # The authorization provider may be external to the account database.
+            # Revalidate after the repository commit so a revocation racing with
+            # commit cannot cause account metadata to be returned to a stale caller.
+            bind_authorization_check()
             return self._metadata(bound)
         finally:
             session.close()
