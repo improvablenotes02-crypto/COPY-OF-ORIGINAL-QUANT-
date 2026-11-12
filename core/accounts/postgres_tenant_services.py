@@ -71,9 +71,25 @@ class TenantDeltaAccountRepository:
         self._require_tenant(tenant_id)
         return self._repository.delete(tenant_id, account_id)
 
-    def bind_provider_identity(self, tenant_id, account_id, provider_account_id):
+    def bind_provider_identity(
+        self,
+        tenant_id,
+        account_id,
+        provider_account_id,
+        *,
+        expected_generation,
+        expected_updated_at_ns,
+        authorization_check,
+    ):
         self._require_tenant(tenant_id)
-        return self._repository.bind_provider_identity(tenant_id, account_id, provider_account_id)
+        return self._repository.bind_provider_identity(
+            tenant_id,
+            account_id,
+            provider_account_id,
+            expected_generation=expected_generation,
+            expected_updated_at_ns=expected_updated_at_ns,
+            authorization_check=authorization_check,
+        )
 
     def replace_credentials(self, record, *, expected_generation, expected_updated_at_ns):
         self._require_tenant(record.tenant_id)
