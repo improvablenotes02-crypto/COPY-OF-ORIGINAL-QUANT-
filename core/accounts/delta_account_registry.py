@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from core.exchanges.delta import delta_environments
 
@@ -135,7 +135,14 @@ class DeltaAccountRepository(Protocol):
         ...
 
     def bind_provider_identity(
-        self, tenant_id: str, account_id: str, provider_account_id: str
+        self,
+        tenant_id: str,
+        account_id: str,
+        provider_account_id: str,
+        *,
+        expected_generation: int,
+        expected_updated_at_ns: int,
+        authorization_check: Callable[[], bool],
     ) -> None:
         ...
 
@@ -325,34 +332,78 @@ class SQLiteDeltaAccountRepository:
         return cursor.rowcount == 1
 
     def bind_provider_identity(
-        self, tenant_id: str, account_id: str, provider_account_id: str
+        self,
+        tenant_id: str,
+        account_id: str,
+        provider_account_id: str,
+        *,
+        expected_generation: int,
+        expected_updated_at_ns: int,
+        authorization_check: Callable[[], bool],
     ) -> None:
-        """Atomically bind an account to one authenticated Delta user ID."""
+        """Bind only after an in-lock authorization and account-generation check."""
+        if not isinstance(provider_account_id, str) or not provider_account_id.strip():
+            raise ValueError("provider_account_id must be non-empty")
+        if not callable(authorization_check):
+            raise ValueError("authorization_check must be callable")
         with self._lock:
-            cursor = self._connection.execute(
-                """
-                UPDATE delta_accounts
-                SET provider_account_id = ?, updated_at_ns = MAX(?, updated_at_ns + 1)
-                WHERE tenant_id = ? AND account_id = ?
-                  AND (provider_account_id IS NULL OR provider_account_id = ?)
-                """,
-                (
-                    provider_account_id, time.time_ns(), tenant_id,
-                    account_id, provider_account_id,
-                ),
-            )
-            if cursor.rowcount == 1:
-                return
-            row = self._connection.execute(
-                "SELECT provider_account_id FROM delta_accounts "
-                "WHERE tenant_id = ? AND account_id = ?",
-                (tenant_id, account_id),
-            ).fetchone()
-        if row is None:
-            raise AccountNotFoundError("Delta account not found for tenant")
-        raise AccountScopeError(
-            "registered Delta account is already bound to a different provider identity"
-        )
+            # isolation_level=None means statements autocommit by default. Acquire
+            # SQLite's cross-connection writer reservation before reading or
+            # authorizing so another repository/process cannot mutate this row
+            # between the final gate and the identity update.
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    """
+                    SELECT provider_account_id, credential_generation, updated_at_ns
+                    FROM delta_accounts WHERE tenant_id = ? AND account_id = ?
+                    """,
+                    (tenant_id, account_id),
+                ).fetchone()
+                if row is None:
+                    raise AccountNotFoundError("Delta account not found for tenant")
+                if (
+                    row["credential_generation"] != expected_generation
+                    or row["updated_at_ns"] != expected_updated_at_ns
+                ):
+                    raise CredentialVaultError(
+                        "Delta account changed before provider identity binding"
+                    )
+                if (
+                    row["provider_account_id"] is not None
+                    and row["provider_account_id"] != provider_account_id
+                ):
+                    raise AccountScopeError(
+                        "registered Delta account is already bound to a different provider identity"
+                    )
+                # Execute the final authorization decision while the SQLite write
+                # transaction is held, immediately before conditional persistence.
+                if authorization_check() is not True:
+                    raise AccountScopeError(
+                        "Delta identity binding authorization is no longer valid"
+                    )
+                cursor = self._connection.execute(
+                    """
+                    UPDATE delta_accounts
+                    SET provider_account_id = ?, updated_at_ns = MAX(?, updated_at_ns + 1)
+                    WHERE tenant_id = ? AND account_id = ?
+                      AND credential_generation = ? AND updated_at_ns = ?
+                      AND (provider_account_id IS NULL OR provider_account_id = ?)
+                    """,
+                    (
+                        provider_account_id, time.time_ns(), tenant_id, account_id,
+                        expected_generation, expected_updated_at_ns, provider_account_id,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise CredentialVaultError(
+                        "Delta account changed during provider identity binding"
+                    )
+                self._connection.execute("COMMIT")
+            except Exception:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
 
     def replace_credentials(
         self, record: EncryptedDeltaAccount, *, expected_generation: int,
@@ -549,25 +600,37 @@ def _credential_rotation_event_hash(
     return hashlib.sha256(canonical).hexdigest()
 
 
+def _session_locked(method):
+    """Serialize session operations with close so the exchange client stays alive."""
+    def guarded(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return guarded
+
+
 class DeltaReadOnlySession:
     """Narrow account-bound facade; deliberately exposes no order-write methods."""
 
-    __slots__ = ("_exchange", "_record", "_closed", "_authorization_check")
+    __slots__ = ("_exchange", "_record", "_closed", "_authorization_check", "_approval_check", "_lock")
 
     def __init__(
         self,
         exchange: object,
         record: EncryptedDeltaAccount,
         authorization_check=None,
+        approval_check=None,
     ):
         self._exchange = exchange
         self._record = record
         self._closed = False
+        self._lock = threading.RLock()
         self._authorization_check = authorization_check
+        self._approval_check = approval_check
 
     @property
     def closed(self) -> bool:
-        return self._closed
+        with self._lock:
+            return self._closed
 
     def _require_open(self) -> None:
         if self._closed or self._exchange is None:
@@ -584,6 +647,7 @@ class DeltaReadOnlySession:
                     "Delta read-only session is no longer authorized"
                 )
 
+    @_session_locked
     def close(self) -> None:
         """Close this local client session; venue-side API-key revocation is separate."""
         if self._closed:
@@ -599,6 +663,7 @@ class DeltaReadOnlySession:
                 # A failed cleanup must never reopen this session or leak client details.
                 pass
 
+    @_session_locked
     def __enter__(self):
         self._require_open()
         return self
@@ -627,9 +692,13 @@ class DeltaReadOnlySession:
     def provider_account_id(self) -> str | None:
         return self._record.provider_account_id
 
+    @_session_locked
     def verify_provider_identity(self) -> str:
         self._require_open()
         observed = self._exchange._get_authenticated_account_id()
+        # The venue call may block while the request principal, approval, or
+        # account generation changes. Revalidate before trusting its result.
+        self._require_open()
         expected = self._record.provider_account_id
         if expected is not None and observed != expected:
             raise AccountScopeError("authenticated Delta identity does not match the registered account")
@@ -643,26 +712,37 @@ class DeltaReadOnlySession:
             raise AccountScopeError("Delta snapshot identity does not match the registered account")
         return snapshot
 
+    @_session_locked
     def get_balance(self):
         self._require_open()
-        return self._exchange.get_balance()
+        result = self._exchange.get_balance()
+        # A venue request may block while the request subject or approval changes.
+        self._require_open()
+        return result
 
+    @_session_locked
     def get_positions(self):
         self._require_open()
-        return self._exchange.get_positions()
+        result = self._exchange.get_positions()
+        # Never return account data observed by a session revoked mid-request.
+        self._require_open()
+        return result
 
+    @_session_locked
     def get_order_history_snapshot(self, *, max_pages: int = 100):
         self._require_open()
         return self._verify_snapshot_scope(
             self._exchange.get_order_history_snapshot(max_pages=max_pages)
         )
 
+    @_session_locked
     def get_fill_history_snapshot(self, *, max_pages: int = 100):
         self._require_open()
         return self._verify_snapshot_scope(
             self._exchange.get_fill_history_snapshot(max_pages=max_pages)
         )
 
+    @_session_locked
     def get_account_snapshot(self, *, max_pages: int = 100) -> dict:
         """Collect complete read-only account views under one verified identity.
 
@@ -711,7 +791,7 @@ class DeltaReadOnlySession:
         if identity_after != identity_before:
             raise AccountScopeError("authenticated Delta identity changed during snapshot collection")
 
-        return {
+        snapshot = {
             "venue": "delta",
             "tenant_id": self._record.tenant_id,
             "internal_account_id": self._record.account_id,
@@ -740,6 +820,10 @@ class DeltaReadOnlySession:
                 "fills": fills.get("snapshot_as_of_ns"),
             },
         }
+        # Revocation can race with local snapshot assembly after the final venue
+        # identity check. Revalidate at the actual return boundary as well.
+        self._require_open()
+        return snapshot
 
 
 class DeltaAccountRegistry:
@@ -1180,7 +1264,11 @@ class DeltaAccountRegistry:
     def list_accounts(self, tenant_id: str) -> list[DeltaAccountMetadata]:
         tenant = _require_text(tenant_id, "tenant_id")
         self._authorize_tenant(tenant)
-        return [self._metadata(record) for record in self._repository.list_for_tenant(tenant)]
+        records = self._repository.list_for_tenant(tenant)
+        # Repository reads may block while the request principal is revoked.
+        # Revalidate at the return boundary so stale metadata never escapes.
+        self._authorize_tenant(tenant)
+        return [self._metadata(record) for record in records]
 
     def delete_account(self, *, tenant_id: str, account_id: str) -> bool:
         tenant = _require_text(tenant_id, "tenant_id")
@@ -1260,7 +1348,9 @@ class DeltaAccountRegistry:
                     tenant_id=tenant, account_id=account, fingerprint=fingerprint
                 ) is True
             except Exception:
-                return False
+                raise CredentialVaultError(
+                    "Delta read-only session authorization could not be verified"
+                ) from None
         if not approval_check():
             raise CredentialVaultError("Delta credentials are not owner-approved")
 
@@ -1289,29 +1379,44 @@ class DeltaAccountRegistry:
         def authorization_check() -> bool:
             try:
                 self._authorize_tenant(tenant)
+                current = self._repository.get(tenant, account)
+                if current is None or not approval_check():
+                    return False
+                # Any credential, scope, or metadata generation change invalidates
+                # clients created from the prior record. Shared repositories make
+                # this effective across processes; local SQLite remains single-node.
+                return (
+                    current.tenant_id == record.tenant_id
+                    and current.account_id == record.account_id
+                    and current.venue == record.venue
+                    and current.region == record.region
+                    and current.environment == record.environment
+                    and current.key_id == record.key_id
+                    and current.algorithm == record.algorithm
+                    and current.provider_account_id == record.provider_account_id
+                    and current.credential_generation == record.credential_generation
+                    and current.ciphertext == record.ciphertext
+                    and current.updated_at_ns == record.updated_at_ns
+                )
             except AccountScopeError:
+                # Explicit authorization denial is distinct from an unavailable
+                # repository/approval verifier; both fail closed.
                 return False
-            current = self._repository.get(tenant, account)
-            if current is None or not approval_check():
-                return False
-            # Any credential, scope, or metadata generation change invalidates
-            # clients created from the prior record. Shared repositories make
-            # this effective across processes; local SQLite remains single-node.
-            return (
-                current.tenant_id == record.tenant_id
-                and current.account_id == record.account_id
-                and current.venue == record.venue
-                and current.region == record.region
-                and current.environment == record.environment
-                and current.key_id == record.key_id
-                and current.algorithm == record.algorithm
-                and current.provider_account_id == record.provider_account_id
-                and current.credential_generation == record.credential_generation
-                and current.ciphertext == record.ciphertext
-                and current.updated_at_ns == record.updated_at_ns
-            )
 
-        return DeltaReadOnlySession(exchange, record, authorization_check)
+        # The exchange factory is an external initialization boundary. The
+        # principal or credential may be revoked while its constructor blocks.
+        # Do not publish a session until authorization is checked again.
+        if not authorization_check():
+            close = getattr(exchange, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+            raise CredentialVaultError(
+                "Delta read-only session authorization changed during initialization"
+            )
+        return DeltaReadOnlySession(exchange, record, authorization_check, approval_check)
 
     def verify_and_bind_identity(
         self, *, tenant_id: str, account_id: str
@@ -1333,12 +1438,49 @@ class DeltaAccountRegistry:
                 raise AccountScopeError(
                     "authenticated Delta provider identity is missing or invalid"
                 )
+            bound_record = session._record
+
+            def bind_authorization_check() -> bool:
+                # Reuse the session's complete live authorization predicate while
+                # the repository holds its write lock/transaction. It rechecks the
+                # tenant, subject, credential approval, and unchanged account snapshot.
+                authorization_check = session._authorization_check
+                if not callable(authorization_check) or authorization_check() is not True:
+                    raise AccountScopeError(
+                        "Delta identity binding authorization is no longer valid"
+                    )
+                return True
+
             self._repository.bind_provider_identity(
-                tenant, account, provider_id
+                tenant,
+                account,
+                provider_id,
+                expected_generation=bound_record.credential_generation,
+                expected_updated_at_ns=bound_record.updated_at_ns,
+                authorization_check=bind_authorization_check,
             )
             bound = self._repository.get(tenant, account)
             if bound is None:
                 raise AccountNotFoundError("Delta account not found for tenant")
+            # The account snapshot intentionally changes during binding, so the
+            # session's full snapshot predicate is no longer appropriate here.
+            # Revalidate the live tenant principal and owner approval separately
+            # before exposing metadata from the committed identity binding.
+            self._authorize_tenant(tenant)
+            approval_check = session._approval_check
+            if not callable(approval_check) or approval_check() is not True:
+                raise AccountScopeError(
+                    "Delta identity binding approval changed before metadata return"
+                )
+            if (
+                bound.tenant_id != tenant
+                or bound.account_id != account
+                or bound.provider_account_id != provider_id
+                or bound.credential_generation != bound_record.credential_generation
+            ):
+                raise CredentialVaultError(
+                    "Delta account changed before identity metadata could be returned"
+                )
             return self._metadata(bound)
         finally:
             session.close()
