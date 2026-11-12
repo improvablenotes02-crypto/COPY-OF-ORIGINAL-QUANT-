@@ -94,3 +94,77 @@ def test_revocation_after_venue_verification_prevents_identity_persistence():
     assert saved is not None
     assert saved.provider_account_id is None
     assert saved.updated_at_ns == 10
+
+
+def test_sqlite_write_reservation_serializes_other_repository_connections(tmp_path):
+    database = tmp_path / "shared-delta-accounts.sqlite3"
+    writer = SQLiteDeltaAccountRepository(database)
+    competing_writer = SQLiteDeltaAccountRepository(database)
+    writer.save(
+        EncryptedDeltaAccount(
+            account_id="cross-connection-account",
+            tenant_id="tenant-owner",
+            venue="delta",
+            region="INDIA",
+            environment="SANDBOX",
+            label="Cross connection",
+            provider_account_id=None,
+            key_id="test-key-id",
+            algorithm="TEST-ONLY",
+            ciphertext=b"test-only-ciphertext",
+            created_at_ns=1,
+            updated_at_ns=10,
+            credential_generation=1,
+        )
+    )
+    authorization_entered = threading.Event()
+    release_authorization = threading.Event()
+    delete_started = threading.Event()
+    delete_finished = threading.Event()
+    bind_errors = []
+    delete_results = []
+
+    def authorization_check():
+        authorization_entered.set()
+        assert release_authorization.wait(timeout=3)
+        return True
+
+    def bind():
+        try:
+            writer.bind_provider_identity(
+                "tenant-owner",
+                "cross-connection-account",
+                "123456",
+                expected_generation=1,
+                expected_updated_at_ns=10,
+                authorization_check=authorization_check,
+            )
+        except Exception as exc:
+            bind_errors.append(exc)
+
+    def delete():
+        delete_started.set()
+        delete_results.append(
+            competing_writer.delete("tenant-owner", "cross-connection-account")
+        )
+        delete_finished.set()
+
+    bind_thread = threading.Thread(target=bind)
+    delete_thread = threading.Thread(target=delete)
+    bind_thread.start()
+    assert authorization_entered.wait(timeout=3)
+    delete_thread.start()
+    assert delete_started.wait(timeout=3)
+    # A second SQLite connection must wait for the identity-binding transaction.
+    assert not delete_finished.wait(timeout=0.2)
+    release_authorization.set()
+    bind_thread.join(timeout=3)
+    delete_thread.join(timeout=3)
+
+    assert not bind_thread.is_alive()
+    assert not delete_thread.is_alive()
+    assert bind_errors == []
+    assert delete_results == [True]
+    assert delete_finished.is_set()
+    writer.close()
+    competing_writer.close()
