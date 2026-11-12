@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS public.qe_credential_approvals (
  PRIMARY KEY(tenant_id,credential_id)
 );
 CREATE INDEX IF NOT EXISTS idx_qe_credentials_account ON public.qe_credential_approvals(tenant_id,account_id,status);
+-- Runtime admission requires exactly one governance row per tenant/account/fingerprint.
+-- Existing duplicate tuples intentionally make this migration fail closed.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_qe_credentials_exact_tuple
+ ON public.qe_credential_approvals(tenant_id,account_id,fingerprint);
 CREATE TABLE IF NOT EXISTS public.qe_governance_audit (
  event_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, actor_id TEXT NOT NULL, action TEXT NOT NULL,
  target_id TEXT NOT NULL, occurred_at_ns BIGINT NOT NULL, previous_hash TEXT NOT NULL, event_hash TEXT NOT NULL
