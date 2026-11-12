@@ -23,6 +23,7 @@ from core.accounts.delta_account_registry import (
 class PostgreSQLDeltaAccountRepository:
     """Durable shared repository using PostgreSQL forced row-level security."""
 
+    supports_transactional_approval_check = False
     production_ready = False
     durable_shared_storage = True
     tenant_isolation_enforced = False
@@ -127,7 +128,12 @@ class PostgreSQLDeltaAccountRepository:
         expected_generation: int,
         expected_updated_at_ns: int,
         authorization_check: Callable[[], bool],
+        transactional_authorization_check: Callable[[object], bool] | None = None,
     ) -> None:
+        if transactional_authorization_check is not None and not self.supports_transactional_approval_check:
+            raise AccountScopeError("transactional credential approval is unsupported")
+        if transactional_authorization_check is not None and not callable(transactional_authorization_check):
+            raise ValueError("transactional_authorization_check must be callable")
         if not isinstance(provider_account_id, str) or not provider_account_id.strip():
             raise ValueError("provider_account_id must be non-empty")
         if not callable(authorization_check):
@@ -163,6 +169,10 @@ class PostgreSQLDeltaAccountRepository:
             if authorization_check() is not True:
                 raise AccountScopeError(
                     "Delta identity binding authorization is no longer valid"
+                )
+            if transactional_authorization_check is not None and transactional_authorization_check(conn) is not True:
+                raise AccountScopeError(
+                    "Delta credential approval changed before identity binding"
                 )
             cursor = conn.execute(
                 """
@@ -310,6 +320,7 @@ class PostgreSQLDeltaAccountRepository:
 
 class AuthenticatedPostgreSQLDeltaAccountRepository(PostgreSQLDeltaAccountRepository):
     """Delta repository bound to a trusted tenant-specific PostgreSQL login."""
+    supports_transactional_approval_check = True
     production_ready = False
     durable_shared_storage = True
     tenant_isolation_enforced = True
