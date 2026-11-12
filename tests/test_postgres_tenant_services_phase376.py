@@ -86,6 +86,8 @@ def test_factory_only_builds_authenticated_postgres_repositories():
     assert delta.production_ready is False
     assert governance.production_ready is False
     assert services.production_ready is False
+    assert delta._repository._tenant_connection._require_tls is True
+    assert governance._repository._tenant_connection._require_tls is True
 
 
 def test_governance_facade_checks_membership_before_every_operation():
