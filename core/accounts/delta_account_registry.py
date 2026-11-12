@@ -347,52 +347,63 @@ class SQLiteDeltaAccountRepository:
         if not callable(authorization_check):
             raise ValueError("authorization_check must be callable")
         with self._lock:
-            row = self._connection.execute(
-                """
-                SELECT provider_account_id, credential_generation, updated_at_ns
-                FROM delta_accounts WHERE tenant_id = ? AND account_id = ?
-                """,
-                (tenant_id, account_id),
-            ).fetchone()
-            if row is None:
-                raise AccountNotFoundError("Delta account not found for tenant")
-            if (
-                row["credential_generation"] != expected_generation
-                or row["updated_at_ns"] != expected_updated_at_ns
-            ):
-                raise CredentialVaultError(
-                    "Delta account changed before provider identity binding"
+            # isolation_level=None means statements autocommit by default. Acquire
+            # SQLite's cross-connection writer reservation before reading or
+            # authorizing so another repository/process cannot mutate this row
+            # between the final gate and the identity update.
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    """
+                    SELECT provider_account_id, credential_generation, updated_at_ns
+                    FROM delta_accounts WHERE tenant_id = ? AND account_id = ?
+                    """,
+                    (tenant_id, account_id),
+                ).fetchone()
+                if row is None:
+                    raise AccountNotFoundError("Delta account not found for tenant")
+                if (
+                    row["credential_generation"] != expected_generation
+                    or row["updated_at_ns"] != expected_updated_at_ns
+                ):
+                    raise CredentialVaultError(
+                        "Delta account changed before provider identity binding"
+                    )
+                if (
+                    row["provider_account_id"] is not None
+                    and row["provider_account_id"] != provider_account_id
+                ):
+                    raise AccountScopeError(
+                        "registered Delta account is already bound to a different provider identity"
+                    )
+                # Execute the final authorization decision while the SQLite write
+                # transaction is held, immediately before conditional persistence.
+                if authorization_check() is not True:
+                    raise AccountScopeError(
+                        "Delta identity binding authorization is no longer valid"
+                    )
+                cursor = self._connection.execute(
+                    """
+                    UPDATE delta_accounts
+                    SET provider_account_id = ?, updated_at_ns = MAX(?, updated_at_ns + 1)
+                    WHERE tenant_id = ? AND account_id = ?
+                      AND credential_generation = ? AND updated_at_ns = ?
+                      AND (provider_account_id IS NULL OR provider_account_id = ?)
+                    """,
+                    (
+                        provider_account_id, time.time_ns(), tenant_id, account_id,
+                        expected_generation, expected_updated_at_ns, provider_account_id,
+                    ),
                 )
-            if (
-                row["provider_account_id"] is not None
-                and row["provider_account_id"] != provider_account_id
-            ):
-                raise AccountScopeError(
-                    "registered Delta account is already bound to a different provider identity"
-                )
-            # Execute the final authorization decision under the repository lock,
-            # immediately before the conditional persistence statement.
-            if authorization_check() is not True:
-                raise AccountScopeError(
-                    "Delta identity binding authorization is no longer valid"
-                )
-            cursor = self._connection.execute(
-                """
-                UPDATE delta_accounts
-                SET provider_account_id = ?, updated_at_ns = MAX(?, updated_at_ns + 1)
-                WHERE tenant_id = ? AND account_id = ?
-                  AND credential_generation = ? AND updated_at_ns = ?
-                  AND (provider_account_id IS NULL OR provider_account_id = ?)
-                """,
-                (
-                    provider_account_id, time.time_ns(), tenant_id, account_id,
-                    expected_generation, expected_updated_at_ns, provider_account_id,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise CredentialVaultError(
-                    "Delta account changed during provider identity binding"
-                )
+                if cursor.rowcount != 1:
+                    raise CredentialVaultError(
+                        "Delta account changed during provider identity binding"
+                    )
+                self._connection.execute("COMMIT")
+            except Exception:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
 
     def replace_credentials(
         self, record: EncryptedDeltaAccount, *, expected_generation: int,
