@@ -163,6 +163,15 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
             "tenant-a", "credential-created"
         ).status == "APPROVED"
 
+        # Duplicate governance rows for one tenant/account/fingerprint
+        # are forbidden at the database layer; otherwise a concurrent insert
+        # could create a phantom after the exact-match row lock was acquired.
+        with pytest.raises(RuntimeError, match="operation failed"):
+            governance_repo.submit_credential(
+                "tenant-a", "credential-duplicate", "member-created",
+                "delta-account-created", "d" * 64, 13
+            )
+
         # A transaction-aware approval read must hold a row-share lock until
         # the identity-binding transaction ends, preventing revocation from
         # overtaking an in-flight bind.
