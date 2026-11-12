@@ -4,10 +4,11 @@ from pathlib import Path
 import pytest
 from core.accounts.postgres_session_revocation import PostgreSQLSessionRevocationStore
 DSN=os.getenv("QUANTENGINE_TEST_POSTGRES_ADMIN_DSN")
-pytestmark=pytest.mark.skipif(not DSN,reason="PostgreSQL admin DSN absent")
-
+ 
 @pytest.fixture
 def store():
+    if not DSN:
+        pytest.skip("PostgreSQL admin DSN absent")
     import psycopg
     with psycopg.connect(DSN,autocommit=True) as db:
         db.execute("DROP TABLE IF EXISTS public.qe_session_revocations")
