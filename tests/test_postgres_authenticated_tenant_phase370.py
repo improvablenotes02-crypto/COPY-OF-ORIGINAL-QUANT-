@@ -193,6 +193,45 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
             fingerprint="d" * 64, subject_id="member-created",
         ) is False
 
+        # Exercise the real authenticated bind repository/facade path with
+        # the transaction-aware approval callback, not only the provider helper.
+        governance_repo.submit_credential(
+            "tenant-a", "credential-bind-race", "member-created",
+            "acct-a", "e" * 64, 15
+        )
+        governance_repo.decide_credential(
+            "tenant-a", "credential-bind-race", "APPROVED", "owner-a", 16
+        )
+        account_before_bind = delta_repo.get("tenant-a", "acct-a")
+
+        def transaction_approval_check(connection):
+            return approval_provider.is_approved_for_subject_in_transaction(
+                tenant_id="tenant-a", account_id="acct-a", fingerprint="e" * 64,
+                subject_id="member-created", connection=connection,
+            )
+
+        wrapped_delta_repo.bind_provider_identity(
+            "tenant-a", "acct-a", "delta-user-a",
+            expected_generation=account_before_bind.credential_generation,
+            expected_updated_at_ns=account_before_bind.updated_at_ns,
+            authorization_check=lambda: True,
+            transactional_authorization_check=transaction_approval_check,
+        )
+        account_after_bind = delta_repo.get("tenant-a", "acct-a")
+        assert account_after_bind.provider_account_id == "delta-user-a"
+        governance_repo.revoke_credential(
+            "tenant-a", "credential-bind-race", "owner-a", 17
+        )
+        with pytest.raises(AccountScopeError, match="approval changed"):
+            wrapped_delta_repo.bind_provider_identity(
+                "tenant-a", "acct-a", "delta-user-a",
+                expected_generation=account_after_bind.credential_generation,
+                expected_updated_at_ns=account_after_bind.updated_at_ns,
+                authorization_check=lambda: True,
+                transactional_authorization_check=transaction_approval_check,
+            )
+        assert delta_repo.get("tenant-a", "acct-a").updated_at_ns == account_after_bind.updated_at_ns
+
         # Repeated timestamps must still produce a strictly ordered,
         # verifiable append-only audit chain.
         governance_repo.invite(
