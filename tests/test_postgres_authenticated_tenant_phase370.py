@@ -4,6 +4,7 @@ from pathlib import Path
 import psycopg
 import pytest
 from psycopg.conninfo import make_conninfo
+from psycopg.rows import dict_row
 
 ADMIN = os.getenv("QUANTENGINE_TEST_POSTGRES_ADMIN_DSN")
 pytestmark = pytest.mark.skipif(not ADMIN, reason="PostgreSQL admin DSN absent")
@@ -161,6 +162,91 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
         assert governance_repo.credential(
             "tenant-a", "credential-created"
         ).status == "APPROVED"
+
+        # Duplicate governance rows for one tenant/account/fingerprint
+        # are forbidden at the database layer; otherwise a concurrent insert
+        # could create a phantom after the exact-match row lock was acquired.
+        with pytest.raises(RuntimeError, match="operation failed"):
+            governance_repo.submit_credential(
+                "tenant-a", "credential-duplicate", "member-created",
+                "delta-account-created", "d" * 64, 13
+            )
+
+        # A transaction-aware approval read must hold a row-share lock until
+        # the identity-binding transaction ends, preventing revocation from
+        # overtaking an in-flight bind.
+        from core.accounts.delta_credential_approval import OwnerGovernanceDeltaCredentialApprovalProvider
+        from core.accounts.postgres_tenant_services import TenantGovernanceRepository
+        wrapped_governance_repo = TenantGovernanceRepository(
+            governance_repo, tenant_authorizer
+        )
+        approval_provider = OwnerGovernanceDeltaCredentialApprovalProvider(
+            wrapped_governance_repo
+        )
+        bind_conn = psycopg.connect(_dsn(ROLE_A, PASSWORD_A), row_factory=dict_row)
+        try:
+            with bind_conn.transaction():
+                assert approval_provider.is_approved_for_subject_in_transaction(
+                    tenant_id="tenant-a", account_id="delta-account-created",
+                    fingerprint="d" * 64, subject_id="member-created",
+                    connection=bind_conn,
+                ) is True
+                with psycopg.connect(_dsn(ROLE_A, PASSWORD_A)) as revoke_conn:
+                    with pytest.raises(psycopg.errors.LockNotAvailable):
+                        with revoke_conn.transaction():
+                            revoke_conn.execute("SET LOCAL lock_timeout = '100ms'")
+                            revoke_conn.execute(
+                                "UPDATE public.qe_credential_approvals SET status='REVOKED' "
+                                "WHERE tenant_id='tenant-a' AND credential_id='credential-created'"
+                            )
+        finally:
+            bind_conn.close()
+        governance_repo.revoke_credential(
+            "tenant-a", "credential-created", "owner-a", 14
+        )
+        assert approval_provider.is_approved_for_subject(
+            tenant_id="tenant-a", account_id="delta-account-created",
+            fingerprint="d" * 64, subject_id="member-created",
+        ) is False
+
+        # Exercise the real authenticated bind repository/facade path with
+        # the transaction-aware approval callback, not only the provider helper.
+        governance_repo.submit_credential(
+            "tenant-a", "credential-bind-race", "member-created",
+            "acct-a", "e" * 64, 15
+        )
+        governance_repo.decide_credential(
+            "tenant-a", "credential-bind-race", "APPROVED", "owner-a", 16
+        )
+        account_before_bind = delta_repo.get("tenant-a", "acct-a")
+
+        def transaction_approval_check(connection):
+            return approval_provider.is_approved_for_subject_in_transaction(
+                tenant_id="tenant-a", account_id="acct-a", fingerprint="e" * 64,
+                subject_id="member-created", connection=connection,
+            )
+
+        wrapped_delta_repo.bind_provider_identity(
+            "tenant-a", "acct-a", "delta-user-a",
+            expected_generation=account_before_bind.credential_generation,
+            expected_updated_at_ns=account_before_bind.updated_at_ns,
+            authorization_check=lambda: True,
+            transactional_authorization_check=transaction_approval_check,
+        )
+        account_after_bind = delta_repo.get("tenant-a", "acct-a")
+        assert account_after_bind.provider_account_id == "delta-user-a"
+        governance_repo.revoke_credential(
+            "tenant-a", "credential-bind-race", "owner-a", 17
+        )
+        with pytest.raises(AccountScopeError, match="approval changed"):
+            wrapped_delta_repo.bind_provider_identity(
+                "tenant-a", "acct-a", "delta-user-a",
+                expected_generation=account_after_bind.credential_generation,
+                expected_updated_at_ns=account_after_bind.updated_at_ns,
+                authorization_check=lambda: True,
+                transactional_authorization_check=transaction_approval_check,
+            )
+        assert delta_repo.get("tenant-a", "acct-a").updated_at_ns == account_after_bind.updated_at_ns
 
         # Repeated timestamps must still produce a strictly ordered,
         # verifiable append-only audit chain.

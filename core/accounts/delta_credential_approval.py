@@ -43,6 +43,51 @@ class OwnerGovernanceDeltaCredentialApprovalProvider:
             and record.status == "APPROVED"
         )
 
+    def is_approved_for_subject_in_transaction(
+        self, *, tenant_id: str, account_id: str, fingerprint: str,
+        subject_id: str, connection,
+    ) -> bool:
+        """Check the exact approval row on the caller's live transaction."""
+        if not isinstance(subject_id, str) or not subject_id.strip() or len(subject_id) > 256:
+            return False
+        record = self._matching_record_in_transaction(
+            tenant_id, account_id, fingerprint, connection=connection
+        )
+        return (
+            record is not None
+            and record.subject_id == subject_id
+            and record.status == "APPROVED"
+        )
+
+    def _matching_record_in_transaction(
+        self, tenant_id: str, account_id: str, fingerprint: str, *, connection
+    ):
+        for value in (tenant_id, account_id):
+            if not isinstance(value, str) or not value.strip() or len(value) > 256:
+                return None
+        if (
+            not isinstance(fingerprint, str)
+            or len(fingerprint) != 64
+            or any(char not in "0123456789abcdef" for char in fingerprint)
+        ):
+            return None
+        lookup = getattr(
+            self._repository, "credentials_for_account_fingerprint_in_transaction", None
+        )
+        if not callable(lookup):
+            return None
+        records = lookup(tenant_id, account_id, fingerprint, connection=connection)
+        if not isinstance(records, list) or len(records) != 1:
+            return None
+        record = records[0]
+        if (
+            record.tenant_id != tenant_id
+            or record.account_id != account_id
+            or record.fingerprint != fingerprint
+        ):
+            return None
+        return record
+
     def _matching_record(self, tenant_id: str, account_id: str, fingerprint: str):
         for value in (tenant_id, account_id):
             if not isinstance(value, str) or not value.strip() or len(value) > 256:

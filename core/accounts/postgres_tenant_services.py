@@ -35,6 +35,10 @@ class TenantDeltaAccountRepository:
         self._authorizer = authorizer
 
     @property
+    def supports_transactional_approval_check(self):
+        return getattr(self._repository, "supports_transactional_approval_check", False) is True
+
+    @property
     def durable_shared_storage(self):
         return getattr(self._repository, "durable_shared_storage", False) is True
 
@@ -80,8 +84,11 @@ class TenantDeltaAccountRepository:
         expected_generation,
         expected_updated_at_ns,
         authorization_check,
+        transactional_authorization_check=None,
     ):
         self._require_tenant(tenant_id)
+        if transactional_authorization_check is not None and not self.supports_transactional_approval_check:
+            raise AccountScopeError("transaction-locked credential approval is unavailable")
         return self._repository.bind_provider_identity(
             tenant_id,
             account_id,
@@ -89,6 +96,8 @@ class TenantDeltaAccountRepository:
             expected_generation=expected_generation,
             expected_updated_at_ns=expected_updated_at_ns,
             authorization_check=authorization_check,
+            **({"transactional_authorization_check": transactional_authorization_check}
+               if transactional_authorization_check is not None else {}),
         )
 
     def replace_credentials(self, record, *, expected_generation, expected_updated_at_ns):
@@ -174,6 +183,17 @@ class TenantGovernanceRepository:
     def credentials_for_account_fingerprint(self, tenant, *args, **kwargs):
         self._require_tenant(tenant)
         return self._repository.credentials_for_account_fingerprint(tenant, *args, **kwargs)
+
+    def credentials_for_account_fingerprint_in_transaction(
+        self, tenant, account, fingerprint, *, connection
+    ):
+        self._require_tenant(tenant)
+        lookup = getattr(
+            self._repository, "credentials_for_account_fingerprint_in_transaction", None
+        )
+        if not callable(lookup):
+            return None
+        return lookup(tenant, account, fingerprint, connection=connection)
 
     def audit_events(self, tenant, *args, **kwargs):
         self._require_tenant(tenant)
