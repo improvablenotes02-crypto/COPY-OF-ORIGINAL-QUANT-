@@ -35,6 +35,10 @@ class TenantDeltaAccountRepository:
         self._authorizer = authorizer
 
     @property
+    def supports_transactional_approval_check(self):
+        return getattr(self._repository, "supports_transactional_approval_check", False) is True
+
+    @property
     def durable_shared_storage(self):
         return getattr(self._repository, "durable_shared_storage", False) is True
 
