@@ -6,16 +6,27 @@ class PostgreSQLSessionRevocationStore:
     durable_shared_storage = True
     global_session_scope = True
 
-    def __init__(self, dsn, *, connect_timeout=5, connect_factory=None):
+    def __init__(self, dsn, *, connect_timeout=5, connect_factory=None, require_tls=True):
         if not isinstance(dsn, str) or not dsn.strip():
             raise ValueError("central identity database DSN is required")
         if isinstance(connect_timeout, bool) or not isinstance(connect_timeout, int) or not 1 <= connect_timeout <= 60:
             raise ValueError("invalid connect_timeout")
         if connect_factory is not None and not callable(connect_factory):
             raise ValueError("connect_factory must be callable")
+        if not isinstance(require_tls, bool):
+            raise ValueError("require_tls must be a boolean")
         self._dsn, self._timeout, self._factory = dsn, connect_timeout, connect_factory
+        self._require_tls = require_tls
 
     def _connect(self):
+        if self._require_tls:
+            try:
+                from psycopg.conninfo import conninfo_to_dict
+                sslmode = conninfo_to_dict(self._dsn).get("sslmode", "prefer")
+            except Exception:
+                raise RuntimeError("PostgreSQL session-revocation TLS configuration is invalid") from None
+            if sslmode != "verify-full":
+                raise RuntimeError("PostgreSQL session-revocation requires sslmode=verify-full")
         if self._factory:
             return self._factory(self._dsn, connect_timeout=self._timeout)
         import psycopg
