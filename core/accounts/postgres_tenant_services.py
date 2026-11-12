@@ -212,15 +212,11 @@ class AuthenticatedTenantRepositoryFactory:
         session_validator: SessionStatusValidator,
         tenant_dsn_resolver: Callable[[str], str],
         connect_timeout: int = 5,
-        require_tls: bool = True,
     ):
         if not callable(tenant_dsn_resolver):
             raise ValueError("server-configured tenant DSN resolver is required")
-        if not isinstance(require_tls, bool):
-            raise ValueError("require_tls must be a boolean")
         self._resolver = tenant_dsn_resolver
         self._timeout = connect_timeout
-        self._require_tls = require_tls
         self._authorizer = RequestScopedTenantAuthorizer(
             principal_source, session_validator
         )
@@ -231,13 +227,13 @@ class AuthenticatedTenantRepositoryFactory:
 
     def delta_repository(self):
         persistence = AuthenticatedPostgreSQLDeltaAccountRepository(
-            self._resolver, connect_timeout=self._timeout, require_tls=self._require_tls
+            self._resolver, connect_timeout=self._timeout, require_tls=True
         )
         return TenantDeltaAccountRepository(persistence, self._authorizer)
 
     def _governance_persistence(self):
         return AuthenticatedPostgreSQLOwnerGovernanceRepository(
-            self._resolver, connect_timeout=self._timeout
+            self._resolver, connect_timeout=self._timeout, require_tls=True
         )
 
     def governance_repository(self):
