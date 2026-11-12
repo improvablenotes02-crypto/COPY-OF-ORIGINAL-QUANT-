@@ -94,6 +94,8 @@ def test_authenticated_adapters_keep_production_readiness_false():
     governance=AuthenticatedPostgreSQLOwnerGovernanceRepository(lambda tenant:"tenant-specific-dsn")
     assert delta.tenant_isolation_enforced and not delta.production_ready
     assert governance.tenant_isolation_enforced and not governance.production_ready
+    assert delta._tenant_connection._require_tls is True
+    assert governance._tenant_connection._require_tls is True
 
 def test_application_exception_inside_verified_transaction_is_preserved():
     factory, _ = _factory_for("tenant-a")
