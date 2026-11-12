@@ -20,12 +20,13 @@ class FakeEncryptionProvider:
 class SubjectAuthorizer:
     def __init__(self):
         self.allowed = True
+        self.subject_id = "owner-subject"
 
     def authorize_tenant(self, tenant_id):
         return self.allowed
 
     def current_subject_id(self, tenant_id):
-        return "owner-subject"
+        return self.subject_id
 
 
 class RevocableApprovalProvider:
@@ -117,7 +118,6 @@ def test_approval_revocation_after_venue_verification_prevents_identity_persiste
     repository.close()
 
 
-
 def test_revocation_after_identity_commit_prevents_metadata_return():
     repository = BlockingSQLiteRepository()
     repository.save(
@@ -197,4 +197,49 @@ def test_post_commit_revalidation_allows_metadata_when_approval_remains_valid():
     )
 
     assert metadata.provider_account_id == "123456"
+    repository.close()
+
+
+def test_subject_change_after_identity_commit_prevents_metadata_return():
+    repository = BlockingSQLiteRepository()
+    repository.save(
+        EncryptedDeltaAccount(
+            account_id="internal-account",
+            tenant_id="tenant-owner",
+            venue="delta",
+            region="INDIA",
+            environment="SANDBOX",
+            label="Owner Delta",
+            provider_account_id=None,
+            key_id="test-key-id",
+            algorithm="TEST-ONLY",
+            ciphertext=b"test-only-ciphertext",
+            created_at_ns=1,
+            updated_at_ns=10,
+            credential_generation=1,
+        )
+    )
+    authorizer = SubjectAuthorizer()
+    registry = DeltaAccountRegistry(
+        repository,
+        FakeEncryptionProvider(),
+        exchange_factory=lambda **kwargs: FakeExchange(),
+        tenant_authorizer=authorizer,
+        credential_approval_provider=RevocableApprovalProvider(),
+    )
+    repository.allow_bind.set()
+    repository.after_bind = lambda: setattr(authorizer, "subject_id", "different-subject")
+
+    with pytest.raises(AccountScopeError):
+        registry.verify_and_bind_identity(
+            tenant_id="tenant-owner",
+            account_id="internal-account",
+        )
+
+    # Binding committed under the original subject, but metadata is withheld
+    # when the authenticated subject changes before the return boundary.
+    saved = repository.get("tenant-owner", "internal-account")
+    assert saved is not None
+    assert saved.provider_account_id == "123456"
+    assert saved.updated_at_ns > 10
     repository.close()
