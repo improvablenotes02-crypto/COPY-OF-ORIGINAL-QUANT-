@@ -115,14 +115,20 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
         # its tenant-scoped read path. A denied callback must roll back; an
         # approved callback may bind the identity while the row lock is held.
         from core.accounts.delta_account_registry import AccountScopeError
+        from core.accounts.postgres_tenant_services import TenantDeltaAccountRepository
+        tenant_authorizer = type(
+            "TenantAuthorizer", (),
+            {"authorize_tenant": lambda self, tenant_id: tenant_id == "tenant-a"},
+        )()
+        wrapped_delta_repo = TenantDeltaAccountRepository(delta_repo, tenant_authorizer)
         with pytest.raises(AccountScopeError, match="authorization is no longer valid"):
-            delta_repo.bind_provider_identity(
+            wrapped_delta_repo.bind_provider_identity(
                 "tenant-a", "acct-a", "delta-user-a",
                 expected_generation=1, expected_updated_at_ns=1,
                 authorization_check=lambda: False,
             )
         assert delta_repo.get("tenant-a", "acct-a").provider_account_id is None
-        delta_repo.bind_provider_identity(
+        wrapped_delta_repo.bind_provider_identity(
             "tenant-a", "acct-a", "delta-user-a",
             expected_generation=1, expected_updated_at_ns=1,
             authorization_check=lambda: True,
