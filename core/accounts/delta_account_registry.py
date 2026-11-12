@@ -143,6 +143,7 @@ class DeltaAccountRepository(Protocol):
         expected_generation: int,
         expected_updated_at_ns: int,
         authorization_check: Callable[[], bool],
+        transactional_authorization_check: Callable[[object], bool] | None = None,
     ) -> None:
         ...
 
@@ -340,12 +341,15 @@ class SQLiteDeltaAccountRepository:
         expected_generation: int,
         expected_updated_at_ns: int,
         authorization_check: Callable[[], bool],
+        transactional_authorization_check: Callable[[object], bool] | None = None,
     ) -> None:
         """Bind only after an in-lock authorization and account-generation check."""
         if not isinstance(provider_account_id, str) or not provider_account_id.strip():
             raise ValueError("provider_account_id must be non-empty")
         if not callable(authorization_check):
             raise ValueError("authorization_check must be callable")
+        if transactional_authorization_check is not None:
+            raise AccountScopeError("transactional credential approval is unsupported by SQLite")
         with self._lock:
             # isolation_level=None means statements autocommit by default. Acquire
             # SQLite's cross-connection writer reservation before reading or
@@ -611,7 +615,7 @@ def _session_locked(method):
 class DeltaReadOnlySession:
     """Narrow account-bound facade; deliberately exposes no order-write methods."""
 
-    __slots__ = ("_exchange", "_record", "_closed", "_authorization_check", "_approval_check", "_lock")
+    __slots__ = ("_exchange", "_record", "_closed", "_authorization_check", "_approval_check", "_transactional_approval_check", "_lock")
 
     def __init__(
         self,
@@ -619,6 +623,7 @@ class DeltaReadOnlySession:
         record: EncryptedDeltaAccount,
         authorization_check=None,
         approval_check=None,
+        transactional_approval_check=None,
     ):
         self._exchange = exchange
         self._record = record
@@ -626,6 +631,7 @@ class DeltaReadOnlySession:
         self._lock = threading.RLock()
         self._authorization_check = authorization_check
         self._approval_check = approval_check
+        self._transactional_approval_check = transactional_approval_check
 
     @property
     def closed(self) -> bool:
@@ -1354,6 +1360,29 @@ class DeltaAccountRegistry:
         if not approval_check():
             raise CredentialVaultError("Delta credentials are not owner-approved")
 
+        def transactional_approval_check(connection) -> bool:
+            if not approval_required:
+                return True
+            if approval_provider is None or subject_id is None:
+                return False
+            transaction_check = getattr(
+                approval_provider, "is_approved_for_subject_in_transaction", None
+            )
+            if not callable(transaction_check):
+                return False
+            try:
+                subject_reader = getattr(self._tenant_authorizer, "current_subject_id", None)
+                if not callable(subject_reader) or subject_reader(tenant) != subject_id:
+                    return False
+                return transaction_check(
+                    tenant_id=tenant, account_id=account, fingerprint=fingerprint,
+                    subject_id=subject_id, connection=connection,
+                ) is True
+            except Exception:
+                raise CredentialVaultError(
+                    "Delta transactional credential approval could not be verified"
+                ) from None
+
         endpoint = delta_environments.resolve_rest_endpoint(
             record.environment, record.region
         )
@@ -1416,7 +1445,10 @@ class DeltaAccountRegistry:
             raise CredentialVaultError(
                 "Delta read-only session authorization changed during initialization"
             )
-        return DeltaReadOnlySession(exchange, record, authorization_check, approval_check)
+        return DeltaReadOnlySession(
+            exchange, record, authorization_check, approval_check,
+            transactional_approval_check if self._require_production_security else None,
+        )
 
     def verify_and_bind_identity(
         self, *, tenant_id: str, account_id: str
@@ -1451,14 +1483,32 @@ class DeltaAccountRegistry:
                     )
                 return True
 
-            self._repository.bind_provider_identity(
-                tenant,
-                account,
-                provider_id,
-                expected_generation=bound_record.credential_generation,
-                expected_updated_at_ns=bound_record.updated_at_ns,
-                authorization_check=bind_authorization_check,
+            transactional_check = session._transactional_approval_check
+            supports_transactional_check = (
+                getattr(self._repository, "supports_transactional_approval_check", False) is True
             )
+            if self._require_production_security and (
+                not supports_transactional_check or not callable(transactional_check)
+            ):
+                raise AccountScopeError(
+                    "production identity binding requires transaction-locked owner approval"
+                )
+
+            def bind_transactional_authorization_check(connection) -> bool:
+                if not callable(transactional_check) or transactional_check(connection) is not True:
+                    raise AccountScopeError(
+                        "Delta owner approval is no longer valid in the binding transaction"
+                    )
+                return True
+
+            bind_kwargs = {
+                "expected_generation": bound_record.credential_generation,
+                "expected_updated_at_ns": bound_record.updated_at_ns,
+                "authorization_check": bind_authorization_check,
+            }
+            if self._require_production_security:
+                bind_kwargs["transactional_authorization_check"] = bind_transactional_authorization_check
+            self._repository.bind_provider_identity(tenant, account, provider_id, **bind_kwargs)
             bound = self._repository.get(tenant, account)
             if bound is None:
                 raise AccountNotFoundError("Delta account not found for tenant")
