@@ -12,14 +12,17 @@ class PostgreSQLTenantIdentityError(RuntimeError):
 class TenantBoundPostgreSQLConnection:
     """Open identity-checked transactions using trusted tenant-specific DSNs."""
 
-    def __init__(self, dsn_resolver: Callable[[str], str], *, connect_timeout: int = 5, connect_factory=None):
+    def __init__(self, dsn_resolver: Callable[[str], str], *, connect_timeout: int = 5, connect_factory=None, require_tls: bool = True):
         if not callable(dsn_resolver):
             raise ValueError("trusted tenant DSN resolver is required")
         if isinstance(connect_timeout, bool) or not isinstance(connect_timeout, int) or not 1 <= connect_timeout <= 60:
             raise ValueError("connect_timeout must be an integer from 1 to 60")
         if connect_factory is not None and not callable(connect_factory):
             raise ValueError("connect_factory must be callable")
+        if not isinstance(require_tls, bool):
+            raise ValueError("require_tls must be a boolean")
         self._dsn_resolver, self._connect_timeout, self._connect_factory = dsn_resolver, connect_timeout, connect_factory
+        self._require_tls = require_tls
 
     @contextmanager
     def connect(self, tenant_id: str) -> Iterator[object]:
@@ -34,6 +37,14 @@ class TenantBoundPostgreSQLConnection:
             dsn = self._dsn_resolver(tenant_id)
             if not isinstance(dsn, str) or not dsn.strip():
                 raise PostgreSQLTenantIdentityError("tenant database identity is unavailable")
+            if self._require_tls:
+                from psycopg.conninfo import conninfo_to_dict
+                try:
+                    sslmode = conninfo_to_dict(dsn).get("sslmode", "prefer")
+                except Exception:
+                    raise PostgreSQLTenantIdentityError("tenant database TLS configuration is invalid") from None
+                if sslmode != "verify-full":
+                    raise PostgreSQLTenantIdentityError("tenant database TLS must use sslmode=verify-full")
             from psycopg.rows import dict_row
             if self._connect_factory is None:
                 import psycopg
