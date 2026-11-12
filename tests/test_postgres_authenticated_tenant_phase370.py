@@ -185,6 +185,13 @@ def test_database_login_identity_cannot_be_spoofed_with_tenant_guc():
                             )
         finally:
             bind_conn.close()
+        governance_repo.revoke_credential(
+            "tenant-a", "credential-created", "owner-a", 14
+        )
+        assert approval_provider.is_approved_for_subject(
+            tenant_id="tenant-a", account_id="delta-account-created",
+            fingerprint="d" * 64, subject_id="member-created",
+        ) is False
 
         # Repeated timestamps must still produce a strictly ordered,
         # verifiable append-only audit chain.
