@@ -160,3 +160,41 @@ def test_revocation_after_identity_commit_prevents_metadata_return():
     assert saved.provider_account_id == "123456"
     assert saved.updated_at_ns > 10
     repository.close()
+
+
+def test_post_commit_revalidation_allows_metadata_when_approval_remains_valid():
+    repository = BlockingSQLiteRepository()
+    repository.save(
+        EncryptedDeltaAccount(
+            account_id="internal-account",
+            tenant_id="tenant-owner",
+            venue="delta",
+            region="INDIA",
+            environment="SANDBOX",
+            label="Owner Delta",
+            provider_account_id=None,
+            key_id="test-key-id",
+            algorithm="TEST-ONLY",
+            ciphertext=b"test-only-ciphertext",
+            created_at_ns=1,
+            updated_at_ns=10,
+            credential_generation=1,
+        )
+    )
+    approval = RevocableApprovalProvider()
+    registry = DeltaAccountRegistry(
+        repository,
+        FakeEncryptionProvider(),
+        exchange_factory=lambda **kwargs: FakeExchange(),
+        tenant_authorizer=SubjectAuthorizer(),
+        credential_approval_provider=approval,
+    )
+    repository.allow_bind.set()
+
+    metadata = registry.verify_and_bind_identity(
+        tenant_id="tenant-owner",
+        account_id="internal-account",
+    )
+
+    assert metadata.provider_account_id == "123456"
+    repository.close()
