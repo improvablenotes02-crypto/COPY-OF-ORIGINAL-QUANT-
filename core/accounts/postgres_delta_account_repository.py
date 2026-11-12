@@ -325,9 +325,12 @@ class AuthenticatedPostgreSQLDeltaAccountRepository(PostgreSQLDeltaAccountReposi
     durable_shared_storage = True
     tenant_isolation_enforced = True
 
-    def __init__(self, dsn_resolver, *, connect_timeout: int = 5, connect_factory=None):
+    def __init__(self, dsn_resolver, *, connect_timeout: int = 5, connect_factory=None, require_tls: bool = True):
         from core.accounts.postgres_tenant_connection import TenantBoundPostgreSQLConnection
-        self._tenant_connection = TenantBoundPostgreSQLConnection(dsn_resolver, connect_timeout=connect_timeout, connect_factory=connect_factory)
+        self._tenant_connection = TenantBoundPostgreSQLConnection(
+            dsn_resolver, connect_timeout=connect_timeout,
+            connect_factory=connect_factory, require_tls=require_tls,
+        )
 
     @contextmanager
     def _connection(self, tenant_id: str) -> Iterator[object]:

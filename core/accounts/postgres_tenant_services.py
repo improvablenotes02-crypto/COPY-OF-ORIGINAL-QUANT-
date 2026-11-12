@@ -227,13 +227,13 @@ class AuthenticatedTenantRepositoryFactory:
 
     def delta_repository(self):
         persistence = AuthenticatedPostgreSQLDeltaAccountRepository(
-            self._resolver, connect_timeout=self._timeout
+            self._resolver, connect_timeout=self._timeout, require_tls=True
         )
         return TenantDeltaAccountRepository(persistence, self._authorizer)
 
     def _governance_persistence(self):
         return AuthenticatedPostgreSQLOwnerGovernanceRepository(
-            self._resolver, connect_timeout=self._timeout
+            self._resolver, connect_timeout=self._timeout, require_tls=True
         )
 
     def governance_repository(self):

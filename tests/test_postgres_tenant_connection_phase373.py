@@ -24,7 +24,7 @@ def _factory_for(tenant):
 
 def test_tenant_dsn_and_authenticated_identity_checked():
     factory,opened=_factory_for("tenant-a")
-    router=TenantBoundPostgreSQLConnection(lambda tenant:f"postgresql://role-for-{tenant}/db",connect_timeout=7,connect_factory=factory)
+    router=TenantBoundPostgreSQLConnection(lambda tenant:f"postgresql://role-for-{tenant}/db?sslmode=verify-full",connect_timeout=7,connect_factory=factory)
     with router.connect("tenant-a") as conn: assert conn.tenant=="tenant-a"
     assert opened[0][0]=="postgresql://role-for-tenant-a/db" and opened[0][1]==7
     assert opened[0][2] is not None
@@ -33,7 +33,7 @@ def test_tenant_dsn_and_authenticated_identity_checked():
 @pytest.mark.parametrize("identity",[None,"tenant-b",""])
 def test_missing_or_mismatched_identity_fails_closed(identity):
     factory,opened=_factory_for(identity)
-    router=TenantBoundPostgreSQLConnection(lambda tenant:"dsn",connect_factory=factory)
+    router=TenantBoundPostgreSQLConnection(lambda tenant:"postgresql://role/db?sslmode=verify-full",connect_factory=factory)
     with pytest.raises(PostgreSQLTenantIdentityError):
         with router.connect("tenant-a"): pytest.fail("untrusted connection yielded")
     assert len(opened)==1
@@ -41,14 +41,51 @@ def test_missing_or_mismatched_identity_fails_closed(identity):
 def test_identity_query_failure_is_redacted():
     class Broken(_Connection):
         def execute(self,sql): raise RuntimeError("sensitive driver details")
-    router=TenantBoundPostgreSQLConnection(lambda tenant:"dsn",connect_factory=lambda dsn,**kw:Broken("tenant-a"))
+    router=TenantBoundPostgreSQLConnection(lambda tenant:"postgresql://role/db?sslmode=verify-full",connect_factory=lambda dsn,**kw:Broken("tenant-a"))
     with pytest.raises(PostgreSQLTenantIdentityError,match="verification failed"):
         with router.connect("tenant-a"): pytest.fail("untrusted connection yielded")
 
 def test_invalid_resolver_output_fails_closed():
-    router=TenantBoundPostgreSQLConnection(lambda tenant:None,connect_factory=lambda *a,**k:None)
+    router=TenantBoundPostgreSQLConnection(lambda tenant:None,connect_factory=lambda *a,**k:None,require_tls=False)
     with pytest.raises(PostgreSQLTenantIdentityError):
         with router.connect("tenant-a"): pytest.fail("untrusted connection yielded")
+
+
+def test_verified_tls_is_required_by_default_before_connecting():
+    called = []
+    router = TenantBoundPostgreSQLConnection(
+        lambda tenant: "postgresql://role/db?sslmode=require",
+        connect_factory=lambda *args, **kwargs: called.append(True),
+    )
+    with pytest.raises(PostgreSQLTenantIdentityError, match="verify-full"):
+        with router.connect("tenant-a"):
+            pytest.fail("unverified TLS connection yielded")
+    assert called == []
+
+
+@pytest.mark.parametrize("sslmode", ["disable", "allow", "prefer", "require", "verify-ca"])
+def test_non_hostname_verified_tls_modes_are_rejected(sslmode):
+    called = []
+    router = TenantBoundPostgreSQLConnection(
+        lambda tenant: f"postgresql://role/db?sslmode={sslmode}",
+        connect_factory=lambda *args, **kwargs: called.append(True),
+    )
+    with pytest.raises(PostgreSQLTenantIdentityError, match="verify-full"):
+        with router.connect("tenant-a"):
+            pytest.fail("unverified TLS connection yielded")
+    assert called == []
+
+
+def test_verified_tls_mode_is_accepted():
+    factory, opened = _factory_for("tenant-a")
+    router = TenantBoundPostgreSQLConnection(
+        lambda tenant: "postgresql://role/db?sslmode=verify-full",
+        connect_factory=factory,
+    )
+    with router.connect("tenant-a"):
+        pass
+    assert len(opened) == 1
+
 
 def test_authenticated_adapters_keep_production_readiness_false():
     from core.accounts.postgres_delta_account_repository import AuthenticatedPostgreSQLDeltaAccountRepository
@@ -57,11 +94,13 @@ def test_authenticated_adapters_keep_production_readiness_false():
     governance=AuthenticatedPostgreSQLOwnerGovernanceRepository(lambda tenant:"tenant-specific-dsn")
     assert delta.tenant_isolation_enforced and not delta.production_ready
     assert governance.tenant_isolation_enforced and not governance.production_ready
+    assert delta._tenant_connection._require_tls is True
+    assert governance._tenant_connection._require_tls is True
 
 def test_application_exception_inside_verified_transaction_is_preserved():
     factory, _ = _factory_for("tenant-a")
     router = TenantBoundPostgreSQLConnection(
-        lambda tenant: "trusted-tenant-a-dsn", connect_factory=factory
+        lambda tenant: "postgresql://role/db?sslmode=verify-full", connect_factory=factory
     )
     class DomainValidationError(Exception):
         pass
