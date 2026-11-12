@@ -59,10 +59,28 @@ def test_repository_tenant_scope_rotation_atomicity_and_hash_chain(repository):
     assert [item.account_id for item in repository.list_for_tenant("tenant-a")] == ["acct-a"]
     assert [item.account_id for item in repository.list_for_tenant("tenant-b")] == ["acct-b"]
 
-    repository.bind_provider_identity("tenant-a", "acct-a", "delta-user-a")
-    assert repository.get("tenant-a", "acct-a").provider_account_id == "delta-user-a"
+    with pytest.raises(AccountScopeError, match="authorization is no longer valid"):
+        repository.bind_provider_identity(
+            "tenant-a", "acct-a", "delta-user-a",
+            expected_generation=1, expected_updated_at_ns=10,
+            authorization_check=lambda: False,
+        )
+    assert repository.get("tenant-a", "acct-a").provider_account_id is None
+
+    repository.bind_provider_identity(
+        "tenant-a", "acct-a", "delta-user-a",
+        expected_generation=1, expected_updated_at_ns=10,
+        authorization_check=lambda: True,
+    )
+    bound = repository.get("tenant-a", "acct-a")
+    assert bound.provider_account_id == "delta-user-a"
     with pytest.raises(AccountScopeError, match="different provider identity"):
-        repository.bind_provider_identity("tenant-a", "acct-a", "delta-user-other")
+        repository.bind_provider_identity(
+            "tenant-a", "acct-a", "delta-user-other",
+            expected_generation=bound.credential_generation,
+            expected_updated_at_ns=bound.updated_at_ns,
+            authorization_check=lambda: True,
+        )
 
     current = repository.get("tenant-a", "acct-a")
     candidate = _record("acct-a", "tenant-a", generation=2, updated=11,

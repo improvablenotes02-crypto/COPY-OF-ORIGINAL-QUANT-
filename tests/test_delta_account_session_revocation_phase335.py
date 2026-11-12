@@ -80,8 +80,15 @@ def test_deleting_account_revokes_existing_session_before_next_exchange_call():
 def test_provider_identity_binding_invalidates_pre_binding_session():
     repository, registry, metadata, session, client = make_registry()
     try:
+        current = repository.get("tenant-phase335", metadata.account_id)
+        assert current is not None
         repository.bind_provider_identity(
-            "tenant-phase335", metadata.account_id, "123456"
+            "tenant-phase335",
+            metadata.account_id,
+            "123456",
+            expected_generation=current.credential_generation,
+            expected_updated_at_ns=current.updated_at_ns,
+            authorization_check=lambda: True,
         )
         with pytest.raises(CredentialVaultError, match="no longer authorized"):
             session.get_balance()
