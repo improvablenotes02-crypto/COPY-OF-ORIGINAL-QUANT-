@@ -8,7 +8,7 @@ tenant isolation until database identity is bound to tenant identity.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Callable, Iterator
 
 from core.accounts.delta_account_registry import (
     AccountNotFoundError,
@@ -23,6 +23,7 @@ from core.accounts.delta_account_registry import (
 class PostgreSQLDeltaAccountRepository:
     """Durable shared repository using PostgreSQL forced row-level security."""
 
+    supports_transactional_approval_check = False
     production_ready = False
     durable_shared_storage = True
     tenant_isolation_enforced = False
@@ -119,31 +120,79 @@ class PostgreSQLDeltaAccountRepository:
             return cursor.rowcount == 1
 
     def bind_provider_identity(
-        self, tenant_id: str, account_id: str, provider_account_id: str
+        self,
+        tenant_id: str,
+        account_id: str,
+        provider_account_id: str,
+        *,
+        expected_generation: int,
+        expected_updated_at_ns: int,
+        authorization_check: Callable[[], bool],
+        transactional_authorization_check: Callable[[object], bool] | None = None,
     ) -> None:
+        if transactional_authorization_check is not None and not self.supports_transactional_approval_check:
+            raise AccountScopeError("transactional credential approval is unsupported")
+        if transactional_authorization_check is not None and not callable(transactional_authorization_check):
+            raise ValueError("transactional_authorization_check must be callable")
         if not isinstance(provider_account_id, str) or not provider_account_id.strip():
             raise ValueError("provider_account_id must be non-empty")
+        if not callable(authorization_check):
+            raise ValueError("authorization_check must be callable")
         with self._connection(tenant_id) as conn:
+            row = conn.execute(
+                """
+                SELECT provider_account_id, credential_generation, updated_at_ns
+                FROM public.delta_accounts
+                WHERE tenant_id=%s AND account_id=%s
+                FOR UPDATE
+                """,
+                (tenant_id, account_id),
+            ).fetchone()
+            if row is None:
+                raise AccountNotFoundError("Delta account not found for tenant")
+            if (
+                row["credential_generation"] != expected_generation
+                or row["updated_at_ns"] != expected_updated_at_ns
+            ):
+                raise CredentialVaultError(
+                    "Delta account changed before provider identity binding"
+                )
+            if (
+                row["provider_account_id"] is not None
+                and row["provider_account_id"] != provider_account_id
+            ):
+                raise AccountScopeError(
+                    "registered Delta account is bound to a different provider identity"
+                )
+            # Keep the row lock and transaction open across the final authorization
+            # decision and conditional write; never check only in the registry.
+            if authorization_check() is not True:
+                raise AccountScopeError(
+                    "Delta identity binding authorization is no longer valid"
+                )
+            if transactional_authorization_check is not None and transactional_authorization_check(conn) is not True:
+                raise AccountScopeError(
+                    "Delta credential approval changed before identity binding"
+                )
             cursor = conn.execute(
                 """
                 UPDATE public.delta_accounts
                 SET provider_account_id=%s,
                     updated_at_ns=GREATEST(%s, updated_at_ns + 1)
                 WHERE tenant_id=%s AND account_id=%s
+                  AND credential_generation=%s AND updated_at_ns=%s
                   AND (provider_account_id IS NULL OR provider_account_id=%s)
                 """,
-                (provider_account_id, __import__("time").time_ns(), tenant_id,
-                 account_id, provider_account_id),
+                (
+                    provider_account_id, __import__("time").time_ns(), tenant_id,
+                    account_id, expected_generation, expected_updated_at_ns,
+                    provider_account_id,
+                ),
             )
-            if cursor.rowcount == 1:
-                return
-            row = conn.execute(
-                "SELECT provider_account_id FROM public.delta_accounts WHERE tenant_id=%s AND account_id=%s",
-                (tenant_id, account_id),
-            ).fetchone()
-            if row is None:
-                raise AccountNotFoundError("Delta account not found for tenant")
-            raise AccountScopeError("registered Delta account is bound to a different provider identity")
+            if cursor.rowcount != 1:
+                raise CredentialVaultError(
+                    "Delta account changed during provider identity binding"
+                )
 
     def replace_credentials(
         self, record: EncryptedDeltaAccount, *, expected_generation: int,
@@ -271,13 +320,17 @@ class PostgreSQLDeltaAccountRepository:
 
 class AuthenticatedPostgreSQLDeltaAccountRepository(PostgreSQLDeltaAccountRepository):
     """Delta repository bound to a trusted tenant-specific PostgreSQL login."""
+    supports_transactional_approval_check = True
     production_ready = False
     durable_shared_storage = True
     tenant_isolation_enforced = True
 
-    def __init__(self, dsn_resolver, *, connect_timeout: int = 5, connect_factory=None):
+    def __init__(self, dsn_resolver, *, connect_timeout: int = 5, connect_factory=None, require_tls: bool = True):
         from core.accounts.postgres_tenant_connection import TenantBoundPostgreSQLConnection
-        self._tenant_connection = TenantBoundPostgreSQLConnection(dsn_resolver, connect_timeout=connect_timeout, connect_factory=connect_factory)
+        self._tenant_connection = TenantBoundPostgreSQLConnection(
+            dsn_resolver, connect_timeout=connect_timeout,
+            connect_factory=connect_factory, require_tls=require_tls,
+        )
 
     @contextmanager
     def _connection(self, tenant_id: str) -> Iterator[object]:

@@ -119,6 +119,19 @@ class PostgreSQLOwnerGovernanceRepository:
         return [CredentialApproval(row["tenant_id"],row["credential_id"],row["subject_id"],
             row["account_id"],row["fingerprint"],row["status"],row["created_at_ns"],row["updated_at_ns"])
             for row in rows]
+    def credentials_for_account_fingerprint_in_transaction(
+        self, tenant, account, fingerprint, *, connection
+    ):
+        """Read and share-lock exact approval rows on the caller's transaction."""
+        rows = connection.execute(
+            "SELECT * FROM public.qe_credential_approvals "
+            "WHERE tenant_id=%s AND account_id=%s AND fingerprint=%s "
+            "ORDER BY credential_id FOR SHARE",
+            (tenant, account, fingerprint),
+        ).fetchall()
+        return [CredentialApproval(row["tenant_id"],row["credential_id"],row["subject_id"],
+            row["account_id"],row["fingerprint"],row["status"],row["created_at_ns"],row["updated_at_ns"])
+            for row in rows]
     def audit_events(self,tenant):
         with self._connection(tenant) as c: rows=c.execute("SELECT * FROM public.qe_governance_audit WHERE tenant_id=%s ORDER BY occurred_at_ns,event_id",(tenant,)).fetchall()
         return [dict(row) for row in rows]
@@ -130,9 +143,12 @@ class AuthenticatedPostgreSQLOwnerGovernanceRepository(PostgreSQLOwnerGovernance
     durable_shared_storage = True
     tenant_isolation_enforced = True
 
-    def __init__(self, dsn_resolver, *, connect_timeout: int = 5, connect_factory=None):
+    def __init__(self, dsn_resolver, *, connect_timeout: int = 5, connect_factory=None, require_tls: bool = True):
         from core.accounts.postgres_tenant_connection import TenantBoundPostgreSQLConnection
-        self._tenant_connection = TenantBoundPostgreSQLConnection(dsn_resolver, connect_timeout=connect_timeout, connect_factory=connect_factory)
+        self._tenant_connection = TenantBoundPostgreSQLConnection(
+            dsn_resolver, connect_timeout=connect_timeout,
+            connect_factory=connect_factory, require_tls=require_tls,
+        )
 
     @contextmanager
     def _connection(self, tenant: str) -> Iterator[object]:

@@ -81,7 +81,13 @@ def test_authenticated_identity_is_bound_once_to_tenant_account():
 def test_provider_identity_mismatch_cannot_overwrite_existing_binding():
     registry, repository = _registry(provider_id="222")
     metadata = _register(registry)
-    repository.bind_provider_identity("tenant-a", metadata.account_id, "111")
+    current = repository.get("tenant-a", metadata.account_id)
+    repository.bind_provider_identity(
+        "tenant-a", metadata.account_id, "111",
+        expected_generation=current.credential_generation,
+        expected_updated_at_ns=current.updated_at_ns,
+        authorization_check=lambda: True,
+    )
     with pytest.raises(AccountScopeError, match="does not match"):
         registry.verify_and_bind_identity(
             tenant_id="tenant-a", account_id=metadata.account_id
@@ -123,7 +129,13 @@ def test_identity_binding_cannot_be_invoked_through_another_tenant():
 def test_history_snapshot_identity_must_match_bound_provider_account():
     registry, repository = _registry(provider_id="999")
     metadata = _register(registry)
-    repository.bind_provider_identity("tenant-a", metadata.account_id, "123")
+    current = repository.get("tenant-a", metadata.account_id)
+    repository.bind_provider_identity(
+        "tenant-a", metadata.account_id, "123",
+        expected_generation=current.credential_generation,
+        expected_updated_at_ns=current.updated_at_ns,
+        authorization_check=lambda: True,
+    )
     session = registry.open_read_only_session(
         tenant_id="tenant-a", account_id=metadata.account_id
     )

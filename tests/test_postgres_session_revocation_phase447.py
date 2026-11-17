@@ -4,15 +4,16 @@ from pathlib import Path
 import pytest
 from core.accounts.postgres_session_revocation import PostgreSQLSessionRevocationStore
 DSN=os.getenv("QUANTENGINE_TEST_POSTGRES_ADMIN_DSN")
-pytestmark=pytest.mark.skipif(not DSN,reason="PostgreSQL admin DSN absent")
-
+ 
 @pytest.fixture
 def store():
+    if not DSN:
+        pytest.skip("PostgreSQL admin DSN absent")
     import psycopg
     with psycopg.connect(DSN,autocommit=True) as db:
         db.execute("DROP TABLE IF EXISTS public.qe_session_revocations")
         db.execute(Path("migrations/postgres/003_session_revocation.sql").read_text())
-    value=PostgreSQLSessionRevocationStore(DSN)
+    value=PostgreSQLSessionRevocationStore(DSN, require_tls=False)
     try: yield value
     finally:
         with psycopg.connect(DSN,autocommit=True) as db: db.execute("DROP TABLE IF EXISTS public.qe_session_revocations")
@@ -20,7 +21,7 @@ def store():
 def test_restart_and_idempotency(store):
     store.revoke("subject","session",revoked_at_epoch=100)
     store.revoke("subject","session",revoked_at_epoch=120)
-    assert PostgreSQLSessionRevocationStore(DSN).is_revoked("subject","session")
+    assert PostgreSQLSessionRevocationStore(DSN, require_tls=False).is_revoked("subject","session")
     assert not store.is_revoked("subject","other")
 
 def test_global_idp_session_scope(store):
@@ -43,6 +44,29 @@ def test_bad_values_and_error_redaction(store):
     with pytest.raises(ValueError): store.is_revoked("","session")
     with pytest.raises(ValueError): store.revoke("member","session",revoked_at_epoch=float("nan"))
     def broken(*a,**k): raise RuntimeError("secret dsn")
-    bad=PostgreSQLSessionRevocationStore("invalid",connect_factory=broken)
+    bad=PostgreSQLSessionRevocationStore("invalid",connect_factory=broken,require_tls=False)
     with pytest.raises(RuntimeError,match="lookup failed") as err: bad.is_revoked("member","session")
     assert "secret" not in str(err.value)
+
+
+def test_tls_modes_fail_before_connection_attempt():
+    for mode in ("disable", "allow", "prefer", "require", "verify-ca"):
+        calls=[]
+        store=PostgreSQLSessionRevocationStore(
+            f"postgresql://identity/db?sslmode={mode}",
+            connect_factory=lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+        with pytest.raises(RuntimeError, match="verify-full"):
+            store.is_revoked("member", "session")
+        assert calls == []
+
+
+def test_tls_is_required_by_default():
+    calls=[]
+    store=PostgreSQLSessionRevocationStore(
+        "postgresql://identity/db",
+        connect_factory=lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    with pytest.raises(RuntimeError, match="verify-full"):
+        store.is_revoked("member", "session")
+    assert calls == []

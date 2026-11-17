@@ -66,8 +66,14 @@ def test_provider_identity_binding_from_another_connection_revokes_existing_sess
         assert session.get_balance() == {"success": True}
         assert clients[0].balance_calls == 1
 
+        current = binding_repository.get("tenant-phase339", metadata.account_id)
         binding_repository.bind_provider_identity(
-            "tenant-phase339", metadata.account_id, "987654"
+            "tenant-phase339",
+            metadata.account_id,
+            "987654",
+            expected_generation=current.credential_generation,
+            expected_updated_at_ns=current.updated_at_ns,
+            authorization_check=lambda: True,
         )
 
         with pytest.raises(CredentialVaultError, match="no longer authorized"):
