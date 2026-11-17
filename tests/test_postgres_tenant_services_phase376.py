@@ -80,7 +80,6 @@ def test_repository_facades_and_credential_approval_propagate_production_contrac
 def test_factory_only_builds_authenticated_postgres_repositories():
     services, _, _, _ = factory()
     delta = services.delta_repository()
-    services._governance_persistence = lambda: _FakeGovernance()
     governance = services.governance_repository()
     assert delta.tenant_isolation_enforced is True
     assert delta.production_ready is False
