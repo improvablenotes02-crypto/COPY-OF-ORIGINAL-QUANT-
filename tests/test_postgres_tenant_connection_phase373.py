@@ -26,7 +26,7 @@ def test_tenant_dsn_and_authenticated_identity_checked():
     factory,opened=_factory_for("tenant-a")
     router=TenantBoundPostgreSQLConnection(lambda tenant:f"postgresql://role-for-{tenant}/db?sslmode=verify-full",connect_timeout=7,connect_factory=factory)
     with router.connect("tenant-a") as conn: assert conn.tenant=="tenant-a"
-    assert opened[0][0]=="postgresql://role-for-tenant-a/db" and opened[0][1]==7
+    assert opened[0][0]=="postgresql://role-for-tenant-a/db?sslmode=verify-full" and opened[0][1]==7
     assert opened[0][2] is not None
     assert opened[0][3].queries==["SELECT public.qe_authenticated_tenant_id() AS tenant_id"]
 
