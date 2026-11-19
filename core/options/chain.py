@@ -61,6 +61,32 @@ class OptionChain:
     def missing_put_quotes(self) -> int:
         return sum(1 for entry in self.entries if entry.put is not None and entry.put.quote is None)
 
+    @property
+    def missing_call_legs(self) -> int:
+        return sum(1 for entry in self.entries if entry.call is None)
+
+    @property
+    def missing_put_legs(self) -> int:
+        return sum(1 for entry in self.entries if entry.put is None)
+
+    @property
+    def contract_count(self) -> int:
+        return sum(int(entry.call is not None) + int(entry.put is not None) for entry in self.entries)
+
+    @property
+    def quoted_contract_count(self) -> int:
+        return sum(
+            int(entry.call is not None and entry.call.quote is not None)
+            + int(entry.put is not None and entry.put.quote is not None)
+            for entry in self.entries
+        )
+
+    @property
+    def quote_coverage(self) -> float:
+        """Fraction of supplied contracts with a validated quote (0.0 to 1.0)."""
+        total = self.contract_count
+        return self.quoted_contract_count / total if total else 0.0
+
 def _snapshot_instrument(instrument: Instrument) -> OptionContractSnapshot:
     """Copy only scalar contract facts; never retain a mutable Instrument."""
     return OptionContractSnapshot(
