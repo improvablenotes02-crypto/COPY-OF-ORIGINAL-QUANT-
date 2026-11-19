@@ -413,6 +413,20 @@ def build_paper_engine(
         else risk_settings.STARTING_BALANCE
     )
 
+    # Optional PAPER-only binding to the verified public-candle chain.
+    # The default transport remains fail-closed unless explicitly opted in.
+    if transport_factory is None and (
+        os.getenv("QE_PAPER_VERIFIED_TRANSPORT", "").strip().lower()
+        in ("1", "true", "yes", "on")
+    ):
+        from data.realtime.verified_transport import (
+            verified_public_candle_transport_factory,
+        )
+        transport_factory = verified_public_candle_transport_factory(
+            resolution=effective_timeframe,
+        )
+        log.info("PAPER verified public-candle transport enabled by explicit opt-in")
+
     from core.runtime.realtime_engine import RealTimeEngine
 
     engine = RealTimeEngine(
