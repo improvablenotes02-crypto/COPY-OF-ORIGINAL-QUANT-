@@ -118,6 +118,7 @@ jobs:
           tests/test_delta_credential_approval_phase368.py
           tests/test_postgres_tenant_services_phase376.py
           tests/test_tenant_governance_runtime_phase379.py
+          tests/test_owner_delta_credential_rotation_phase303.py
           -q
       - name: Run extended historical regression suite (weekly and manual release certification)
         if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
