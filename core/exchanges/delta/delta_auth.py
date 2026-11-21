@@ -198,6 +198,26 @@ class DeltaSignedREST:
 
     # -------------------------------------------------
 
+    def _validate_request_target(self, path):
+        """Reject request targets that could escape the configured signed origin."""
+        if (not isinstance(path, str)
+                or any(ord(char) < 32 or ord(char) == 127 for char in path)):
+            raise ValueError("Delta REST request path must be an origin-relative URL path")
+        parsed = urllib.parse.urlsplit(path)
+        if parsed.scheme or parsed.netloc or parsed.fragment:
+            raise ValueError("Delta REST request path must not override the configured origin")
+        if not path.startswith("/") or path.startswith("//") or "\\" in path:
+            raise ValueError("Delta REST request path must be an origin-relative URL path")
+        base = urllib.parse.urlsplit(self.base_url)
+        if (base.scheme.lower() not in {"https", "http"} or not base.hostname
+                or base.username is not None or base.password is not None
+                or base.query or base.fragment):
+            raise ValueError("Delta REST base_url must be a clean HTTP(S) origin")
+        if self.authenticated and base.scheme.lower() != "https":
+            raise ValueError("authenticated Delta REST requests require HTTPS")
+
+    # -------------------------------------------------
+
     def _headers(
         self,
         method,
@@ -245,6 +265,7 @@ class DeltaSignedREST:
         params=None,
     ):
 
+        self._validate_request_target(path)
         path_with_query = (
             path + query_string(params)
         )
@@ -277,6 +298,7 @@ class DeltaSignedREST:
         authority=None,
     ):
 
+        self._validate_request_target(path)
         if self.enforce_write_authority:
             require_write_authority(
                 authority,
@@ -319,6 +341,7 @@ class DeltaSignedREST:
         authority=None,
     ):
 
+        self._validate_request_target(path)
         if self.enforce_write_authority:
             require_write_authority(
                 authority,
