@@ -1,8 +1,7 @@
 name: Runtime data-gate certification # phase-424 cross-platform inventory verification
 
 on:
-  push:
-  pull_request:
+  workflow_call:
   workflow_dispatch:
   schedule:
     - cron: '30 1 * * 0' # Weekly extended regression, Sunday 01:30 UTC
