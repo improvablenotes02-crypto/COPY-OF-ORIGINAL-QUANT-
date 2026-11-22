@@ -1,8 +1,7 @@
 name: Option-chain integrity gate (Phase 472)
 
 on:
-  push:
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 permissions:
