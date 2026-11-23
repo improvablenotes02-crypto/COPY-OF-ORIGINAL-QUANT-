@@ -12,11 +12,11 @@
 
 ## Remaining work, in priority order
 
-1. **Owner Sandbox verification:** Run `python scripts/configure_delta_credentials.py` locally, select the correct region and Sandbox, then run `python scripts/check_delta_credentials.py`. Keep API keys and secrets on the operator's machine; never send them through chat or GitHub.
+1. **Owner Sandbox verification:** Operator reports `PASS` from `python scripts/check_delta_credentials.py` against the configured Delta Sandbox identity endpoint. Treat this as operator-reported authentication evidence only; no credentials or account identifiers are stored here. Keep API keys and secrets on the operator's machine.
 2. **Market-data evidence:** Complete and independently verify the documented multi-day L2 capture. Keep continuity claims partial until primary capture evidence is available.
 3. **External reconciliation:** Complete the external tax-invoice reconciliation from primary source records; do not infer missing evidence.
 4. **Independent strategy validation:** Establish out-of-sample evidence for any claimed trading edge. Passing software tests does not establish profitability.
-5. **Release governance:** PR #27 is currently open and GitHub reports it mergeable/clean. Review the complete diff and complete the full regression/release checklist before considering a release. The seven workflows above passed on the current PR head; that is not equivalent to the complete repository release checklist.
+5. **Release governance:** Reconcile the release checklist against the current canonical `main` state before any release consideration. Historical PR status is not a release certification; the required GitHub Actions merge gate passing does not replace the complete repository release checklist.
 
 ## Mandatory posture
 
