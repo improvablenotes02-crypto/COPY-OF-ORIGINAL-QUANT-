@@ -1,0 +1,59 @@
+name: Canonical required merge gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canonical-merge-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  option-chain:
+    name: Option-chain validation
+    uses: ./.github/workflows/option-chain-gate.yml
+
+  personal-credential:
+    name: Personal credential safety
+    uses: ./.github/workflows/personal-credential-gate.yml
+
+  runtime-data:
+    name: Runtime data and PostgreSQL certification
+    uses: ./.github/workflows/runtime-data-gate.yml
+
+  secret-scan:
+    name: Secret scan
+    uses: ./.github/workflows/secret-scan.yml
+
+  canonical-required-check:
+    name: Canonical required merge gate
+    if: always()
+    needs:
+      - option-chain
+      - personal-credential
+      - runtime-data
+      - secret-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every canonical validation workflow to pass
+        env:
+          OPTION_CHAIN_RESULT: ${{ needs.option-chain.result }}
+          CREDENTIAL_RESULT: ${{ needs.personal-credential.result }}
+          RUNTIME_RESULT: ${{ needs.runtime-data.result }}
+          SECRET_SCAN_RESULT: ${{ needs.secret-scan.result }}
+        shell: bash
+        run: |
+          printf 'option-chain=%s\n' "$OPTION_CHAIN_RESULT"
+          printf 'personal-credential=%s\n' "$CREDENTIAL_RESULT"
+          printf 'runtime-data=%s\n' "$RUNTIME_RESULT"
+          printf 'secret-scan=%s\n' "$SECRET_SCAN_RESULT"
+          test "$OPTION_CHAIN_RESULT" = "success"
+          test "$CREDENTIAL_RESULT" = "success"
+          test "$RUNTIME_RESULT" = "success"
+          test "$SECRET_SCAN_RESULT" = "success"
