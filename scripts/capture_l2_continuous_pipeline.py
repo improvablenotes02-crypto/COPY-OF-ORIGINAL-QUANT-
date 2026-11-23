@@ -180,7 +180,10 @@ class ContinuousStreamingL2CapturePipeline:
             self.rejected_frames_count += 1
             return False
         tracker = self.trackers[symbol]
-        action = msg.get("action")
+        action = msg.get("action", "update")
+        if action not in {"snapshot", "update"}:
+            self.malformed_frames_count += 1
+            return False
         if action == "snapshot":
             accepted = tracker.process_snapshot(bids=bids, asks=asks, sequence=sequence, venue_timestamp_us=venue_timestamp_us, receipt_mono_ns=receipt_mono_ns, receipt_utc_ns=receipt_utc_ns)
         else:
