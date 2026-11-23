@@ -269,7 +269,10 @@ def _validate_json_structure(value: Any, context: str) -> None:
 
 
 def _validate_accepted_book_levels(raw: dict[str, Any], record_number: int) -> None:
-    """Require accepted snapshots/updates to contain finite positive price and size levels."""
+    """Validate accepted book levels, allowing zero-size update entries as deletions."""
+    action = raw.get("action", "update")
+    if action not in {"snapshot", "update"}:
+        raise CaptureVerificationError(f"JSONL record {record_number} has invalid book action")
     for side in ("b", "a"):
         levels = raw.get(side)
         if not isinstance(levels, list):
@@ -297,9 +300,13 @@ def _validate_accepted_book_levels(raw: dict[str, Any], record_number: int) -> N
                     raise CaptureVerificationError(
                         f"JSONL record {record_number} accepted {side} level {level_number} has invalid {field}"
                     ) from exc
-                if not parsed.is_finite() or parsed <= 0 or abs(parsed.adjusted()) > _MAX_DECIMAL_EXPONENT:
+                invalid_sign = parsed <= 0 if field == "price" else (
+                    parsed < 0 or (parsed == 0 and action == "snapshot")
+                )
+                if not parsed.is_finite() or invalid_sign or abs(parsed.adjusted()) > _MAX_DECIMAL_EXPONENT:
+                    requirement = "positive" if field == "price" or action == "snapshot" else "non-negative"
                     raise CaptureVerificationError(
-                        f"JSONL record {record_number} accepted {side} level {level_number} {field} must be finite and positive"
+                        f"JSONL record {record_number} accepted {side} level {level_number} {field} must be finite and {requirement}"
                     )
 
 
