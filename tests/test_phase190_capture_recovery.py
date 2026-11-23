@@ -352,6 +352,20 @@ class TestPhase190UnexpectedFrameClassification(unittest.TestCase):
         self.assertEqual(summary["unexpected_frames_count"], 1)
         self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
 
+    def test_unknown_book_action_is_malformed_and_not_persisted(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = self._pipeline(td)
+            frame = {"type": "ob_updates", "sy": "BTCUSD", "seq": 1, "ts": 100,
+                     "b": [["82000.0", "1.0"]], "a": [["82010.0", "1.0"]],
+                     "action": "delete_all"}
+            self.assertFalse(pipeline._stream_frame(json.dumps(frame), 1, 1))
+            self.assertEqual(pipeline.malformed_frames_count, 1)
+            self.assertEqual(pipeline.rejected_frames_count, 0)
+            self.assertEqual(pipeline.total_frames_written, 0)
+            summary = pipeline.finalize_artifacts()
+            self.assertEqual(pipeline._raw_capture_path.read_bytes(), b"")
+        self.assertEqual(summary["continuity_evidence_verdict"], "PARTIAL")
+
     def test_unconfigured_symbol_is_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             pipeline = self._pipeline(td)
