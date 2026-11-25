@@ -129,6 +129,23 @@ class TestZipPackagingPolicy(unittest.TestCase):
 
 
 class TestStagedScanCoversRemovedWorktreeCopies(unittest.TestCase):
+    def test_scan_staged_fails_closed_when_index_listing_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            failure = subprocess.CalledProcessError(128, ["git", "diff"])
+            from unittest.mock import patch
+            with patch.object(_SCANNER.subprocess, "run", side_effect=failure):
+                with self.assertRaisesRegex(RuntimeError, "staged index listing unavailable"):
+                    _SCANNER.scan_staged(root)
+
+    def test_cli_fails_closed_when_staged_index_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            from unittest.mock import patch
+            failure = subprocess.CalledProcessError(128, ["git", "diff"])
+            with patch.object(_SCANNER.subprocess, "run", side_effect=failure):
+                self.assertEqual(_SCANNER.main(["--root", str(root), "--check-staged"]), 1)
+
     def test_scan_staged_finds_secret_after_worktree_removal(self):
         marker = "phase193b-staged-canary"
         with tempfile.TemporaryDirectory() as directory:
