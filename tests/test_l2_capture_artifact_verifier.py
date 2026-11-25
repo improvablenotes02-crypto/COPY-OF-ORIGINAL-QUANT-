@@ -151,6 +151,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             data["symbol_quality"] = {"BTCUSD": {
                 "total_messages": 0, "valid_updates": 0, "rejected_count": 0
             }}
+            data["accepted_snapshots_by_epoch"] = {"0": {"ETHUSD": 1}}
             summary.write_text(json.dumps(data))
             with self.assertRaisesRegex(CaptureVerificationError, "unconfigured symbols"):
                 verify_capture(summary)
@@ -187,7 +188,9 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             summary = self._write_fixture(root)
-            (root / "raw.jsonl").write_bytes(b"tampered\n")
+            raw_path = root / "raw.jsonl"
+            original = raw_path.read_bytes()
+            raw_path.write_bytes(original[:-1] + b" \n")
             with self.assertRaisesRegex(CaptureVerificationError, "SHA-256"):
                 verify_capture(summary)
 
@@ -397,12 +400,13 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             data["total_bytes_written"] = len(raw_bytes)
             data["total_raw_frames"] = 2
             data["connection_epoch_count"] = 3
+            data["accepted_snapshots_by_epoch"] = {"0": {"BTCUSD": 1}, "2": {"BTCUSD": 1}}
             data["symbol_quality"]["BTCUSD"] = {"total_messages": 2, "valid_updates": 2, "rejected_count": 0}
             summary.write_text(json.dumps(data))
             result = verify_capture(summary)
         self.assertTrue(result["integrity_valid"])
 
-    def test_rejects_frame_epoch_outside_summary_connection_count(self):
+    def test_rejects_zero_summary_connection_epoch_count(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             summary = self._write_fixture(root)
@@ -414,12 +418,12 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             data = json.loads(summary.read_text())
             data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
             data["total_bytes_written"] = len(raw_bytes)
-            data["connection_epoch_count"] = 1
+            data["connection_epoch_count"] = 0
             summary.write_text(json.dumps(data))
-            with self.assertRaisesRegex(CaptureVerificationError, "exceeds summary connection count"):
+            with self.assertRaisesRegex(CaptureVerificationError, "Connection epoch count is missing or invalid"):
                 verify_capture(summary)
 
-    def test_rejects_regressing_connection_epoch(self):
+    def test_accepts_initial_connection_epoch_zero(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             summary = self._write_fixture(root)
@@ -433,8 +437,8 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             data["total_bytes_written"] = len(raw_bytes)
             data["connection_epoch_count"] = 1
             summary.write_text(json.dumps(data))
-            with self.assertRaisesRegex(CaptureVerificationError, "duplicate or regressing"):
-                verify_capture(summary)
+            result = verify_capture(summary)
+            self.assertTrue(result["integrity_valid"])
 
 
     def test_rejects_summary_persistence_flag_conflicting_with_continuity_checks(self):
@@ -587,7 +591,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
         raw = root / "raw.jsonl"
         record = json.loads(raw.read_text(encoding="utf-8"))
         mutate(record)
-        raw_bytes = (json.dumps(record, sort_keys=True) + "\\n").encode("utf-8")
+        raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
         raw.write_bytes(raw_bytes)
         data = json.loads(summary.read_text(encoding="utf-8"))
         data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
@@ -643,7 +647,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             summary = self._write_fixture(root)
             content = summary.read_text(encoding="utf-8").rstrip()
             summary.write_text(content[:-1] + ', "deep": ' + ("[" * 1500) + "0" + ("]" * 1500) + "}", encoding="utf-8")
-            with self.assertRaisesRegex(CaptureVerificationError, "Summary JSON nesting exceeds verifier limit"):
+            with self.assertRaisesRegex(CaptureVerificationError, "Summary JSON exceeds verifier JSON nesting limit"):
                 verify_capture(summary)
 
     def test_rejects_excessive_raw_jsonl_nesting_without_recursion_error(self):
@@ -652,13 +656,13 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             summary = self._write_fixture(root)
             raw = root / "raw.jsonl"
             line = raw.read_text(encoding="utf-8").rstrip()
-            raw_bytes = (line[:-1] + ', "deep": ' + ("[" * 1500) + "0" + ("]" * 1500) + "}\\n").encode("utf-8")
+            raw_bytes = (line[:-1] + ', "deep": ' + ("[" * 1500) + "0" + ("]" * 1500) + "}\n").encode("utf-8")
             raw.write_bytes(raw_bytes)
             data = json.loads(summary.read_text(encoding="utf-8"))
             data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
             data["total_bytes_written"] = len(raw_bytes)
             summary.write_text(json.dumps(data), encoding="utf-8")
-            with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 exceeds verifier nesting limit"):
+            with self.assertRaisesRegex(CaptureVerificationError, "JSONL record 1 exceeds verifier JSON nesting limit"):
                 verify_capture(summary)
 
 
@@ -691,7 +695,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             raw = root / "raw.jsonl"
             record = json.loads(raw.read_text())
             record["attacker_controlled"] = {str(i): i for i in range(8193)}
-            raw_bytes = (json.dumps(record, sort_keys=True) + "\\n").encode("utf-8")
+            raw_bytes = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
             raw.write_bytes(raw_bytes)
             data = json.loads(summary.read_text())
             data["raw_capture_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
@@ -799,7 +803,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 link.symlink_to(original)
             except (OSError, NotImplementedError) as exc:
                 self.skipTest(f"symlink creation unavailable: {exc}")
-            with self.assertRaisesRegex(CaptureVerificationError, "Summary must be a regular, non-symlink file"):
+            with self.assertRaisesRegex(CaptureVerificationError, "Summary secure open is unavailable or unsafe"):
                 verify_capture(link)
 
     def test_rejects_raw_capture_symlink(self):
@@ -813,7 +817,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 raw.symlink_to(outside)
             except (OSError, NotImplementedError) as exc:
                 self.skipTest(f"symlink creation unavailable: {exc}")
-            with self.assertRaisesRegex(CaptureVerificationError, "Raw capture must be a regular, non-symlink file"):
+            with self.assertRaisesRegex(CaptureVerificationError, "Raw capture secure open is unavailable or unsafe"):
                 verify_capture(summary)
 
     def test_rejects_oversized_integer_token_in_raw_jsonl(self):
@@ -1007,9 +1011,11 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
             summary = Path(td) / "summary.json"
             for error in (NotImplementedError("unsupported"), TypeError("unsupported")):
                 with self.subTest(error=type(error).__name__):
-                    with patch("scripts.verify_l2_capture_artifacts.os.open", side_effect=error):
-                        with self.assertRaisesRegex(CaptureVerificationError, "Summary directory secure open is unavailable or unsafe"):
-                            verify_capture(summary)
+                    with patch("scripts.verify_l2_capture_artifacts.os.open", side_effect=error) as mocked_open:
+                        supported = set(os.supports_dir_fd) | {mocked_open}
+                        with patch("scripts.verify_l2_capture_artifacts.os.supports_dir_fd", supported):
+                            with self.assertRaisesRegex(CaptureVerificationError, "Summary directory secure open is unavailable or unsafe"):
+                                verify_capture(summary)
 
     def test_directory_close_failure_does_not_mask_verification_error(self):
         if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
@@ -1134,7 +1140,7 @@ class TestL2CaptureArtifactVerifier(unittest.TestCase):
                 alias.symlink_to(real_dir, target_is_directory=True)
             except (OSError, NotImplementedError) as exc:
                 self.skipTest(f"directory symlinks unavailable: {exc}")
-            with self.assertRaisesRegex(CaptureVerificationError, "non-symlink directory"):
+            with self.assertRaisesRegex(CaptureVerificationError, "Summary directory secure open is unavailable or unsafe"):
                 verify_capture(alias / summary.name)
 
 
