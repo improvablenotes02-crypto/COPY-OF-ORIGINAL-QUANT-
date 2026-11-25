@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101722">
+  <meta name="description" content="QuantEngine paper-trading monitor. Read-only status; live execution disabled.">
+  <title>QuantEngine | Paper Trading</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0b111a;--panel:#121c29;--line:#263548;--text:#e7eef7;--muted:#9aabc0;--green:#55d6a0;--amber:#f2c66d;--blue:#7cb7ff}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 15% 0%,#17283b 0,transparent 42%),var(--bg);color:var(--text);font:15px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+    main{max-width:1040px;margin:0 auto;padding:36px 22px 64px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}.brand{font-size:14px;letter-spacing:.16em;font-weight:800;color:#b9cce2}.pill{border:1px solid #27674f;color:var(--green);border-radius:999px;padding:6px 12px;font-size:12px;font-weight:700;letter-spacing:.08em}
+    h1{font-size:clamp(30px,5vw,48px);line-height:1.08;letter-spacing:-.04em;margin:38px 0 12px}.sub{color:var(--muted);max-width:680px;margin:0 0 28px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.card{background:linear-gradient(145deg,#152232,#101925);border:1px solid var(--line);border-radius:16px;padding:20px;min-height:126px}.k{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}.v{font-size:24px;font-weight:750;margin-top:10px}.hint{font-size:12px;color:var(--muted);margin-top:4px}.wide{grid-column:1/-1}.state{display:inline-flex;align-items:center;gap:8px;color:var(--amber);font-weight:700}.dot{width:8px;height:8px;border-radius:50%;background:var(--amber);display:inline-block}.section{margin-top:28px}.section h2{font-size:17px;margin:0 0 12px}.notice{border:1px solid #66502a;background:#2a2418;border-radius:14px;padding:16px 18px;color:#f4dca9}.notice strong{display:block;margin-bottom:4px;color:#ffe7b3}.safelist{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.safe{padding:13px 15px;border:1px solid var(--line);border-radius:12px;background:#101925;color:#c7d4e4}.safe b{color:var(--green);font-weight:700}.foot{margin-top:34px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+    @media(max-width:700px){main{padding:24px 16px 48px}.grid{grid-template-columns:1fr 1fr}.wide{grid-column:1/-1}.safelist{grid-template-columns:1fr}}@media(max-width:420px){.grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<main>
+  <div class="top"><div class="brand">QUANTENGINE</div><div class="pill">PAPER / RESEARCH ONLY</div></div>
+  <h1>Paper trading monitor</h1>
+  <p class="sub">A read-only dashboard shell. It never places orders and does not invent account balances, positions, P&amp;L, or market data.</p>
+  <section class="grid" aria-label="Runtime status">
+    <article class="card"><div class="k">Trading mode</div><div class="v" style="color:var(--green)">PAPER ONLY</div><div class="hint">Live execution prohibited</div></article>
+    <article class="card"><div class="k">Runtime connection</div><div class="v state"><span class="dot"></span>Not connected</div><div class="hint">No operator gateway configured</div></article>
+    <article class="card"><div class="k">Account metrics</div><div class="v">Unavailable</div><div class="hint">No authenticated runtime data</div></article>
+    <article class="card wide"><div class="k">Data freshness</div><div class="v">No feed attached</div><div class="hint">No market-data stream is being represented as live on this page.</div></article>
+  </section>
+  <section class="section notice" role="status"><strong>Runtime is not connected</strong>This deployment is the secure static dashboard entry point. Connect it only to the separately operated, authenticated read-only monitoring gateway before displaying live paper metrics. The gateway is disabled by default; do not expose exchange credentials in this website.</section>
+  <section class="section"><h2>Execution safeguards</h2><div class="safelist">
+    <div class="safe">PAPER_MODE <b>TRUE</b></div><div class="safe">LIVE_MODE <b>FALSE</b></div>
+    <div class="safe">LIVE_EXECUTE <b>FALSE</b></div><div class="safe">ALLOW_LIVE <b>FALSE</b></div>
+  </div></section>
+  <div class="foot">QuantEngine · Read-only status surface · No order-entry controls · Metrics remain unavailable until a trusted runtime connection is established.</div>
+</main>
+</body>
+</html>
