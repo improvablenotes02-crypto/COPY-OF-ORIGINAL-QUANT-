@@ -144,8 +144,8 @@ def scan_staged(root: Path) -> list[Finding]:
              "-z"],
             cwd=root, check=True, capture_output=True, text=True, timeout=30,
         ).stdout
-    except (OSError, subprocess.SubprocessError):
-        return []
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        raise RuntimeError("staged index listing unavailable") from exc
     findings: list[Finding] = []
     for encoded_path in listing.split("\0"):
         if not encoded_path:
@@ -157,8 +157,8 @@ def scan_staged(root: Path) -> list[Finding]:
                 cwd=root, check=True, capture_output=True, text=True,
                 timeout=30,
             ).stdout
-        except (OSError, subprocess.SubprocessError):
-            continue
+        except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+            raise RuntimeError("staged index blob unavailable") from exc
         path = Path(relative)
         if path.is_absolute() or ".." in path.parts:
             continue
@@ -285,7 +285,12 @@ def main(argv: list[str] | None = None) -> int:
 
     staged: list[Finding] = []
     if args.check_staged:
-        staged = scan_staged(root)
+        try:
+            staged = scan_staged(root)
+        except (OSError, RuntimeError, UnicodeError):
+            # An unavailable index/blob is not evidence that staged content is safe.
+            print("SECRET_SCAN_FAIL reason=staged_scan_unavailable")
+            return 1
         # Worktree findings are double-reported against staged content; only
         # emit staged findings for paths the worktree scan could not see.
         worktree_paths = {f.path for f in findings}
