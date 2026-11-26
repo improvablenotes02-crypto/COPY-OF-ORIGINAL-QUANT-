@@ -30,6 +30,7 @@ import signal
 import sys
 import time
 from typing import Any, BinaryIO, Dict, List, Optional
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -39,6 +40,20 @@ from core.research.l2_book_tracker import L2BookTracker, BookValidityState
 
 DEFAULT_PUBLIC_WS_URL = "wss://socket-ind-pub.testnet.deltaex.org"
 TARGET_SYMBOLS = ["BTCUSD", "ETHUSD", "SOLUSD"]
+
+
+
+def classify_endpoint_environment(endpoint: str) -> str:
+    """Classify only explicitly recognized Delta public WebSocket hosts.
+
+    Unknown hosts remain UNKNOWN rather than inheriting a misleading testnet label.
+    """
+    host = (urlsplit(endpoint).hostname or "").lower().rstrip(".")
+    if host == "public-socket.india.delta.exchange":
+        return "PRODUCTION"
+    if host == "socket-ind-pub.testnet.deltaex.org":
+        return "SANDBOX / TESTNET"
+    return "UNKNOWN"
 
 
 class ContinuousStreamingL2CapturePipeline:
@@ -333,7 +348,7 @@ class ContinuousStreamingL2CapturePipeline:
             "phase": self.phase,
             "session_id": f"phase{self.phase}-l2-{self._raw_capture_path.stem if self._raw_capture_path else 'unknown'}",
             "venue": "delta",
-            "environment": "SANDBOX / TESTNET",
+            "environment": classify_endpoint_environment(self.endpoint),
             "endpoint": self.endpoint,
             "read_only_verified": True,
             "orders_written_to_exchange": 0,
